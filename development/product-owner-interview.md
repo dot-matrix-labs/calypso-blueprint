@@ -90,6 +90,8 @@ Generate and pre-fill high-impact questions under each of the following critical
 - What distinct types/roles of users exist in the system (e.g., Administrator, Free User, Premium Customer)?
 - What specific features and data can each role access? What are they restricted from seeing or doing?
 - Does authorization depend on complex conditions (e.g., "A manager can only approve requests from their own department")?
+- Is there a distinction between a **user** (the person using the app) and a **customer** (the entity/account being managed)? How does this affect schema and access control?
+- What CRUD (Create, Read, Update, Delete) views should different user roles have? Does a super user need bulk action capabilities (e.g., bulk edit, bulk delete)?
 
 ### 4. External Integrations (Business Context)
 
