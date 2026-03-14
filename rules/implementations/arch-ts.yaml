@@ -1,0 +1,311 @@
+meta:
+  domain: IMPL-ARCH
+  title: Architecture - TypeScript Implementation
+  implements: ARCH
+  version: 1
+
+rules:
+  # ── Stack ───────────────────────────────────────────────────────────────────
+
+  - number: IMPL-ARCH-001
+    hash: da45da032b52
+    name: ts-only-language
+    type: implementation
+    description: >
+      TypeScript is the only language across client and server. No plain
+      JavaScript files. Enforces a single type system spanning all boundaries.
+    links:
+      - {target: 0fa329015368, rel: implements}   # ARCH-P-001 boundaries-are-physical
+    deprecated: false
+
+  - number: IMPL-ARCH-002
+    hash: ac3c85d0c744
+    name: bun-runtime
+    type: implementation
+    description: >
+      Bun is the runtime for the server and the build tool for all packages.
+      No Node.js or alternative runtimes.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+    deprecated: false
+
+  - number: IMPL-ARCH-003
+    hash: 2a437bce1cd1
+    name: react-ui-framework
+    type: implementation
+    description: >
+      React (latest stable) is the UI framework. No alternative view libraries.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+    deprecated: false
+
+  - number: IMPL-ARCH-004
+    hash: 1693f4495c65
+    name: tailwind-css-styling
+    type: implementation
+    description: >
+      Tailwind CSS (vanilla, no pre/post processors) is the only styling
+      approach. No CSS-in-JS, Sass, or separate CSS modules.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+    deprecated: false
+
+  - number: IMPL-ARCH-005
+    hash: 4856843a5141
+    name: react-hooks-state-management
+    type: implementation
+    description: >
+      State management uses React hooks and minimal context only. No Redux,
+      MobX, Zustand, or other heavy state libraries.
+    links:
+      - {target: c4b55c6bb7a0, rel: implements}   # ARCH-P-005 simplicity-scales
+    deprecated: false
+
+  - number: IMPL-ARCH-006
+    hash: 4cf9c7de0c04
+    name: vitest-unit-testing
+    type: implementation
+    description: >
+      Vitest is the unit test runner. Tests live in /tests/unit.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+    deprecated: false
+
+  - number: IMPL-ARCH-007
+    hash: 84e8d1fca481
+    name: playwright-e2e-testing
+    type: implementation
+    description: >
+      Playwright is the browser and E2E test runner. Tests live in /tests/e2e.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+    deprecated: false
+
+  - number: IMPL-ARCH-008
+    hash: fb3641d7d9de
+    name: rest-api-style
+    type: implementation
+    description: >
+      REST is the API style for all business integrations. No GraphQL,
+      WebSockets, or Protobufs unless the product requires massive concurrency
+      or sub-second real-time.
+    links:
+      - {target: 4211a13461f0, rel: implements}   # ARCH-D-004 type-safe-api-contracts
+    deprecated: false
+
+  # ── Repository Structure ────────────────────────────────────────────────────
+
+  - number: IMPL-ARCH-009
+    hash: 74c8c8f0801c
+    name: monorepo-directory-layout
+    type: implementation
+    description: >
+      Fixed directory layout: /apps/web, /apps/server, /packages/ui,
+      /packages/core, /packages/services, /packages/integrations, /tests/unit,
+      /tests/integration, /tests/e2e, /docs.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+      - {target: b5c27e8e1ed7, rel: implements}   # ARCH-D-003 monorepo-explicit-package-boundaries
+    deprecated: false
+
+  # ── Build Separation ────────────────────────────────────────────────────────
+
+  - number: IMPL-ARCH-010
+    hash: 1db3ca649db3
+    name: web-browser-only-bundle
+    type: implementation
+    description: >
+      /apps/web builds a browser-only bundle. No server imports resolve.
+      Server modules are unreachable from the client import graph.
+    links:
+      - {target: 39e42948f441, rel: implements}   # ARCH-D-001 strict-runtime-separation
+    deprecated: false
+
+  - number: IMPL-ARCH-011
+    hash: ca681e47ece4
+    name: server-bun-binary-only
+    type: implementation
+    description: >
+      /apps/server builds a Bun server binary. No browser or DOM imports
+      resolve. Client modules are unreachable from the server import graph.
+    links:
+      - {target: 39e42948f441, rel: implements}   # ARCH-D-001 strict-runtime-separation
+    deprecated: false
+
+  - number: IMPL-ARCH-012
+    hash: 72ae9631a0cc
+    name: ci-separate-build-pipelines
+    type: implementation
+    description: >
+      CI/CD runs separate build pipelines for web and server. No shared build
+      step or single tsconfig.json across runtimes.
+    links:
+      - {target: 0fa329015368, rel: implements}   # ARCH-P-001 boundaries-are-physical
+    deprecated: false
+
+  # ── Data & Integration ──────────────────────────────────────────────────────
+
+  - number: IMPL-ARCH-013
+    hash: ebd9413449da
+    name: rest-for-all-integrations
+    type: implementation
+    description: >
+      REST APIs for all business integrations. GraphQL, WebSockets, and
+      Protobufs avoided unless the product demands massive concurrency or
+      sub-second real-time.
+    links:
+      - {target: 4211a13461f0, rel: implements}   # ARCH-D-004 type-safe-api-contracts
+    deprecated: false
+
+  - number: IMPL-ARCH-014
+    hash: 5370e3df9cfa
+    name: universal-types-in-packages-core
+    type: implementation
+    description: >
+      All API input/output types defined as universal TypeScript types in
+      /packages/core. Both client and server import from this single source.
+    links:
+      - {target: ccd33c7dd2c2, rel: implements}   # ARCH-P-004 types-shared-logic-not
+    deprecated: false
+
+  - number: IMPL-ARCH-015
+    hash: 377e74541982
+    name: avoid-graphql-ws-protobuf
+    type: implementation
+    description: >
+      GraphQL, WebSockets, and Protobufs are excluded unless the product
+      requires massive concurrency or sub-second real-time updates.
+    links:
+      - {target: c4b55c6bb7a0, rel: implements}   # ARCH-P-005 simplicity-scales
+    deprecated: false
+
+  - number: IMPL-ARCH-016
+    hash: 5625687eab07
+    name: api-contracts-versioned-type-checked
+    type: implementation
+    description: >
+      All API contracts are versioned and type-checked against production
+      responses. Breaking changes require type updates in /packages/core.
+    links:
+      - {target: 4211a13461f0, rel: implements}   # ARCH-D-004 type-safe-api-contracts
+    deprecated: false
+
+  # ── Core Service Categories ─────────────────────────────────────────────────
+
+  - number: IMPL-ARCH-017
+    hash: 6be8116da1e9
+    name: ingestion-in-packages-services
+    type: implementation
+    description: >
+      Ingestion and integration REST clients live in /packages/services and
+      /packages/integrations.
+    links:
+      - {target: b5c27e8e1ed7, rel: implements}   # ARCH-D-003 monorepo-explicit-package-boundaries
+    deprecated: false
+
+  - number: IMPL-ARCH-018
+    hash: 2e15562f8914
+    name: core-logic-in-packages-core
+    type: implementation
+    description: >
+      Core business logic and domain types live in /packages/core.
+    links:
+      - {target: b5c27e8e1ed7, rel: implements}   # ARCH-D-003 monorepo-explicit-package-boundaries
+    deprecated: false
+
+  - number: IMPL-ARCH-019
+    hash: 0eb39c08b04f
+    name: ui-in-packages-ui-and-apps-web
+    type: implementation
+    description: >
+      Shared UI components live in /packages/ui. Application-level UI,
+      editors, and workspaces live in /apps/web.
+    links:
+      - {target: b5c27e8e1ed7, rel: implements}   # ARCH-D-003 monorepo-explicit-package-boundaries
+    deprecated: false
+
+  - number: IMPL-ARCH-020
+    hash: ec6170b95749
+    name: integrations-in-packages-integrations
+    type: implementation
+    description: >
+      Third-party SDK wrappers and export integrations live in
+      /packages/integrations.
+    links:
+      - {target: b5c27e8e1ed7, rel: implements}   # ARCH-D-003 monorepo-explicit-package-boundaries
+    deprecated: false
+
+  - number: IMPL-ARCH-021
+    hash: 5b441d084ec9
+    name: auth-in-server-middleware
+    type: implementation
+    description: >
+      Authentication and authorization are implemented as middleware in
+      /apps/server. No auth logic in the client bundle.
+    links:
+      - {target: 39e42948f441, rel: implements}   # ARCH-D-001 strict-runtime-separation
+    deprecated: false
+
+  # ── Dependency Policy ───────────────────────────────────────────────────────
+
+  - number: IMPL-ARCH-022
+    hash: 0c910f1f0382
+    name: dependency-dual-threshold
+    type: implementation
+    description: >
+      Both conditions must be true to add a dependency: (1) critical
+      functionality not feasible internally, (2) mature, minimal footprint,
+      well-maintained. Stripe SDK and Playwright are Buy; date-fns and small
+      UI components are DIY.
+    links:
+      - {target: 19ba825434e1, rel: implements}   # ARCH-D-002 buy-vs-diy-decision-framework
+    deprecated: false
+
+  - number: IMPL-ARCH-023
+    hash: 999268783193
+    name: dependency-doc-required
+    type: implementation
+    description: >
+      All dependencies documented in docs/dependencies.md with risk/benefit
+      justification. Versions locked. Transitive trees reviewed regularly.
+    links:
+      - {target: 9be37f247b72, rel: implements}   # ARCH-P-003 dependencies-are-liabilities
+    deprecated: false
+
+  # ── Antipatterns (TypeScript-Specific) ──────────────────────────────────────
+
+  - number: IMPL-ARCH-024
+    hash: 818f2fc479b1
+    name: antipattern-type-duplication
+    type: implementation
+    description: >
+      Do not define the same API response type in both /apps/web and
+      /apps/server. Import from /packages/core. Duplicated types drift
+      silently and cause broken UI from stale fields.
+    links:
+      - {target: ccd33c7dd2c2, rel: implements}   # ARCH-P-004 types-shared-logic-not
+    deprecated: false
+
+  - number: IMPL-ARCH-025
+    hash: 5e0261ffe0ab
+    name: antipattern-dependency-by-default
+    type: implementation
+    description: >
+      Do not install an npm package for every solved problem. Evaluate whether
+      the agent can build and test an internal version first. Unchecked
+      additions bloat node_modules and increase maintenance burden.
+    links:
+      - {target: 9be37f247b72, rel: implements}   # ARCH-P-003 dependencies-are-liabilities
+    deprecated: false
+
+  - number: IMPL-ARCH-026
+    hash: 4c2a57e348ce
+    name: antipattern-implicit-build-coupling
+    type: implementation
+    description: >
+      Do not share a single tsconfig.json or build step between server and
+      client. A change to the server TypeScript configuration must not affect
+      the client build. Builds must be independent from day one.
+    links:
+      - {target: 0fa329015368, rel: implements}   # ARCH-P-001 boundaries-are-physical
+    deprecated: false

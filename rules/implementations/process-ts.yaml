@@ -1,0 +1,260 @@
+meta:
+  domain: IMPL-PROCESS
+  title: Process - TypeScript Implementation
+  implements: PROCESS
+  version: 1
+
+rules:
+  - number: IMPL-PROCESS-001
+    hash: 7aa2287045fd
+    name: planning-document-locations
+    type: implementation
+    description: >
+      Three planning documents at fixed paths: docs/prd.md (product requirements,
+      human-owned), docs/plans/implementation-plan.md (all tasks with completion
+      state, agent-owned), docs/plans/next-prompt.md (single next action,
+      agent-owned).
+    links:
+      - {target: ce4b1e4f537f, rel: implements}  # PROCESS-D-001 three-document-planning-loop
+    deprecated: false
+
+  - number: IMPL-PROCESS-002
+    hash: 715bb67fd6bf
+    name: workflow-state-machine-definition
+    type: implementation
+    description: >
+      Calypso workflow state machine declared in YAML at
+      agent-context/workflows/calypso-default-feature-workflow.yaml. States
+      include new, prd-review, architecture-plan, scaffold-tdd, implementation,
+      qa-validation, ready-for-review, done, plus recovery states
+      waiting-for-human, blocked, aborted.
+    links:
+      - {target: d1479e8e74df, rel: implements}  # PROCESS-D-003 calypso-yaml-workflow-definition
+    deprecated: false
+
+  - number: IMPL-PROCESS-003
+    hash: 46a31de04c90
+    name: feature-unit-invariant
+    type: implementation
+    description: >
+      One feature equals one branch equals one worktree equals one pull request.
+      This is the default unit model enforced by the CLI.
+    links:
+      - {target: d1479e8e74df, rel: implements}  # PROCESS-D-003 calypso-yaml-workflow-definition
+    deprecated: false
+
+  - number: IMPL-PROCESS-004
+    hash: 3d57d080f618
+    name: single-orchestrator-per-repo
+    type: implementation
+    description: >
+      One Calypso orchestrator per repository context. The CLI is the
+      orchestrator, not the coding agent. CLI owns workflow state, task dispatch,
+      gate evaluation, and operator interaction.
+    links:
+      - {target: 309eabc8623a, rel: implements}  # PROCESS-A-002 calypso-orchestrated-multi-agent
+    deprecated: false
+
+  - number: IMPL-PROCESS-005
+    hash: a24b24b667c5
+    name: early-pull-request-creation
+    type: implementation
+    description: >
+      Pull requests are created early in the feature lifecycle, not deferred
+      until work is complete.
+    links:
+      - {target: d1479e8e74df, rel: implements}  # PROCESS-D-003 calypso-yaml-workflow-definition
+    deprecated: false
+
+  - number: IMPL-PROCESS-006
+    hash: 11c1bf6a82ab
+    name: structured-agent-outcomes
+    type: implementation
+    description: >
+      Agent tasks produce structured outcomes: OK, NOK, or ABORTED. These are
+      the only valid agent result values.
+    links:
+      - {target: 0cb0c7f4709f, rel: implements}  # PROCESS-D-004 producer-validator-handoff
+    deprecated: false
+
+  - number: IMPL-PROCESS-007
+    hash: c45d5f0c83bb
+    name: gh-as-github-surface
+    type: implementation
+    description: >
+      The gh CLI is the required GitHub control surface for all GitHub
+      operations.
+    links:
+      - {target: d1479e8e74df, rel: implements}  # PROCESS-D-003 calypso-yaml-workflow-definition
+    deprecated: false
+
+  - number: IMPL-PROCESS-008
+    hash: cefd621e999f
+    name: cli-tui-operator-surfaces
+    type: implementation
+    description: >
+      CLI and TUI are the primary operator surfaces for interacting with
+      Calypso.
+    links:
+      - {target: 309eabc8623a, rel: implements}  # PROCESS-A-002 calypso-orchestrated-multi-agent
+    deprecated: false
+
+  - number: IMPL-PROCESS-009
+    hash: ad1cb0c85188
+    name: gate-groups
+    type: implementation
+    description: >
+      Default workflow gates are grouped into four concerns: specification,
+      implementation, validation, and merge-readiness. Each gate records task,
+      owner role, status source, blocking behavior, and checklist label.
+    links:
+      - {target: 309a8b908fc1, rel: implements}  # PROCESS-D-006 gate-groups-and-evidence
+    deprecated: false
+
+  - number: IMPL-PROCESS-010
+    hash: e3201fdd4cea
+    name: task-catalog
+    type: implementation
+    description: >
+      Workflow declares a task catalog with three kinds: builtin (doctor-clean,
+      feature-unit-bound, workflow-files-present, rust-quality, test-matrix,
+      main-compatibility), agent (pr-editor, documentation-merge,
+      blueprint-review), and human (human-clarification, human-review-approval).
+      Each task has a kind and backing implementation or role.
+    links:
+      - {target: 0586a33b4412, rel: implements}  # PROCESS-D-007 task-catalog-backing-workflow
+    deprecated: false
+
+  - number: IMPL-PROCESS-011
+    hash: 455a1db3fb8c
+    name: agent-prompt-catalog
+    type: implementation
+    description: >
+      Agent-backed tasks define stable prompt contracts. pr-editor keeps PR
+      description aligned with feature state. documentation-merge reconciles
+      docs semantically. blueprint-review checks for drift from blueprint rules.
+      Prompts are short, role-specific intents wrapped with context by the CLI
+      before dispatch.
+    links:
+      - {target: 0cb0c7f4709f, rel: implements}  # PROCESS-D-004 producer-validator-handoff
+      - {target: 0586a33b4412, rel: implements}  # PROCESS-D-007 task-catalog-backing-workflow
+    deprecated: false
+
+  - number: IMPL-PROCESS-012
+    hash: 6b75ae3293de
+    name: requirements-interview-output
+    type: implementation
+    description: >
+      Agent generates a structured interview using the process standards
+      template. Output is written to docs/prd.md. Interview template is in
+      product-owner-interview.md in the process prompts.
+    links:
+      - {target: 036dcf4739fc, rel: implements}  # PROCESS-D-008 structured-requirements-interview
+    deprecated: false
+
+  - number: IMPL-PROCESS-013
+    hash: e7ef01a35298
+    name: implementation-plan-format
+    type: implementation
+    description: >
+      Implementation plan uses markdown checkboxes grouped by phase headings.
+      Updated at every commit with both discovery (new tasks) and completion
+      (checked boxes).
+    links:
+      - {target: 22de09615f92, rel: implements}  # PROCESS-P-002 plans-are-living-documents
+      - {target: ce4b1e4f537f, rel: implements}  # PROCESS-D-001 three-document-planning-loop
+    deprecated: false
+
+  - number: IMPL-PROCESS-014
+    hash: 1f7307afa072
+    name: next-prompt-format
+    type: implementation
+    description: >
+      Next prompt is written in second person, self-contained, includes context
+      about what was just completed and what comes next. Stored at
+      docs/plans/next-prompt.md.
+    links:
+      - {target: c93476ff124b, rel: implements}  # PROCESS-P-004 next-action-always-explicit
+      - {target: 7adecf113ceb, rel: implements}  # PROCESS-D-002 self-advancing-state-machine
+    deprecated: false
+
+  - number: IMPL-PROCESS-015
+    hash: 1cc3c029ef72
+    name: pre-commit-hook-plan-enforcement
+    type: implementation
+    description: >
+      Git pre-commit hook verifies that both docs/plans/implementation-plan.md
+      and docs/plans/next-prompt.md are included in the commit's staged files.
+      Commit is rejected if either is missing.
+    links:
+      - {target: 888ece3bbd9f, rel: implements}  # PROCESS-C-005 pre-commit-hook-enforces-updates
+    deprecated: false
+
+  - number: IMPL-PROCESS-016
+    hash: c312733de253
+    name: documentation-merge-gitattributes
+    type: implementation
+    description: >
+      .gitattributes marks documentation files (*.md, *.rst, *.txt) with
+      merge=binary to prevent automatic line-level merges.
+    links:
+      - {target: 22de09615f92, rel: implements}  # PROCESS-P-002 plans-are-living-documents
+    deprecated: false
+
+  - number: IMPL-PROCESS-017
+    hash: 40d29666d64f
+    name: documentation-merge-conflict-check
+    type: implementation
+    description: >
+      .githooks/pre-commit scans staged documentation files and blocks commits
+      containing merge conflict markers.
+    links:
+      - {target: 888ece3bbd9f, rel: implements}  # PROCESS-C-005 pre-commit-hook-enforces-updates
+    deprecated: false
+
+  - number: IMPL-PROCESS-018
+    hash: b9aad00f9e9c
+    name: documentation-merge-protocol
+    type: implementation
+    description: >
+      Merge protocol for documentation: read older and newer docs, produce one
+      coherent result, prefer the newer document when uncertain. Agent resolution
+      is mandatory for agent-maintained documentation.
+    links:
+      - {target: 22de09615f92, rel: implements}  # PROCESS-P-002 plans-are-living-documents
+    deprecated: false
+
+  - number: IMPL-PROCESS-019
+    hash: f1becde5801c
+    name: scaffold-checklist
+    type: implementation
+    description: >
+      Stage 0 scaffold checklist: git init + gh repo create, create
+      .github/workflows/ with CI jobs, stub all test suites (server unit,
+      integration, browser unit, component, e2e), verify all tests run and fail,
+      write initial implementation plan and next-prompt.
+    links:
+      - {target: 3d643a9a5413, rel: implements}  # PROCESS-D-009 infrastructure-before-features
+      - {target: d38caa99ef55, rel: implements}  # PROCESS-C-006 scaffold-complete-before-features
+    deprecated: false
+
+  - number: IMPL-PROCESS-020
+    hash: 397b29e6c90a
+    name: no-runtime-dependencies
+    type: implementation
+    description: >
+      The process implementation introduces no runtime dependencies.
+    links:
+      - {target: ce4b1e4f537f, rel: implements}  # PROCESS-D-001 three-document-planning-loop
+    deprecated: false
+
+  - number: IMPL-PROCESS-021
+    hash: d9e96eda98d5
+    name: workflow-yaml-tracked-artifact
+    type: implementation
+    description: >
+      The workflow YAML file is a tracked repository artifact, not an ephemeral
+      CLI cache.
+    links:
+      - {target: 607b8479a54b, rel: implements}  # PROCESS-C-004 calypso-workflow-yaml-exists
+    deprecated: false

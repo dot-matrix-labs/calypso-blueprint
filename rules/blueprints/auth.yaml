@@ -1,0 +1,911 @@
+meta:
+  domain: AUTH
+  title: Authentication & Authorization Blueprint
+  version: 1
+  requires:
+    - DATA
+
+rules:
+  # ── Threats ──────────────────────────────────────────────────────────────────
+
+  - number: AUTH-T-001
+    hash: 8122afb85345
+    name: phished-or-stolen-credentials
+    type: threat
+    description: >
+      Phished or stolen user credentials compromise user sessions, personal data,
+      and account integrity.
+    links: []
+    deprecated: false
+
+  - number: AUTH-T-002
+    hash: f6770a061f91
+    name: algorithm-confusion-in-token-verification
+    type: threat
+    description: >
+      Algorithm confusion in token verification (e.g., alg:none or HS256
+      substitution) allows forged tokens to be accepted.
+    links: []
+    deprecated: false
+
+  - number: AUTH-T-003
+    hash: 6209f9dcbb96
+    name: compromised-admin-account
+    type: threat
+    description: >
+      A compromised admin account exposes all user data, system configuration,
+      and encryption keys.
+    links: []
+    deprecated: false
+
+  - number: AUTH-T-004
+    hash: ba558b0ef32a
+    name: rogue-agent-exceeding-scope
+    type: threat
+    description: >
+      A rogue AI agent exceeding its authorized scope can access customer records,
+      gain write access to production entity types, or steal other agents'
+      credentials.
+    links: []
+    deprecated: false
+
+  - number: AUTH-T-005
+    hash: 6db7c60cbba6
+    name: replay-of-intercepted-tokens
+    type: threat
+    description: >
+      Replay of intercepted authentication tokens compromises session integrity;
+      replayed tokens must not grant access.
+    links: []
+    deprecated: false
+
+  - number: AUTH-T-006
+    hash: 51b316e8cf7f
+    name: credential-stuffing-brute-force
+    type: threat
+    description: >
+      Credential stuffing or brute-force attacks against login endpoints threaten
+      account availability and integrity.
+    links: []
+    deprecated: false
+
+  - number: AUTH-T-007
+    hash: b23a5949b8dc
+    name: single-insider-privileged-operation
+    type: threat
+    description: >
+      A single insider unilaterally approving a privileged operation can compromise
+      root key material, bulk data exports, and key rotation.
+    links: []
+    deprecated: false
+
+  - number: AUTH-T-008
+    hash: 2bc0827e581f
+    name: external-auth-provider-outage
+    type: threat
+    description: >
+      An external authentication provider outage locks users out of an otherwise
+      operational system.
+    links: []
+    deprecated: false
+
+  - number: AUTH-T-009
+    hash: 5a23762c9b47
+    name: session-token-xss-exfiltration
+    type: threat
+    description: >
+      Session token exposed via client-side script (XSS exfiltration); tokens
+      must not be readable by JavaScript.
+    links: []
+    deprecated: false
+
+  - number: AUTH-T-010
+    hash: 2e60e9e971a2
+    name: agent-credential-leaked-in-logs
+    type: threat
+    description: >
+      Agent credential leaked in logs or error output; blast radius must be
+      bounded by scope and TTL.
+    links: []
+    deprecated: false
+
+  # ── Principles ───────────────────────────────────────────────────────────────
+
+  - number: AUTH-P-001
+    hash: 24cd299b632f
+    name: passkey-first-password-never
+    type: principle
+    description: >
+      The system uses passkey-based authentication (FIDO2 WebAuthn) as the sole
+      primary credential mechanism. Passwords are never offered. The private key
+      never leaves the user's device, eliminating server-side credential theft,
+      phishing, credential stuffing, and reuse attacks at the protocol level.
+    links: []
+    deprecated: false
+
+  - number: AUTH-P-002
+    hash: 98659756871c
+    name: tokens-opaque-to-browsers
+    type: principle
+    description: >
+      Session tokens are stored in HTTP-only, Secure, SameSite=Strict cookies
+      and are never accessible to client-side JavaScript. This eliminates session
+      hijacking as a consequence of XSS without depending on the application
+      being XSS-free.
+    links: []
+    deprecated: false
+
+  - number: AUTH-P-003
+    hash: adff78a52d6d
+    name: agent-credentials-scoped-and-short-lived
+    type: principle
+    description: >
+      Every agent credential carries explicit scope claims and expires within
+      24 hours. Broad, long-lived agent tokens are never issued. Worker daemon
+      service accounts are a distinct credential category with their own lifecycle;
+      the short-lived constraint applies to per-task delegated user tokens.
+    links: []
+    deprecated: false
+
+  - number: AUTH-P-004
+    hash: fe40f06bf5c2
+    name: credential-domains-stay-separate
+    type: principle
+    description: >
+      The platform maintains distinct credential classes: end-user session
+      credentials (prove identity), worker service credentials (prove which
+      daemon), delegated authority tokens (prove who authorized a task-scoped
+      action), and twin credentials (prove sandbox-only context). These classes
+      must never collapse into one another.
+    links: []
+    deprecated: false
+
+  - number: AUTH-P-005
+    hash: b38917607d24
+    name: auth-policy-enforced-through-deterministic-gates
+    type: principle
+    description: >
+      Credential policy is enforced through machine-checkable gates, not prose.
+      The workflow must define deterministic checks for accepted credential
+      classes, allowed signing algorithms, revocation behavior, privileged-operation
+      approval requirements, and sandbox boundary separation.
+    links: []
+    deprecated: false
+
+  - number: AUTH-P-006
+    hash: b8af437531ff
+    name: authority-and-execution-are-separate-facts
+    type: principle
+    description: >
+      The system must preserve the distinction between the principal that had
+      authority to perform an action and the actor that executed it. Both facts
+      are recorded. "The agent acted on behalf of the user" is not the same as
+      "the user executed the action personally."
+    links: []
+    deprecated: false
+
+  - number: AUTH-P-007
+    hash: 0962b79e682e
+    name: no-single-actor-authorizes-privileged-operations
+    type: principle
+    description: >
+      Operations touching root key material, bulk data exports, or authentication
+      infrastructure require M-of-N approval from distinct human operators. This
+      is a cryptographic constraint enforced through secret sharing, not a
+      workflow preference.
+    links: []
+    deprecated: false
+
+  - number: AUTH-P-008
+    hash: 701fb5c194b8
+    name: authentication-is-self-hosted
+    type: principle
+    description: >
+      The critical login path (credential verification, token issuance, session
+      creation) runs on infrastructure the team owns. External identity providers
+      may participate in federated flows but are never the sole authentication
+      path. If the external provider goes down, users authenticate via the
+      self-hosted passkey flow.
+    links: []
+    deprecated: false
+
+  - number: AUTH-P-009
+    hash: 0ce2a38691c6
+    name: algorithm-pinned-not-negotiated
+    type: principle
+    description: >
+      Token verification accepts exactly one signing algorithm, configured at
+      deployment time and never read from the token header. Algorithm negotiation
+      is the root cause of algorithm confusion attacks. Pinning makes these
+      attacks structurally impossible. The same rule applies to consequential
+      transaction signatures.
+    links: []
+    deprecated: false
+
+  # ── Design Patterns ──────────────────────────────────────────────────────────
+
+  - number: AUTH-D-001
+    hash: 91782768755f
+    name: passkey-authentication
+    type: design_pattern
+    description: >
+      Use WebAuthn for all user authentication. During registration the device
+      generates an asymmetric key pair; the private key stays on-device. During
+      login the server issues a random challenge, the device signs it, and the
+      server verifies against the stored public key. No shared secret crosses the
+      network. Replay is prevented by unique, time-bound challenges.
+    links:
+      - rel: mitigates
+        target: 8122afb85345
+      - rel: mitigates
+        target: 6db7c60cbba6
+      - rel: mitigates
+        target: 51b316e8cf7f
+    deprecated: false
+
+  - number: AUTH-D-002
+    hash: 7a27eb77385c
+    name: pinned-algorithm-token-verification
+    type: design_pattern
+    description: >
+      The server is configured with exactly one acceptable signing algorithm at
+      deployment time. During verification the server ignores the alg field in
+      the token header and uses only its configured algorithm. Tokens bearing any
+      other algorithm are rejected without further inspection.
+    links:
+      - rel: mitigates
+        target: f6770a061f91
+    deprecated: false
+
+  - number: AUTH-D-003
+    hash: 47fb0e2f6869
+    name: scoped-agent-tokens
+    type: design_pattern
+    description: >
+      Agents authenticate through a dedicated issuance path producing tokens with
+      explicit scope claims (e.g., analytics:read, transformations:write). Maximum
+      TTL is 24 hours. Scope claims are validated on every request by middleware.
+      Agent registration is a human-operator action; agents cannot self-register
+      or request scope escalation.
+    links:
+      - rel: mitigates
+        target: ba558b0ef32a
+      - rel: mitigates
+        target: 2e60e9e971a2
+    deprecated: false
+
+  - number: AUTH-D-004
+    hash: f44eec767f47
+    name: delegated-transaction-authority-dual-attribution
+    type: design_pattern
+    description: >
+      Use delegated authority plus dual attribution for consequential business
+      transactions. A delegated credential binds the action to the authorizing
+      principal. The request or ledger entry separately records the executing
+      agent or worker identity. Validation checks both: the principal must have
+      authority, and the executing agent must be registered, scoped, and permitted.
+    links:
+      - rel: mitigates
+        target: ba558b0ef32a
+    deprecated: false
+
+  - number: AUTH-D-005
+    hash: bb7657f78351
+    name: sandbox-credentials-for-digital-twins
+    type: design_pattern
+    description: >
+      Issue sandbox-only credentials for digital twin creation and execution.
+      These carry explicit twin scope, are time-bounded, valid only against
+      isolated twin resources, cannot be exchanged for production write authority,
+      and are revoked automatically when the twin expires or is destroyed.
+    links:
+      - rel: mitigates
+        target: ba558b0ef32a
+    deprecated: false
+
+  - number: AUTH-D-006
+    hash: 9011fdadc942
+    name: m-of-n-privileged-operations
+    type: design_pattern
+    description: >
+      The key for a privileged operation is split into N shards via secret sharing
+      (e.g., Shamir). M of N shards from distinct human operators on separate
+      devices are required to reconstruct. Shard assembly is logged, triggers
+      out-of-band notifications, and is time-bounded. Assembled keys are valid
+      for a single operation. Recommended starting values: 3-of-5; minimum
+      acceptable: 2-of-3.
+    links:
+      - rel: mitigates
+        target: 6209f9dcbb96
+      - rel: mitigates
+        target: b23a5949b8dc
+    deprecated: false
+
+  - number: AUTH-D-007
+    hash: 583a1a04f43b
+    name: key-recovery-without-passwords
+    type: design_pattern
+    description: >
+      At enrollment the user generates a recovery passphrase that encrypts a
+      server-held recovery shard. Recovery requires the passphrase plus a second
+      factor. The flow re-enrolls a new passkey rather than restoring the old one.
+      Recovery events are logged and trigger notifications to all enrolled devices.
+      Recovery is self-initiated only; support-assisted recovery requires M-of-N
+      operator approval.
+    links:
+      - rel: mitigates
+        target: 8122afb85345
+    deprecated: false
+
+  - number: AUTH-D-008
+    hash: e6c8393de085
+    name: http-only-session-cookies
+    type: design_pattern
+    description: >
+      After authentication the server issues the session token as an HTTP-only
+      cookie with the Secure flag and SameSite=Strict. The token never appears in
+      a response body, URL parameter, or any location accessible to client-side
+      scripts. For cross-subdomain deployments, configure cookies with the shared
+      registrable domain; for cross-domain, use a same-origin token relay.
+    links:
+      - rel: mitigates
+        target: 5a23762c9b47
+    deprecated: false
+
+  - number: AUTH-D-009
+    hash: 61846075d02a
+    name: token-revocation-store
+    type: design_pattern
+    description: >
+      Every token carries a jti claim. The server maintains a revocation store
+      keyed on jti, checked on every request. Revoked jti returns 401 regardless
+      of signature and expiry. Revocation entries expire after the token's own
+      exp. The store must be shared and durable across all instances. If the store
+      is unreachable, auth middleware fails closed (denies requests).
+    links:
+      - rel: mitigates
+        target: 6db7c60cbba6
+    deprecated: false
+
+  # ── Architectures ────────────────────────────────────────────────────────────
+
+  - number: AUTH-A-001
+    hash: f45cd0927a41
+    name: single-application-passkey-auth
+    type: architecture
+    description: >
+      All authentication components (passkey verification, token issuance, session
+      management) run within a single application process. Passkey Store holds
+      registered public keys as entities in the property graph. Token Issuer uses
+      a signing key in an external HSM-backed key store. Simplest to deploy; does
+      not support federated identity without rework.
+    links: []
+    deprecated: false
+
+  - number: AUTH-A-002
+    hash: 1e1cdc5ea63a
+    name: federated-identity-self-hosted-fallback
+    type: architecture
+    description: >
+      Enterprise tenants authenticate through their own identity provider (SAML,
+      OIDC). A Token Gateway normalizes external assertions into the platform's
+      internal token format. If the external provider is unavailable, users fall
+      back to the self-hosted passkey path. The Resource Server sees only the
+      internal token format.
+    links: []
+    deprecated: false
+
+  - number: AUTH-A-003
+    hash: ec6383e4a5ef
+    name: agent-aware-auth-gateway
+    type: architecture
+    description: >
+      An Auth Gateway routes by credential type: human users go through the
+      passkey flow, agents through the agent registry and scope validation. Both
+      paths produce tokens in the same format. The Agent Registry restricts write
+      access to human operators with explicit agent-registry:write scope. Registry
+      mutations are audit-logged and trigger immediate token revocation for
+      affected agents.
+    links: []
+    deprecated: false
+
+  # ── Checklists ───────────────────────────────────────────────────────────────
+
+  - number: AUTH-C-001
+    hash: eb8f9a2630ca
+    name: passkey-registration-flow
+    type: checklist
+    description: >
+      Passkey registration flow implemented: users can enroll a platform
+      authenticator or hardware key.
+    links:
+      - rel: verifies
+        target: 24cd299b632f
+    deprecated: false
+
+  - number: AUTH-C-002
+    hash: 022df6c2433d
+    name: passkey-assertion-flow
+    type: checklist
+    description: >
+      Passkey assertion flow implemented: users can log in with an enrolled
+      passkey.
+    links:
+      - rel: verifies
+        target: 24cd299b632f
+    deprecated: false
+
+  - number: AUTH-C-003
+    hash: 6d5f068940bd
+    name: token-signing-algorithm-pinned
+    type: checklist
+    description: >
+      Token signing algorithm pinned at deployment configuration; tokens with
+      unexpected algorithm rejected.
+    links:
+      - rel: verifies
+        target: 0ce2a38691c6
+    deprecated: false
+
+  - number: AUTH-C-004
+    hash: 6bb64ef301b9
+    name: session-tokens-httponly-cookies
+    type: checklist
+    description: >
+      Session tokens issued as HTTP-only, Secure, SameSite=Strict cookies.
+    links:
+      - rel: verifies
+        target: 98659756871c
+    deprecated: false
+
+  - number: AUTH-C-005
+    hash: 8a34380aff0a
+    name: token-expiry-enforced
+    type: checklist
+    description: >
+      Token expiry enforced on every request; expired tokens return 401.
+    links:
+      - rel: verifies
+        target: adff78a52d6d
+    deprecated: false
+
+  - number: AUTH-C-006
+    hash: fd3e123e8b7c
+    name: token-revocation-checked
+    type: checklist
+    description: >
+      Token includes a unique identifier (jti); revocation list checked on every
+      request.
+    links:
+      - rel: verifies
+        target: b38917607d24
+    deprecated: false
+
+  - number: AUTH-C-007
+    hash: ea0b6ab72f87
+    name: auth-middleware-all-protected-routes
+    type: checklist
+    description: >
+      Auth middleware present on all protected routes; no unprotected route serves
+      user data.
+    links:
+      - rel: verifies
+        target: b38917607d24
+    deprecated: false
+
+  - number: AUTH-C-008
+    hash: 01df602a7a97
+    name: agent-scoped-tokens-implemented
+    type: checklist
+    description: >
+      Agent authentication implemented with scoped tokens; agent tokens carry
+      explicit scope claims.
+    links:
+      - rel: verifies
+        target: adff78a52d6d
+    deprecated: false
+
+  - number: AUTH-C-009
+    hash: 4a27dd2618ac
+    name: agent-scope-validated-every-request
+    type: checklist
+    description: >
+      Agent scope validated on every request by middleware, not just at token
+      issuance.
+    links:
+      - rel: verifies
+        target: adff78a52d6d
+    deprecated: false
+
+  - number: AUTH-C-010
+    hash: da787ad20e22
+    name: agent-token-ttl-24h-max
+    type: checklist
+    description: >
+      Agent token TTL enforced at a maximum of 24 hours.
+    links:
+      - rel: verifies
+        target: adff78a52d6d
+    deprecated: false
+
+  - number: AUTH-C-011
+    hash: 14a49f9d38c7
+    name: dual-attribution-supported
+    type: checklist
+    description: >
+      Dual attribution supported for consequential actions: principal authority
+      and executing agent are recorded separately.
+    links:
+      - rel: verifies
+        target: b8af437531ff
+    deprecated: false
+
+  - number: AUTH-C-012
+    hash: 5735c9a86613
+    name: transaction-signature-algorithm-pinned
+    type: checklist
+    description: >
+      Consequential transaction signature algorithm pinned per ledger domain or
+      deployment; request-level algorithm negotiation rejected.
+    links:
+      - rel: verifies
+        target: 0ce2a38691c6
+    deprecated: false
+
+  - number: AUTH-C-013
+    hash: a8a0ddb7ccf1
+    name: sandbox-credentials-implemented
+    type: checklist
+    description: >
+      Sandbox-only credentials implemented for digital twin creation and
+      execution; sandbox tokens cannot access production endpoints.
+    links:
+      - rel: verifies
+        target: fe40f06bf5c2
+    deprecated: false
+
+  - number: AUTH-C-014
+    hash: be4504ccae63
+    name: rate-limiting-auth-endpoints
+    type: checklist
+    description: >
+      Rate limiting active on authentication endpoints (registration, assertion,
+      token refresh).
+    links:
+      - rel: verifies
+        target: b38917607d24
+    deprecated: false
+
+  - number: AUTH-C-015
+    hash: 0fe3d1d82901
+    name: auth-events-audit-log
+    type: checklist
+    description: >
+      Authentication events (login, logout, failed attempt, registration) written
+      to audit log.
+    links:
+      - rel: verifies
+        target: b38917607d24
+    deprecated: false
+
+  - number: AUTH-C-016
+    hash: 57d0563b2774
+    name: key-recovery-flow-tested
+    type: checklist
+    description: >
+      Key recovery flow implemented and tested end-to-end: passphrase plus second
+      factor re-enrolls a new passkey.
+    links:
+      - rel: verifies
+        target: 24cd299b632f
+    deprecated: false
+
+  - number: AUTH-C-017
+    hash: 92bdfe5b1bd8
+    name: recovery-events-notify-devices
+    type: checklist
+    description: >
+      Recovery events trigger out-of-band notification to all enrolled devices.
+    links:
+      - rel: verifies
+        target: 24cd299b632f
+    deprecated: false
+
+  - number: AUTH-C-018
+    hash: fb3677b0b045
+    name: token-refresh-rotation
+    type: checklist
+    description: >
+      Token refresh rotation implemented: each refresh produces a new token and
+      invalidates the old one.
+    links:
+      - rel: verifies
+        target: b38917607d24
+    deprecated: false
+
+  - number: AUTH-C-019
+    hash: 81b4e68a86cf
+    name: m-of-n-approval-tested
+    type: checklist
+    description: >
+      M-of-N approval flow documented and tested for at least one privileged
+      operation (e.g., signing key rotation).
+    links:
+      - rel: verifies
+        target: 0962b79e682e
+    deprecated: false
+
+  - number: AUTH-C-020
+    hash: 31e5409b6092
+    name: shard-assembly-logged-time-bounded
+    type: checklist
+    description: >
+      Shard assembly logged and time-bounded; assembled keys valid for single
+      operation only.
+    links:
+      - rel: verifies
+        target: 0962b79e682e
+    deprecated: false
+
+  - number: AUTH-C-021
+    hash: 63fce4c14f99
+    name: pentest-security-review-completed
+    type: checklist
+    description: >
+      Penetration test or structured security review completed on the
+      authentication surface.
+    links:
+      - rel: verifies
+        target: b38917607d24
+    deprecated: false
+
+  - number: AUTH-C-022
+    hash: b1c33c5ad6b9
+    name: agent-re-registration-tested
+    type: checklist
+    description: >
+      Agent re-registration flow tested: revoking and re-issuing agent
+      credentials with new scopes.
+    links:
+      - rel: verifies
+        target: adff78a52d6d
+    deprecated: false
+
+  - number: AUTH-C-023
+    hash: cf924b57504f
+    name: auth-config-deployment-managed
+    type: checklist
+    description: >
+      Authentication configuration (algorithm, TTL, scope definitions) managed
+      via deployment config, not runtime API.
+    links:
+      - rel: verifies
+        target: 0ce2a38691c6
+    deprecated: false
+
+  - number: AUTH-C-024
+    hash: e2110b5f1e53
+    name: progressive-delays-lockout
+    type: checklist
+    description: >
+      Failed authentication attempts trigger progressive delays or temporary
+      lockout.
+    links:
+      - rel: verifies
+        target: b38917607d24
+    deprecated: false
+
+  - number: AUTH-C-025
+    hash: 80d3c4308a7a
+    name: automated-credential-rotation
+    type: checklist
+    description: >
+      Automated credential rotation operational for signing keys; no manual key
+      rotation required.
+    links:
+      - rel: verifies
+        target: b38917607d24
+    deprecated: false
+
+  - number: AUTH-C-026
+    hash: 4f24092b5eea
+    name: session-revocation-immediate
+    type: checklist
+    description: >
+      Session revocation tested: revoking a session immediately prevents further
+      access (no grace period).
+    links:
+      - rel: verifies
+        target: b38917607d24
+    deprecated: false
+
+  - number: AUTH-C-027
+    hash: b8943d5ab2c1
+    name: agent-re-auth-daily
+    type: checklist
+    description: >
+      Agent re-authentication enforced daily in production; verified in
+      monitoring.
+    links:
+      - rel: verifies
+        target: adff78a52d6d
+    deprecated: false
+
+  - number: AUTH-C-028
+    hash: 5b25f07e3a13
+    name: immutable-auth-audit-log
+    type: checklist
+    description: >
+      Immutable authentication audit log operational: log entries cannot be
+      modified or deleted.
+    links:
+      - rel: verifies
+        target: b38917607d24
+    deprecated: false
+
+  - number: AUTH-C-029
+    hash: 038c9e1c374e
+    name: audit-log-cold-storage
+    type: checklist
+    description: >
+      Audit log exported to append-only cold storage on a defined schedule.
+    links:
+      - rel: verifies
+        target: b38917607d24
+    deprecated: false
+
+  - number: AUTH-C-030
+    hash: 1e20ba7fdf22
+    name: incident-response-runbook-tested
+    type: checklist
+    description: >
+      Incident response runbook written and tested for authentication compromise
+      scenarios (signing key compromise, agent credential compromise, admin
+      account compromise, mass session invalidation).
+    links:
+      - rel: verifies
+        target: 0962b79e682e
+    deprecated: false
+
+  - number: AUTH-C-031
+    hash: 67b942f06e0e
+    name: federated-identity-tested
+    type: checklist
+    description: >
+      Federated identity flow tested if applicable (enterprise SSO with
+      self-hosted fallback).
+    links:
+      - rel: verifies
+        target: 701fb5c194b8
+    deprecated: false
+
+  - number: AUTH-C-032
+    hash: 6ce9ea582409
+    name: generic-auth-error-messages
+    type: checklist
+    description: >
+      All authentication error messages are generic; no information leakage about
+      account existence or credential validity.
+    links:
+      - rel: verifies
+        target: b38917607d24
+    deprecated: false
+
+  # ── Antipatterns ─────────────────────────────────────────────────────────────
+
+  - number: AUTH-X-001
+    hash: ad98bf6ca677
+    name: password-default-passkey-optional
+    type: antipattern
+    description: >
+      Offering passwords alongside passkeys means the system's security is bounded
+      by the password path. Attackers target the weakest credential type. If
+      passwords exist, phishing works. Passkey-first means passkey-only.
+    links:
+      - rel: contradicts
+        target: 24cd299b632f
+    deprecated: false
+
+  - number: AUTH-X-002
+    hash: 1b840588d7ed
+    name: algorithm-negotiation-in-verification
+    type: antipattern
+    description: >
+      Reading the alg header from the token to select the verification algorithm
+      is the root cause of algorithm confusion attacks. The server must be told
+      which algorithm to use at deployment time; it must never ask the token.
+    links:
+      - rel: contradicts
+        target: 0ce2a38691c6
+    deprecated: false
+
+  - number: AUTH-X-003
+    hash: af21f9cd0cc1
+    name: long-lived-broad-agent-tokens
+    type: antipattern
+    description: >
+      Issuing an agent a token that lasts weeks and grants access to multiple
+      resource types eliminates the containment boundary. A leaked broad,
+      long-lived token is functionally equivalent to a leaked admin credential.
+    links:
+      - rel: contradicts
+        target: adff78a52d6d
+    deprecated: false
+
+  - number: AUTH-X-004
+    hash: 178dc0b4cde5
+    name: auth-saas-sole-login-path
+    type: antipattern
+    description: >
+      Depending entirely on an external provider for login means the provider's
+      outage, vulnerability, or token format change becomes yours. External
+      providers are acceptable as one federated path, not the only path.
+    links:
+      - rel: contradicts
+        target: 701fb5c194b8
+    deprecated: false
+
+  - number: AUTH-X-005
+    hash: 917f546b2ccc
+    name: tokens-in-localstorage
+    type: antipattern
+    description: >
+      Storing tokens in localStorage or sessionStorage makes them exfiltrable by
+      any XSS payload. HTTP-only cookies exist to solve this exact problem.
+    links:
+      - rel: contradicts
+        target: 98659756871c
+    deprecated: false
+
+  - number: AUTH-X-006
+    hash: 8c6a9f9b4552
+    name: single-person-privileged-approval
+    type: antipattern
+    description: >
+      Any system where one administrator can rotate root keys, export user data,
+      or modify authentication configuration is one compromised account away from
+      total breach. M-of-N is a cryptographic constraint, not bureaucracy.
+    links:
+      - rel: contradicts
+        target: 0962b79e682e
+    deprecated: false
+
+  - number: AUTH-X-007
+    hash: 4338bafe526c
+    name: shared-credentials-between-agents
+    type: antipattern
+    description: >
+      Multiple agents sharing a single token or API key means revoking one
+      agent's access revokes all, and compromising one compromises all. Each agent
+      receives its own credential with its own scope and lifecycle.
+    links:
+      - rel: contradicts
+        target: adff78a52d6d
+    deprecated: false
+
+  - number: AUTH-X-008
+    hash: 0738a9c607a9
+    name: email-based-password-reset-fallback
+    type: antipattern
+    description: >
+      If the recovery flow sends a magic link to an email address, security is
+      bounded by email security. Email is not an authenticated channel. Recovery
+      must require proof of possession plus a second factor.
+    links:
+      - rel: contradicts
+        target: 24cd299b632f
+    deprecated: false
+
+  - number: AUTH-X-009
+    hash: 4e13f71c51cd
+    name: in-memory-revocation-multi-process
+    type: antipattern
+    description: >
+      An in-memory Set of revoked token IDs is only coherent within a single
+      process. In multi-instance deployments, a token revoked against one instance
+      remains valid against all others. The revocation store must be shared,
+      durable, and consistent.
+    links:
+      - rel: contradicts
+        target: b38917607d24
+    deprecated: false

@@ -1,0 +1,319 @@
+meta:
+  domain: IMPL-DEPLOY
+  title: Deployment - TypeScript Implementation
+  implements: DEPLOY
+  version: 1
+
+rules:
+  # ---------------------------------------------------------------------------
+  # Container Packaging
+  # ---------------------------------------------------------------------------
+  - number: IMPL-DEPLOY-001
+    hash: "41ea0553bbe1"
+    name: multistage-distroless-container
+    type: implementation
+    description: >
+      Use multi-stage Dockerfile with oven/bun:1 builder and oven/bun:1-distroless
+      production image. Copy only the compiled output into the final stage to
+      eliminate shell, package manager, and minimize attack surface.
+    links:
+      - {target: "cebbff0e956c", rel: implements}  # DEPLOY-D-001 immutable-distroless-container-builds
+      - {target: "f4deae0ff5d3", rel: implements}  # DEPLOY-P-001 containers-are-the-great-unifier
+      - {target: "3a7b8dab73da", rel: implements}  # DEPLOY-C-001 dockerfile-created
+    deprecated: false
+
+  - number: IMPL-DEPLOY-002
+    hash: "7faa287bdafc"
+    name: frozen-lockfile-install
+    type: implementation
+    description: >
+      Run bun install --frozen-lockfile in the builder stage to ensure
+      deterministic dependency resolution matching the committed lockfile.
+    links:
+      - {target: "cebbff0e956c", rel: implements}  # DEPLOY-D-001 immutable-distroless-container-builds
+    deprecated: false
+
+  - number: IMPL-DEPLOY-003
+    hash: "9ebb0e4c384e"
+    name: explicit-bun-build
+    type: implementation
+    description: >
+      Run bun build apps/server/index.ts --target bun --outfile dist/server.js
+      for exact reproducibility. The compiled single-file output is copied into
+      the distroless production image.
+    links:
+      - {target: "cebbff0e956c", rel: implements}  # DEPLOY-D-001 immutable-distroless-container-builds
+    deprecated: false
+
+  - number: IMPL-DEPLOY-004
+    hash: "603013cc2110"
+    name: no-process-managers
+    type: implementation
+    description: >
+      No systemd services, PM2, or custom restart scripts on the host. The
+      container orchestrator handles process lifecycle exclusively.
+    links:
+      - {target: "f4deae0ff5d3", rel: implements}  # DEPLOY-P-001 containers-are-the-great-unifier
+      - {target: "b9d1a6dddde4", rel: implements}  # DEPLOY-C-002 orchestrator-auto-restart
+    deprecated: false
+
+  # ---------------------------------------------------------------------------
+  # Environment Variables
+  # ---------------------------------------------------------------------------
+  - number: IMPL-DEPLOY-005
+    hash: "ee328dcf5c71"
+    name: production-env-gitignored
+    type: implementation
+    description: >
+      .env file contains production secrets (API keys, DB passwords, signing
+      keys) and is .gitignored. Never committed to version control.
+    links:
+      - {target: "584e64645b8f", rel: implements}  # DEPLOY-P-009 secrets-are-runtime-configuration
+      - {target: "3f7f5f443afe", rel: implements}  # DEPLOY-C-003 secrets-injected-securely
+    deprecated: false
+
+  - number: IMPL-DEPLOY-006
+    hash: "af04d380f7c1"
+    name: test-env-committed
+    type: implementation
+    description: >
+      .env.test file contains test-only credentials and fixture paths and is
+      committed to version control.
+    links:
+      - {target: "584e64645b8f", rel: implements}  # DEPLOY-P-009 secrets-are-runtime-configuration
+      - {target: "5286b4639f51", rel: implements}  # DEPLOY-C-004 test-env-committed
+    deprecated: false
+
+  # ---------------------------------------------------------------------------
+  # Logging
+  # ---------------------------------------------------------------------------
+  - number: IMPL-DEPLOY-007
+    hash: "fe265ca449d3"
+    name: stdout-log-to-orchestrator
+    type: implementation
+    description: >
+      Chronological log output goes to stdout, captured by the container
+      orchestrator (Kubernetes) and aggregated at the cluster level.
+    links:
+      - {target: "41353c4858b0", rel: implements}  # DEPLOY-P-003 logs-are-for-machines-first
+      - {target: "681125756d40", rel: implements}  # DEPLOY-C-005 stdout-stderr-captured
+      - {target: "969f83c41da9", rel: implements}  # DEPLOY-C-006 structured-log-entries
+    deprecated: false
+
+  - number: IMPL-DEPLOY-008
+    hash: "a5d088c867e5"
+    name: unique-error-log
+    type: implementation
+    description: >
+      Deduplicated error categories written to /var/log/calypso/uniques.log
+      with count and last-seen timestamp. Persisted via volume mounts or a
+      dedicated service.
+    links:
+      - {target: "4b71998780a6", rel: implements}  # DEPLOY-D-002 dual-log-architecture
+      - {target: "a9c435b04f11", rel: implements}  # DEPLOY-C-010 uniques-log-implemented
+    deprecated: false
+
+  - number: IMPL-DEPLOY-009
+    hash: "671666890d8e"
+    name: log-rotation-via-cluster
+    type: implementation
+    description: >
+      Log rotation managed by cluster log aggregation facility (Fluentd,
+      Promtail) rather than application-level rotation.
+    links:
+      - {target: "41353c4858b0", rel: implements}  # DEPLOY-P-003 logs-are-for-machines-first
+      - {target: "1b33ad831887", rel: implements}  # DEPLOY-C-011 log-rotation-configured
+    deprecated: false
+
+  # ---------------------------------------------------------------------------
+  # Browser Error Forwarding
+  # ---------------------------------------------------------------------------
+  - number: IMPL-DEPLOY-010
+    hash: "e047e9b4514f"
+    name: window-onerror-capture
+    type: implementation
+    description: >
+      Synchronous browser errors captured via window.onerror handler.
+    links:
+      - {target: "aef55d669b45", rel: implements}  # DEPLOY-D-003 browser-to-server-error-forwarding
+      - {target: "2a36bd9bbcb2", rel: implements}  # DEPLOY-C-008 browser-error-forwarding-implemented
+    deprecated: false
+
+  - number: IMPL-DEPLOY-011
+    hash: "eec2b995d14e"
+    name: unhandled-rejection-capture
+    type: implementation
+    description: >
+      Promise rejections captured via window.onunhandledrejection handler.
+    links:
+      - {target: "aef55d669b45", rel: implements}  # DEPLOY-D-003 browser-to-server-error-forwarding
+      - {target: "2a36bd9bbcb2", rel: implements}  # DEPLOY-C-008 browser-error-forwarding-implemented
+    deprecated: false
+
+  - number: IMPL-DEPLOY-012
+    hash: "dea01237c6e6"
+    name: react-error-boundary
+    type: implementation
+    description: >
+      React error boundaries catch component tree crashes and forward them
+      to the server logging endpoint.
+    links:
+      - {target: "aef55d669b45", rel: implements}  # DEPLOY-D-003 browser-to-server-error-forwarding
+      - {target: "2a36bd9bbcb2", rel: implements}  # DEPLOY-C-008 browser-error-forwarding-implemented
+    deprecated: false
+
+  - number: IMPL-DEPLOY-013
+    hash: "b6cb61a1bed6"
+    name: error-post-to-api-logs
+    type: implementation
+    description: >
+      All captured browser errors POST to /api/logs with payload containing
+      traceId, error, stack, url, and timestamp.
+    links:
+      - {target: "aef55d669b45", rel: implements}  # DEPLOY-D-003 browser-to-server-error-forwarding
+      - {target: "2a36bd9bbcb2", rel: implements}  # DEPLOY-C-008 browser-error-forwarding-implemented
+    deprecated: false
+
+  # ---------------------------------------------------------------------------
+  # Trace ID
+  # ---------------------------------------------------------------------------
+  - number: IMPL-DEPLOY-014
+    hash: "b7a7b24512b4"
+    name: trace-id-uuid-v4-in-browser
+    type: implementation
+    description: >
+      Trace ID generated as UUID v4 in the browser at the start of each
+      user action.
+    links:
+      - {target: "fffb29a3e0a6", rel: implements}  # DEPLOY-D-004 trace-id-propagation
+      - {target: "2d45f6788919", rel: implements}  # DEPLOY-C-007 trace-id-propagated
+    deprecated: false
+
+  - number: IMPL-DEPLOY-015
+    hash: "9987c161a167"
+    name: trace-id-request-header
+    type: implementation
+    description: >
+      Trace ID sent as X-Trace-Id request header from browser to server.
+    links:
+      - {target: "fffb29a3e0a6", rel: implements}  # DEPLOY-D-004 trace-id-propagation
+      - {target: "2d45f6788919", rel: implements}  # DEPLOY-C-007 trace-id-propagated
+    deprecated: false
+
+  - number: IMPL-DEPLOY-016
+    hash: "42c11a347b54"
+    name: trace-id-server-middleware
+    type: implementation
+    description: >
+      Server middleware extracts X-Trace-Id from incoming requests and
+      attaches it to all log entries for that request lifecycle.
+    links:
+      - {target: "fffb29a3e0a6", rel: implements}  # DEPLOY-D-004 trace-id-propagation
+      - {target: "55b6ac786a19", rel: implements}  # DEPLOY-P-004 traces-span-the-full-stack
+      - {target: "5ead7b43c21d", rel: implements}  # DEPLOY-C-021 trace-id-search-works
+    deprecated: false
+
+  - number: IMPL-DEPLOY-017
+    hash: "e968fc9889f6"
+    name: trace-id-response-header
+    type: implementation
+    description: >
+      Server returns trace ID as X-Trace-Id response header back to the
+      browser.
+    links:
+      - {target: "fffb29a3e0a6", rel: implements}  # DEPLOY-D-004 trace-id-propagation
+      - {target: "2d45f6788919", rel: implements}  # DEPLOY-C-007 trace-id-propagated
+    deprecated: false
+
+  # ---------------------------------------------------------------------------
+  # Build and Deploy
+  # ---------------------------------------------------------------------------
+  - number: IMPL-DEPLOY-018
+    hash: "630c178303c0"
+    name: browser-build-command
+    type: implementation
+    description: >
+      Browser assets built via bun build apps/web/index.tsx --outdir dist/web.
+    links:
+      - {target: "123eab1a292b", rel: implements}  # DEPLOY-P-005 deployment-is-a-build-not-a-ceremony
+      - {target: "26419e6cc6ce", rel: implements}  # DEPLOY-C-012 deploy-script-idempotent
+    deprecated: false
+
+  - number: IMPL-DEPLOY-019
+    hash: "cfc9c0e9ea35"
+    name: server-docker-build
+    type: implementation
+    description: >
+      Server image built via docker build -f apps/server/Dockerfile
+      -t calypso-server:latest producing the immutable container artifact.
+    links:
+      - {target: "cebbff0e956c", rel: implements}  # DEPLOY-D-001 immutable-distroless-container-builds
+      - {target: "123eab1a292b", rel: implements}  # DEPLOY-P-005 deployment-is-a-build-not-a-ceremony
+      - {target: "26419e6cc6ce", rel: implements}  # DEPLOY-C-012 deploy-script-idempotent
+    deprecated: false
+
+  - number: IMPL-DEPLOY-020
+    hash: "10ab81ff2832"
+    name: kubectl-apply-deploy
+    type: implementation
+    description: >
+      Deployment executed via kubectl apply -f k8s/deployments/server.yaml
+      (or helm upgrade). Declarative, idempotent, non-interactive.
+    links:
+      - {target: "e889c6c25ede", rel: implements}  # DEPLOY-A-002 kubernetes-enterprise-deployment
+      - {target: "123eab1a292b", rel: implements}  # DEPLOY-P-005 deployment-is-a-build-not-a-ceremony
+      - {target: "26419e6cc6ce", rel: implements}  # DEPLOY-C-012 deploy-script-idempotent
+      - {target: "bd28ad6f0308", rel: implements}  # DEPLOY-C-019 zero-manual-ssh-steps
+    deprecated: false
+
+  # ---------------------------------------------------------------------------
+  # Dependency Justification
+  # ---------------------------------------------------------------------------
+  - number: IMPL-DEPLOY-021
+    hash: "3ebf2cc8637b"
+    name: kubernetes-buy
+    type: implementation
+    description: >
+      Kubernetes adopted as managed service for universal container
+      orchestration required for enterprise deployments.
+    links:
+      - {target: "e889c6c25ede", rel: implements}  # DEPLOY-A-002 kubernetes-enterprise-deployment
+    deprecated: false
+
+  - number: IMPL-DEPLOY-022
+    hash: "051086e71629"
+    name: uuid-generation-diy
+    type: implementation
+    description: >
+      UUID generation implemented internally as a single function. No
+      external library required.
+    links:
+      - {target: "fffb29a3e0a6", rel: implements}  # DEPLOY-D-004 trace-id-propagation
+    deprecated: false
+
+  - number: IMPL-DEPLOY-023
+    hash: "4da9bd79a3c5"
+    name: error-forwarding-diy
+    type: implementation
+    description: >
+      Error forwarding client implemented as a thin wrapper around fetch.
+      No external library required.
+    links:
+      - {target: "aef55d669b45", rel: implements}  # DEPLOY-D-003 browser-to-server-error-forwarding
+    deprecated: false
+
+  # ---------------------------------------------------------------------------
+  # Antipatterns
+  # ---------------------------------------------------------------------------
+  - number: IMPL-DEPLOY-024
+    hash: "35b8a52a9b3f"
+    name: no-hot-reload-dev-servers
+    type: implementation
+    description: >
+      Do not use vite dev or similar hot-reloading development servers.
+      Deploy the containerized build for environment parity. Agents do not
+      benefit from hot-reloading convenience tooling.
+    links:
+      - {target: "9d33a458e91a", rel: implements}  # DEPLOY-P-002 no-incremental-hot-reloading-dev-servers
+      - {target: "2a5c123b62fc", rel: implements}  # DEPLOY-X-001 hybrid-environments
+    deprecated: false

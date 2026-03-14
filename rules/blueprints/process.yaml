@@ -1,0 +1,800 @@
+meta:
+  domain: PROCESS
+  title: Process Blueprint
+  version: 1
+  requires: []
+
+rules:
+  # ── Threats ──────────────────────────────────────────────────────────────────
+
+  - number: PROCESS-T-001
+    hash: c66f31f99932
+    name: no-prior-context
+    type: threat
+    description: >
+      Agent starts a session with no context about prior work. Continuity must
+      be protected so the agent resumes exactly where the last session left off.
+    links:
+      - {target: c93476ff124b, rel: depends_on}
+      - {target: 7adecf113ceb, rel: depends_on}
+    deprecated: false
+
+  - number: PROCESS-T-002
+    hash: 8f6e7b3a1ff9
+    name: premature-feature-work
+    type: threat
+    description: >
+      Agent builds features before foundational infrastructure exists. Build
+      order must be protected so scaffolding, CI, and test stubs precede
+      feature work.
+    links:
+      - {target: f67b4697ac23, rel: depends_on}
+      - {target: 3d643a9a5413, rel: depends_on}
+    deprecated: false
+
+  - number: PROCESS-T-003
+    hash: 7e4846b171b8
+    name: requirements-change-mid-development
+    type: threat
+    description: >
+      Product requirements change mid-development. The plan must accommodate
+      changes without losing track of completed work.
+    links:
+      - {target: 22de09615f92, rel: depends_on}
+      - {target: ce4b1e4f537f, rel: depends_on}
+    deprecated: false
+
+  - number: PROCESS-T-004
+    hash: a37eb4c4e40f
+    name: priority-inversion
+    type: threat
+    description: >
+      Agent works on low-priority tasks while critical work is blocked. The
+      implementation plan must encode priority and ordering.
+    links:
+      - {target: 22de09615f92, rel: depends_on}
+      - {target: ce4b1e4f537f, rel: depends_on}
+    deprecated: false
+
+  - number: PROCESS-T-005
+    hash: b91051b5cbdd
+    name: conflicting-parallel-plans
+    type: threat
+    description: >
+      Multiple agents work on the same project with conflicting plans. One
+      Calypso state machine must govern advancement; agents do not invent
+      parallel plans.
+    links:
+      - {target: 5ad85d2660cc, rel: depends_on}
+      - {target: d1479e8e74df, rel: depends_on}
+    deprecated: false
+
+  - number: PROCESS-T-006
+    hash: 317d3bdac57a
+    name: stale-plan-after-commit
+    type: threat
+    description: >
+      Agent completes work but does not update the plan. The plan must reflect
+      reality at every commit.
+    links:
+      - {target: 22de09615f92, rel: depends_on}
+      - {target: 2110600d43f2, rel: depends_on}
+    deprecated: false
+
+  - number: PROCESS-T-007
+    hash: f517de24772c
+    name: human-override-ignored
+    type: threat
+    description: >
+      Human overrides the agent's next task. The next-prompt file is
+      human-editable and the agent must respect overrides.
+    links:
+      - {target: c93476ff124b, rel: depends_on}
+      - {target: 7adecf113ceb, rel: depends_on}
+    deprecated: false
+
+  - number: PROCESS-T-008
+    hash: 94f48f83cfcb
+    name: session-crash-data-loss
+    type: threat
+    description: >
+      Agent session crashes mid-task. Git commits are the unit of durable
+      progress; uncommitted work is forfeit.
+    links:
+      - {target: 00a96cb15cc4, rel: depends_on}
+      - {target: ab00fd72fad4, rel: depends_on}
+    deprecated: false
+
+  - number: PROCESS-T-009
+    hash: 88f41cbb90a5
+    name: ambiguous-requirements
+    type: threat
+    description: >
+      Requirements are ambiguous or incomplete. The PRD interview must extract
+      concrete, testable requirements.
+    links:
+      - {target: 86131854ce87, rel: depends_on}
+      - {target: 036dcf4739fc, rel: depends_on}
+    deprecated: false
+
+  - number: PROCESS-T-010
+    hash: 25b0c6b0529d
+    name: self-attestation
+    type: threat
+    description: >
+      A producing agent marks its own work complete without review. State
+      advancement requires the configured validation transition, not
+      self-attestation.
+    links:
+      - {target: 5ad85d2660cc, rel: depends_on}
+      - {target: 0cb0c7f4709f, rel: depends_on}
+    deprecated: false
+
+  - number: PROCESS-T-011
+    hash: 501fa0288e4a
+    name: gate-skipping
+    type: threat
+    description: >
+      Gates are skipped because an agent believes the work is correct. The CLI
+      must evaluate declared gates before entering the next state.
+    links:
+      - {target: 6fab3fb9c823, rel: depends_on}
+      - {target: 309a8b908fc1, rel: depends_on}
+    deprecated: false
+
+  # ── Principles ───────────────────────────────────────────────────────────────
+
+  - number: PROCESS-P-001
+    hash: 00a96cb15cc4
+    name: commit-is-unit-of-progress
+    type: principle
+    description: >
+      Every meaningful state change is captured in a git commit. Between
+      commits, work is speculative and lossy. The agent's goal is to reach the
+      next committable state as quickly as possible. Small, frequent commits
+      create fine-grained history that is easy to review, revert, and resume.
+    links:
+      - {target: 94f48f83cfcb, rel: mitigates}
+      - {target: ab00fd72fad4, rel: mitigates}
+    deprecated: false
+
+  - number: PROCESS-P-002
+    hash: 22de09615f92
+    name: plans-are-living-documents
+    type: principle
+    description: >
+      An implementation plan written once and never updated is fiction within
+      days. The plan is updated at every commit: new tasks are discovered and
+      added, completed tasks are checked off, ordering is adjusted based on
+      implementation learnings. The plan is the agent's working memory across
+      sessions.
+    links:
+      - {target: 7e4846b171b8, rel: mitigates}
+      - {target: 317d3bdac57a, rel: mitigates}
+      - {target: e856a0333bca, rel: mitigates}
+    deprecated: false
+
+  - number: PROCESS-P-003
+    hash: 5ad85d2660cc
+    name: state-machine-authorizes-progression
+    type: principle
+    description: >
+      Agents do not decide unilaterally that work is complete, reviewed, or
+      ready for the next phase. Calypso provides a YAML state machine defining
+      states, allowed transitions, assigned agent roles, validation roles, and
+      deterministic gates. The CLI evaluates that machine and advances work
+      only when declared transition conditions pass.
+    links:
+      - {target: b91051b5cbdd, rel: mitigates}
+      - {target: 25b0c6b0529d, rel: mitigates}
+      - {target: d1479e8e74df, rel: refines}
+    deprecated: false
+
+  - number: PROCESS-P-004
+    hash: c93476ff124b
+    name: next-action-always-explicit
+    type: principle
+    description: >
+      An agent should never need to decide what to do next by analyzing the
+      entire codebase from scratch. The next-prompt file contains a single,
+      self-contained instruction for the very next action. It is written by
+      the agent at the end of each commit. A human can override it at any time.
+    links:
+      - {target: c66f31f99932, rel: mitigates}
+      - {target: f517de24772c, rel: mitigates}
+      - {target: 7adecf113ceb, rel: refines}
+      - {target: baf471cbca13, rel: mitigates}
+    deprecated: false
+
+  - number: PROCESS-P-005
+    hash: d3cf920a8f05
+    name: agents-are-narrow-specialists
+    type: principle
+    description: >
+      Agents operate with narrow context and perform small tasks. A producing
+      agent solves one constrained step. A checking agent validates that output
+      against explicit criteria. The state machine decides whether work
+      advances, loops for correction, or escalates. Broad free-form agent
+      autonomy is replaced by specialized roles and explicit transitions.
+    links:
+      - {target: 0cb0c7f4709f, rel: refines}
+      - {target: 309eabc8623a, rel: refines}
+    deprecated: false
+
+  - number: PROCESS-P-006
+    hash: 86131854ce87
+    name: requirements-extracted-not-assumed
+    type: principle
+    description: >
+      The agent does not guess what the product should do. It generates
+      structured interview questions, collects answers from the Product Owner,
+      and writes a canonical PRD with testable acceptance criteria. The PRD is
+      the contract: if it is not in the PRD, the agent does not build it.
+    links:
+      - {target: 88f41cbb90a5, rel: mitigates}
+      - {target: 036dcf4739fc, rel: refines}
+      - {target: 9fa4fad8a2c3, rel: mitigates}
+      - {target: cbc24fa6797a, rel: mitigates}
+    deprecated: false
+
+  - number: PROCESS-P-007
+    hash: f67b4697ac23
+    name: infrastructure-enforces-sequencing
+    type: principle
+    description: >
+      An agent cannot begin feature work while foundational infrastructure is
+      incomplete. Repository, CI, test stubs, and deployment must be
+      operational before the first feature commit. A checklist of concrete,
+      verifiable conditions governs this gate.
+    links:
+      - {target: 8f6e7b3a1ff9, rel: mitigates}
+      - {target: 3d643a9a5413, rel: refines}
+      - {target: a9a86673862d, rel: mitigates}
+    deprecated: false
+
+  - number: PROCESS-P-008
+    hash: 6fab3fb9c823
+    name: deterministic-gates-first-class
+    type: principle
+    description: >
+      Every important transition has explicit gates: tests pass, required
+      documents exist, review step completed, environment prepared. These
+      gates are deterministic checks controlled by the Calypso state machine
+      and executed by the CLI. If a gate is not machine-checkable, it is not
+      yet a reliable transition condition.
+    links:
+      - {target: 501fa0288e4a, rel: mitigates}
+      - {target: 309a8b908fc1, rel: refines}
+    deprecated: false
+
+  # ── Design Patterns ─────────────────────────────────────────────────────────
+
+  - number: PROCESS-D-001
+    hash: ce4b1e4f537f
+    name: three-document-planning-loop
+    type: design_pattern
+    description: >
+      Maintain three documents with distinct scopes: a Product Requirements
+      Document (what to build, human-owned), an Implementation Plan (all tasks
+      with ordering and completion state, agent-owned, updated every commit),
+      and a Next Prompt (single next action, agent-owned, written at each
+      commit end). The PRD constrains the plan; the plan generates the next
+      prompt. Information flows down; overrides flow up.
+    links:
+      - {target: 22de09615f92, rel: refines}
+      - {target: c93476ff124b, rel: refines}
+      - {target: 7adecf113ceb, rel: refines}
+    deprecated: false
+
+  - number: PROCESS-D-002
+    hash: 7adecf113ceb
+    name: self-advancing-state-machine
+    type: design_pattern
+    description: >
+      Each commit writes the next-prompt file as its final action. The next
+      session reads this file first. Commit N writes instructions for commit
+      N+1, creating a self-advancing chain. The agent can execute multiple
+      commits in a single session without human input between them. A human
+      can break the chain by editing the next-prompt file.
+    links:
+      - {target: c93476ff124b, rel: refines}
+      - {target: ce4b1e4f537f, rel: refines}
+      - {target: baf471cbca13, rel: mitigates}
+    deprecated: false
+
+  - number: PROCESS-D-003
+    hash: d1479e8e74df
+    name: calypso-yaml-workflow-definition
+    type: design_pattern
+    description: >
+      Calypso provides a YAML file declaring the workflow state machine. Each
+      state defines the responsible agent role, accepted inputs, required
+      outputs, allowed next states, validation requirements, and deterministic
+      gates. The default feature workflow includes states: new, prd-review,
+      architecture-plan, scaffold-tdd, architecture-review, implementation,
+      waiting-for-human, qa-validation, ready-for-review, release-ready, done,
+      blocked, aborted. The feature-unit invariant requires one feature equals
+      one branch, one worktree, and one PR.
+    links:
+      - {target: 5ad85d2660cc, rel: refines}
+      - {target: 0cb0c7f4709f, rel: refines}
+      - {target: 309a8b908fc1, rel: refines}
+      - {target: 0586a33b4412, rel: refines}
+    deprecated: false
+
+  - number: PROCESS-D-004
+    hash: 0cb0c7f4709f
+    name: producer-validator-handoff
+    type: design_pattern
+    description: >
+      Separate production transitions from validation transitions. A producer
+      agent completes a narrow task and emits an artifact. A validator agent
+      checks that artifact against explicit criteria. Only then may the state
+      machine advance. Roles include orchestrator, architect, engineer,
+      merge-queue, human-or-product, human-or-architect, human, and github.
+      Review is part of the state machine, not an optional courtesy.
+    links:
+      - {target: d3cf920a8f05, rel: refines}
+      - {target: 25b0c6b0529d, rel: mitigates}
+      - {target: d1479e8e74df, rel: refines}
+    deprecated: false
+
+  - number: PROCESS-D-005
+    hash: dd6fe2c636ef
+    name: merge-queue-ownership
+    type: design_pattern
+    description: >
+      Calypso assigns merge ordering and execution to a dedicated merge-queue
+      role. The merge-queue agent determines which merge-ready features land
+      first, records the rationale, marks only the queue-head feature as
+      eligible to merge, and executes the merge. Other features remain
+      merge-ready but blocked on queue position rather than implementation
+      quality.
+    links:
+      - {target: d1479e8e74df, rel: refines}
+      - {target: 309a8b908fc1, rel: refines}
+    deprecated: false
+
+  - number: PROCESS-D-006
+    hash: 309a8b908fc1
+    name: gate-groups-and-evidence
+    type: design_pattern
+    description: >
+      The Calypso YAML groups deterministic gates by concern. Default gate
+      groups include specification, implementation, validation, and
+      merge-readiness. Each gate declares its owner, evidence source, blocking
+      behavior, and PR checklist label. This unifies local checks, CI checks,
+      agent review tasks, and human approvals into one transition model.
+    links:
+      - {target: 6fab3fb9c823, rel: refines}
+      - {target: d1479e8e74df, rel: refines}
+    deprecated: false
+
+  - number: PROCESS-D-007
+    hash: 0586a33b4412
+    name: task-catalog-backing-workflow
+    type: design_pattern
+    description: >
+      The Calypso workflow declares a task catalog. Default tasks include
+      builtins (doctor-clean, feature-unit-bound, workflow-files-present,
+      rust-quality, test-matrix, main-compatibility), agent tasks (pr-editor,
+      documentation-merge, blueprint-review), and human tasks
+      (human-clarification, human-review-approval). Each task has a kind and
+      implementation or assigned role, letting the state machine reference
+      stable task identifiers.
+    links:
+      - {target: d1479e8e74df, rel: refines}
+      - {target: 309a8b908fc1, rel: refines}
+    deprecated: false
+
+  - number: PROCESS-D-008
+    hash: 036dcf4739fc
+    name: structured-requirements-interview
+    type: design_pattern
+    description: >
+      The agent generates a structured interview document with concrete
+      questions organized by domain: user roles, data model, workflows,
+      integrations, constraints. The Product Owner answers in writing. The
+      agent synthesizes answers into a canonical PRD with testable acceptance
+      criteria. If it is not in the PRD, the agent does not build it.
+    links:
+      - {target: 86131854ce87, rel: refines}
+      - {target: 88f41cbb90a5, rel: mitigates}
+      - {target: cbc24fa6797a, rel: mitigates}
+    deprecated: false
+
+  - number: PROCESS-D-009
+    hash: 3d643a9a5413
+    name: infrastructure-before-features
+    type: design_pattern
+    description: >
+      Before implementing any feature, the repository, CI pipeline, test
+      stubs, and deployment infrastructure must be operational. If the
+      scaffold is not complete, no feature work begins. The scaffold is a
+      prerequisite that must be satisfied immediately and maintained throughout
+      development.
+    links:
+      - {target: f67b4697ac23, rel: refines}
+      - {target: 8f6e7b3a1ff9, rel: mitigates}
+      - {target: a9a86673862d, rel: mitigates}
+    deprecated: false
+
+  # ── Architectures ────────────────────────────────────────────────────────────
+
+  - number: PROCESS-A-001
+    hash: 56228b6b54f0
+    name: solo-agent-loop
+    type: architecture
+    description: >
+      Single agent working on a project. Agent reads PRD, plan, and
+      next-prompt; executes the next task; commits code changes, updated plan,
+      and new next-prompt; then loops or ends the session. Human checks in
+      periodically to review commits and adjust PRD or next-prompt. No
+      parallelism; simple and predictable.
+    links:
+      - {target: ce4b1e4f537f, rel: refines}
+      - {target: 7adecf113ceb, rel: refines}
+    deprecated: false
+
+  - number: PROCESS-A-002
+    hash: 309eabc8623a
+    name: calypso-orchestrated-multi-agent
+    type: architecture
+    description: >
+      Calypso YAML state machine assigns the current state to a narrow
+      producer agent. The producer emits an artifact; a validator agent checks
+      it. The CLI evaluates deterministic gates and decides whether to advance,
+      loop, or escalate. Concurrency is explicit and auditable rather than
+      emergent and fragile.
+    links:
+      - {target: d3cf920a8f05, rel: refines}
+      - {target: d1479e8e74df, rel: refines}
+      - {target: 0cb0c7f4709f, rel: refines}
+    deprecated: false
+
+  - number: PROCESS-A-003
+    hash: 7429d9d42df4
+    name: human-in-the-loop-gated
+    type: architecture
+    description: >
+      Agent executes one task, commits, and writes next-prompt. A human gate
+      reviews the commit before the agent proceeds. Approved commits let the
+      agent continue; rejected commits result in the human editing next-prompt
+      with corrections. Appropriate for high-stakes domains where correctness
+      matters more than velocity.
+    links:
+      - {target: 7adecf113ceb, rel: refines}
+      - {target: 6fab3fb9c823, rel: refines}
+    deprecated: false
+
+  # ── Checklist ────────────────────────────────────────────────────────────────
+
+  - number: PROCESS-C-001
+    hash: f2a41812c656
+    name: prd-exists-with-acceptance-criteria
+    type: checklist
+    description: >
+      docs/prd.md exists and contains testable acceptance criteria from a
+      structured interview.
+    links:
+      - {target: 036dcf4739fc, rel: verifies}
+      - {target: 86131854ce87, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-002
+    hash: 2110600d43f2
+    name: implementation-plan-updated
+    type: checklist
+    description: >
+      docs/plans/implementation-plan.md exists and has been updated within the
+      last commit.
+    links:
+      - {target: 22de09615f92, rel: verifies}
+      - {target: ce4b1e4f537f, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-003
+    hash: c1980c686fd4
+    name: next-prompt-valid
+    type: checklist
+    description: >
+      docs/plans/next-prompt.md exists and contains a valid, self-contained
+      next action.
+    links:
+      - {target: c93476ff124b, rel: verifies}
+      - {target: 7adecf113ceb, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-004
+    hash: 607b8479a54b
+    name: calypso-workflow-yaml-exists
+    type: checklist
+    description: >
+      Calypso workflow YAML exists and defines states, transitions, roles, and
+      gates.
+    links:
+      - {target: d1479e8e74df, rel: verifies}
+      - {target: 5ad85d2660cc, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-005
+    hash: 888ece3bbd9f
+    name: pre-commit-hook-enforces-updates
+    type: checklist
+    description: >
+      Pre-commit hook rejects commits that do not include plan and next-prompt
+      updates.
+    links:
+      - {target: 22de09615f92, rel: verifies}
+      - {target: c93476ff124b, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-006
+    hash: d38caa99ef55
+    name: scaffold-complete-before-features
+    type: checklist
+    description: >
+      All scaffold tasks completed: repo, CI, test stubs verified before any
+      feature work.
+    links:
+      - {target: f67b4697ac23, rel: verifies}
+      - {target: 3d643a9a5413, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-007
+    hash: 814c80af43f4
+    name: full-loop-demonstrated
+    type: checklist
+    description: >
+      At least one full loop demonstrated: commit, plan update, next-prompt,
+      next commit resumes from prompt.
+    links:
+      - {target: 7adecf113ceb, rel: verifies}
+      - {target: ce4b1e4f537f, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-008
+    hash: 166925371982
+    name: prd-human-approved
+    type: checklist
+    description: >
+      Human has reviewed and approved the PRD.
+    links:
+      - {target: 86131854ce87, rel: verifies}
+      - {target: 036dcf4739fc, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-009
+    hash: b5cd8c003d47
+    name: no-features-before-scaffold
+    type: checklist
+    description: >
+      Agent has not built any features ahead of scaffold completion.
+    links:
+      - {target: f67b4697ac23, rel: verifies}
+      - {target: a9a86673862d, rel: depends_on}
+    deprecated: false
+
+  - number: PROCESS-C-010
+    hash: 8db9cf604651
+    name: plan-reflects-reality
+    type: checklist
+    description: >
+      Implementation plan accurately reflects all completed and remaining work,
+      audited by human.
+    links:
+      - {target: 22de09615f92, rel: verifies}
+      - {target: e856a0333bca, rel: depends_on}
+    deprecated: false
+
+  - number: PROCESS-C-011
+    hash: df7e5116a5a0
+    name: next-prompt-chain-unbroken
+    type: checklist
+    description: >
+      Next-prompt chain has been unbroken for at least 10 consecutive commits.
+    links:
+      - {target: 7adecf113ceb, rel: verifies}
+      - {target: c93476ff124b, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-012
+    hash: 66d4d5574d84
+    name: human-override-tested
+    type: checklist
+    description: >
+      Human override of next-prompt tested and agent respected the override.
+    links:
+      - {target: f517de24772c, rel: verifies}
+      - {target: c93476ff124b, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-013
+    hash: 0e0e9402d9e2
+    name: multi-session-resume
+    type: checklist
+    description: >
+      Multiple sessions demonstrated: agent resumes from next-prompt after
+      session boundary.
+    links:
+      - {target: c66f31f99932, rel: verifies}
+      - {target: 7adecf113ceb, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-014
+    hash: 05e745a6fee4
+    name: discovered-tasks-in-plan
+    type: checklist
+    description: >
+      Plan includes discovered tasks added during implementation, not just
+      initial planning.
+    links:
+      - {target: 22de09615f92, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-015
+    hash: 61a19083b227
+    name: process-docs-reflect-reality
+    type: checklist
+    description: >
+      Process documentation in docs/ reflects the actual process used, not
+      aspirational.
+    links:
+      - {target: 22de09615f92, rel: verifies}
+      - {target: e856a0333bca, rel: depends_on}
+    deprecated: false
+
+  - number: PROCESS-C-016
+    hash: c2a4f26fcf3b
+    name: crash-recovery-tested
+    type: checklist
+    description: >
+      Recovery procedure tested: agent resumes correctly after a crashed
+      session with uncommitted work.
+    links:
+      - {target: 94f48f83cfcb, rel: verifies}
+      - {target: 00a96cb15cc4, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-017
+    hash: 09a906b4832b
+    name: onboarding-via-three-documents
+    type: checklist
+    description: >
+      Human can onboard a new agent to the project using only the three
+      planning documents.
+    links:
+      - {target: ce4b1e4f537f, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-018
+    hash: e4582b706eba
+    name: producer-validator-transition-exercised
+    type: checklist
+    description: >
+      At least one producer-to-validator transition exercised through the
+      Calypso CLI.
+    links:
+      - {target: 0cb0c7f4709f, rel: verifies}
+      - {target: 25b0c6b0529d, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-019
+    hash: 5905ce32b15f
+    name: gate-failure-handled
+    type: checklist
+    description: >
+      At least one deterministic gate failure observed and handled without
+      manual workflow improvisation.
+    links:
+      - {target: 6fab3fb9c823, rel: verifies}
+      - {target: 309a8b908fc1, rel: verifies}
+    deprecated: false
+
+  # ── Antipatterns ─────────────────────────────────────────────────────────────
+
+  - number: PROCESS-X-001
+    hash: e856a0333bca
+    name: phantom-plan
+    type: antipattern
+    description: >
+      Writing an implementation plan at the start and never updating it. The
+      plan diverges from reality within days; the agent ignores it and makes
+      its own decisions. The plan becomes a historical artifact that misleads
+      anyone who reads it.
+    links:
+      - {target: 22de09615f92, rel: contradicts}
+      - {target: 8db9cf604651, rel: contradicts}
+    deprecated: false
+
+  - number: PROCESS-X-002
+    hash: a9a86673862d
+    name: feature-first-development
+    type: antipattern
+    description: >
+      Jumping to visible features before scaffold infrastructure is complete.
+      The result is a demo that cannot be tested, deployed, or extended.
+      Fixing the foundation after building the house is always more expensive.
+    links:
+      - {target: f67b4697ac23, rel: contradicts}
+      - {target: 3d643a9a5413, rel: contradicts}
+    deprecated: false
+
+  - number: PROCESS-X-003
+    hash: baf471cbca13
+    name: session-amnesia
+    type: antipattern
+    description: >
+      Starting each agent session by asking what to work on instead of reading
+      the next-prompt file. The agent re-derives project state from the
+      codebase, arrives at a different conclusion, and produces conflicting or
+      duplicate work.
+    links:
+      - {target: c93476ff124b, rel: contradicts}
+      - {target: 7adecf113ceb, rel: contradicts}
+    deprecated: false
+
+  - number: PROCESS-X-004
+    hash: 6de50417b805
+    name: parallel-agents-without-machine
+    type: antipattern
+    description: >
+      Spawning multiple agents and hoping they coordinate through intuition,
+      branch names, or chat logs. Without a governing state machine and
+      deterministic gates, concurrency becomes nondeterministic drift.
+    links:
+      - {target: 5ad85d2660cc, rel: contradicts}
+      - {target: d1479e8e74df, rel: contradicts}
+      - {target: b91051b5cbdd, rel: contradicts}
+    deprecated: false
+
+  - number: PROCESS-X-005
+    hash: ab00fd72fad4
+    name: monolithic-commits
+    type: antipattern
+    description: >
+      Accumulating hours of work into a single massive commit. If the session
+      crashes before commit, all work is lost. If the commit introduces a bug,
+      the revert is catastrophic. Small commits are cheaper in every dimension.
+    links:
+      - {target: 00a96cb15cc4, rel: contradicts}
+      - {target: 94f48f83cfcb, rel: contradicts}
+    deprecated: false
+
+  - number: PROCESS-X-006
+    hash: 9fa4fad8a2c3
+    name: verbal-requirements
+    type: antipattern
+    description: >
+      Accepting feature requests from chat messages, verbal conversations, or
+      vague tickets without formalizing them into the PRD. The agent builds
+      what it understood, which is never exactly what was meant.
+    links:
+      - {target: 86131854ce87, rel: contradicts}
+      - {target: 036dcf4739fc, rel: contradicts}
+    deprecated: false
+
+  - number: PROCESS-X-007
+    hash: 84ac3a03267e
+    name: plan-as-wishlist
+    type: antipattern
+    description: >
+      Writing implementation plan tasks as vague goals instead of concrete,
+      verifiable actions. Vague tasks produce vague work.
+    links:
+      - {target: 22de09615f92, rel: contradicts}
+    deprecated: false
+
+  - number: PROCESS-X-008
+    hash: cbc24fa6797a
+    name: skipping-the-interview
+    type: antipattern
+    description: >
+      Assuming the agent already knows what the product should do based on
+      training data or a brief description. Every product has domain-specific
+      requirements that cannot be inferred. The structured interview surfaces
+      them before development begins.
+    links:
+      - {target: 86131854ce87, rel: contradicts}
+      - {target: 036dcf4739fc, rel: contradicts}
+    deprecated: false

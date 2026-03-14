@@ -1,0 +1,5 @@
+entries:
+  - version: 1
+    date: 2026-03-13
+    changes:
+      - {action: initial, summary: "Extracted rules from 17 markdown files into YAML rule system"}

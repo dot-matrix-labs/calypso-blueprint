@@ -1,0 +1,867 @@
+meta:
+  domain: TEST
+  title: Testing Blueprint
+  version: 1
+  requires:
+    - blueprints/environment-blueprint.md
+
+rules:
+
+  # ── Threats ──────────────────────────────────────────────────────────────
+
+  - number: TEST-T-001
+    hash: e9f7459b95e2
+    name: environment-parity
+    type: threat
+    description: >
+      Code passes tests on macOS but fails on Linux in production. Tests must
+      run on the same OS and runtime as production to ensure environment
+      parity.
+    links:
+      - {target: db116b037c86, rel: depends_on}
+      - {target: 79e2238757ad, rel: depends_on}
+    deprecated: false
+
+  - number: TEST-T-002
+    hash: d32ec4d74c54
+    name: test-validity
+    type: threat
+    description: >
+      Mock-based tests pass but real API behavior differs. Tests must exercise
+      real behavior, not developer assumptions.
+    links:
+      - {target: 1b3bbdf1be70, rel: depends_on}
+      - {target: 02319b90c14c, rel: depends_on}
+    deprecated: false
+
+  - number: TEST-T-003
+    hash: 5fc6e1e1a2da
+    name: fixture-accuracy
+    type: threat
+    description: >
+      Agent generates test fixtures by guessing API response shapes. Fixtures
+      must be recorded from real API calls, never fabricated.
+    links:
+      - {target: 135eccfbae17, rel: depends_on}
+      - {target: 02bc6ae8570c, rel: depends_on}
+    deprecated: false
+
+  - number: TEST-T-004
+    hash: 4276faad79f4
+    name: browser-fidelity
+    type: threat
+    description: >
+      Browser test passes in Node/JSDOM but fails in real Chromium. Component
+      and E2E tests must run in a real browser engine.
+    links:
+      - {target: f34f055c75c5, rel: depends_on}
+      - {target: db116b037c86, rel: depends_on}
+    deprecated: false
+
+  - number: TEST-T-005
+    hash: 32ab573dc484
+    name: coverage-completeness
+    type: threat
+    description: >
+      Test suite passes but critical user workflow is untested. Test
+      categories must cover unit, integration, component, and end-to-end.
+    links:
+      - {target: 0dcc3d6b670e, rel: depends_on}
+      - {target: a4f8d9204053, rel: depends_on}
+    deprecated: false
+
+  - number: TEST-T-006
+    hash: 3450e2a1cbdb
+    name: merge-gating
+    type: threat
+    description: >
+      CI allows merge despite failing tests. No code merges without all test
+      suites passing.
+    links:
+      - {target: e01fc87ad565, rel: depends_on}
+      - {target: fab7da1aaf57, rel: depends_on}
+    deprecated: false
+
+  - number: TEST-T-007
+    hash: 0917f9171c4c
+    name: test-reliability
+    type: threat
+    description: >
+      Flaky test is ignored or disabled instead of fixed. Every test must be
+      deterministic; flaky tests are bugs.
+    links:
+      - {target: 0fc8dd426891, rel: depends_on}
+      - {target: 15aa30217ba8, rel: depends_on}
+    deprecated: false
+
+  - number: TEST-T-008
+    hash: e045a36e1210
+    name: test-first-discipline
+    type: threat
+    description: >
+      Agent writes tests after implementation, confirming existing behavior
+      rather than specifying intent. Test stubs must be written before
+      features, encoding expected behavior.
+    links:
+      - {target: 3c6ad8d36525, rel: depends_on}
+      - {target: 0dc684f05dd6, rel: depends_on}
+    deprecated: false
+
+  - number: TEST-T-009
+    hash: d69a992372b2
+    name: failure-diagnosis
+    type: threat
+    description: >
+      A single CI workflow failure gives no information about which suite
+      failed. Each test suite must run in its own workflow for precise
+      identification.
+    links:
+      - {target: fab7da1aaf57, rel: depends_on}
+      - {target: 37d0664a0b4b, rel: depends_on}
+    deprecated: false
+
+  # ── Principles ───────────────────────────────────────────────────────────
+
+  - number: TEST-P-001
+    hash: 1b3bbdf1be70
+    name: prefer-real-systems
+    type: principle
+    description: >
+      Prefer real dependencies over test doubles. Order of preference: real
+      dependency, recorded fixture from a real dependency, then a
+      narrowly-scoped fake only when the boundary cannot be exercised
+      credibly. The burden of proof is on the fake. A fake that drifts from
+      production behavior is a defect in the test architecture.
+    links:
+      - {target: d32ec4d74c54, rel: mitigates}
+      - {target: 135eccfbae17, rel: refines}
+      - {target: 02319b90c14c, rel: refines}
+    deprecated: false
+
+  - number: TEST-P-002
+    hash: 65d4d742b6e6
+    name: fixtures-are-files
+    type: principle
+    description: >
+      Fixtures are serialized artifacts on disk: request/response pairs,
+      payload snapshots, logs, and other replayable data captured from real
+      systems. Environment variables are runtime configuration only and must
+      never be used as fixture storage.
+    links:
+      - {target: 73c69823c03a, rel: refines}
+      - {target: 135eccfbae17, rel: refines}
+    deprecated: false
+
+  - number: TEST-P-003
+    hash: db116b037c86
+    name: test-on-target
+    type: principle
+    description: >
+      Code must be tested on its target platform. Code running in Kubernetes
+      in production must be tested in Kubernetes. Code rendering in a browser
+      must be tested in a real headless browser engine. The delta between test
+      and production environments is where bugs hide; eliminate it entirely.
+    links:
+      - {target: e9f7459b95e2, rel: mitigates}
+      - {target: 4276faad79f4, rel: mitigates}
+      - {target: f34f055c75c5, rel: refines}
+      - {target: 2485ba0453b8, rel: refines}
+    deprecated: false
+
+  - number: TEST-P-004
+    hash: 3c6ad8d36525
+    name: tests-before-code
+    type: principle
+    description: >
+      Test stubs are created during the scaffold phase before any feature code
+      exists. Each stub encodes expected behavior as a failing test. The agent
+      makes the tests pass during implementation rather than writing code
+      first and confirming it with tests afterward.
+    links:
+      - {target: e045a36e1210, rel: mitigates}
+      - {target: 0dc684f05dd6, rel: refines}
+      - {target: c788e858d862, rel: refines}
+    deprecated: false
+
+  - number: TEST-P-005
+    hash: 217845b40c8f
+    name: suite-independence
+    type: principle
+    description: >
+      Each test suite must contain all setup, teardown, and fixture loading it
+      needs. It must not depend on another suite having run first, on shared
+      global state, or on manual environment preparation. Any developer or CI
+      runner can execute any suite in isolation.
+    links:
+      - {target: fab7da1aaf57, rel: refines}
+    deprecated: false
+
+  - number: TEST-P-006
+    hash: 9f579d269f3e
+    name: local-ci-parity
+    type: principle
+    description: >
+      Developer-machine test invocation must match CI invocation for each
+      suite. CI must not run a different runner, setup path, or suite
+      selection than local execution. The same commands and suite boundaries
+      are used locally and in CI so a local pass predicts a CI pass.
+    links:
+      - {target: 2a5242355dd5, rel: refines}
+      - {target: 75558009a61e, rel: refines}
+      - {target: 6d71b8f70b27, rel: refines}
+    deprecated: false
+
+  - number: TEST-P-007
+    hash: 37d0664a0b4b
+    name: precise-failure
+    type: principle
+    description: >
+      When a test fails, the failure message must identify which suite, which
+      test, and which assertion failed without requiring log parsing. CI
+      workflows are organized one-per-suite so a red check immediately names
+      the broken category.
+    links:
+      - {target: d69a992372b2, rel: mitigates}
+      - {target: fab7da1aaf57, rel: refines}
+      - {target: a12043dd7788, rel: refines}
+    deprecated: false
+
+  - number: TEST-P-008
+    hash: 7e1f4bd87e6f
+    name: replay-recovery-simulation
+    type: principle
+    description: >
+      Correctness extends beyond request/response behavior. The system must
+      prove it can replay durable facts into correct state, recover from clean
+      backups, and create isolated sandbox twins that do not leak mutations
+      into production. These are core verification surfaces for autonomous
+      enterprise software.
+    links:
+      - {target: a6f272bc5960, rel: refines}
+      - {target: 9b05a04ba813, rel: refines}
+      - {target: f8776a7fc7da, rel: refines}
+      - {target: b8b90c432e76, rel: refines}
+      - {target: 8ff4458283c5, rel: refines}
+    deprecated: false
+
+  - number: TEST-P-009
+    hash: 13e1b783765f
+    name: deterministic-gates
+    type: principle
+    description: >
+      Testing policy is enforced through machine-checkable gates for suite
+      pass/fail, local-CI command parity, fixture provenance, replay coverage,
+      recovery coverage, and twin lifecycle verification. A repository that
+      contains tests but cannot prove these gates is not compliant.
+    links:
+      - {target: 3450e2a1cbdb, rel: mitigates}
+      - {target: e01fc87ad565, rel: refines}
+    deprecated: false
+
+  # ── Design Patterns ─────────────────────────────────────────────────────
+
+  - number: TEST-D-001
+    hash: 135eccfbae17
+    name: golden-fixture-recording
+    type: design_pattern
+    description: >
+      Build a fixture recording tool that makes real HTTP requests to external
+      APIs and serializes full request/response pairs to disk. These golden
+      fixtures are committed to the repository and replayed during tests.
+      Fixtures are periodically refreshed by re-running the recorder against
+      the live API. Stale fixtures are mitigated by scheduled refresh runs and
+      schema drift alerts.
+    links:
+      - {target: 1b3bbdf1be70, rel: refines}
+      - {target: 65d4d742b6e6, rel: refines}
+      - {target: 5fc6e1e1a2da, rel: mitigates}
+      - {target: cd574357727a, rel: refines}
+      - {target: 02bc6ae8570c, rel: refines}
+    deprecated: false
+
+  - number: TEST-D-002
+    hash: fab7da1aaf57
+    name: suite-per-workflow-ci
+    type: design_pattern
+    description: >
+      Create one CI workflow file per test suite. Each workflow is
+      self-contained with its own dependency installation, environment setup,
+      suite execution, and result reporting. The merge gate requires all
+      workflows to pass. A red check immediately identifies the broken suite.
+      Setup duplication across workflows is acceptable to guarantee
+      independence.
+    links:
+      - {target: 217845b40c8f, rel: refines}
+      - {target: 37d0664a0b4b, rel: refines}
+      - {target: d69a992372b2, rel: mitigates}
+      - {target: a12043dd7788, rel: refines}
+      - {target: 298ede0dfa7f, rel: refines}
+    deprecated: false
+
+  - number: TEST-D-003
+    hash: 2a5242355dd5
+    name: local-ci-command-parity
+    type: design_pattern
+    description: >
+      Define canonical per-suite commands and run those exact commands in both
+      local development and CI. CI runs each suite's canonical command in its
+      own workflow. Local development can run any single suite command or an
+      aggregate command that invokes all canonical suite commands unchanged.
+    links:
+      - {target: 9f579d269f3e, rel: refines}
+      - {target: 75558009a61e, rel: refines}
+      - {target: 6d71b8f70b27, rel: refines}
+    deprecated: false
+
+  - number: TEST-D-004
+    hash: f34f055c75c5
+    name: headless-browser-testing
+    type: design_pattern
+    description: >
+      All browser tests run in headless mode using a browser automation
+      framework that launches a real browser engine with rendering, layout,
+      JavaScript execution, and network behavior identical to a visible
+      browser. Visual output is captured as screenshots for inspection by
+      humans or vision-capable models.
+    links:
+      - {target: db116b037c86, rel: refines}
+      - {target: 4276faad79f4, rel: mitigates}
+      - {target: 58672304c9d2, rel: refines}
+    deprecated: false
+
+  - number: TEST-D-005
+    hash: e89af6c2f0d3
+    name: separate-quality-gate
+    type: design_pattern
+    description: >
+      Use one dedicated quality-gate workflow for lint, format check, and
+      build verification. Keep test workflows focused on executing test suite
+      commands only. Merge gating requires both the quality-gate workflow and
+      all test-suite workflows to pass.
+    links:
+      - {target: 34c0790ac993, rel: refines}
+      - {target: 9673d6a79b8a, rel: refines}
+      - {target: ff3651f8db7d, rel: refines}
+    deprecated: false
+
+  - number: TEST-D-006
+    hash: a6f272bc5960
+    name: ledger-replay-recovery
+    type: design_pattern
+    description: >
+      Add dedicated tests that start from durable ledger facts and prove the
+      system can rebuild state deterministically. The suite must cover replay
+      from genesis, replay from checkpoints, restore from backup into a clean
+      environment, comparison of rebuilt state to materialized state, and
+      rollback or compensation misuse scenarios. Tests run against real
+      PostgreSQL and real validator logic.
+    links:
+      - {target: 7e1f4bd87e6f, rel: refines}
+      - {target: f8776a7fc7da, rel: refines}
+      - {target: b8b90c432e76, rel: refines}
+    deprecated: false
+
+  - number: TEST-D-007
+    hash: 9b05a04ba813
+    name: digital-twin-lifecycle
+    type: design_pattern
+    description: >
+      Add a twin lifecycle suite that provisions a sandboxed twin from
+      production-relevant inputs, executes a realistic transaction sequence,
+      asserts on the produced diff and events, verifies production state is
+      unchanged, and confirms teardown revokes access and removes mutable
+      state. Tests must use the real twin orchestration path.
+    links:
+      - {target: 7e1f4bd87e6f, rel: refines}
+      - {target: 8ff4458283c5, rel: refines}
+    deprecated: false
+
+  # ── Architectures ────────────────────────────────────────────────────────
+
+  - number: TEST-A-001
+    hash: 79e2238757ad
+    name: single-cluster-sequential-gate
+    type: architecture
+    description: >
+      All suites run sequentially on a single development host or CI runner,
+      with a local Kubernetes cluster for integration tests. CI mirrors local
+      execution exactly. Appropriate when total test time is under five
+      minutes.
+    links:
+      - {target: 9f579d269f3e, rel: refines}
+      - {target: e9f7459b95e2, rel: refines}
+    deprecated: false
+
+  - number: TEST-A-002
+    hash: 298ede0dfa7f
+    name: parallel-ci-suites
+    type: architecture
+    description: >
+      Each test suite runs on its own CI runner in parallel with separate
+      workflows for quality gate, unit, integration, component, and E2E tests.
+      Merge gate requires all workflows to pass. Failure is immediately
+      localized. Appropriate when total test time exceeds five minutes.
+    links:
+      - {target: fab7da1aaf57, rel: refines}
+      - {target: e89af6c2f0d3, rel: refines}
+      - {target: 37d0664a0b4b, rel: refines}
+    deprecated: false
+
+  - number: TEST-A-003
+    hash: cd574357727a
+    name: fixture-refresh-pipeline
+    type: architecture
+    description: >
+      A scheduled CI job runs a fixture recorder against live external APIs,
+      serializes request/response pairs, compares against existing fixtures,
+      alerts on schema drift, and commits updated fixtures. Integration tests
+      use committed fixtures and never call live APIs during test runs.
+    links:
+      - {target: 135eccfbae17, rel: refines}
+      - {target: 05d7d8bf3011, rel: refines}
+      - {target: 2e780501c8e9, rel: refines}
+    deprecated: false
+
+  # ── Checklist ────────────────────────────────────────────────────────────
+
+  - number: TEST-C-001
+    hash: e71a98fb1de2
+    name: vitest-unit-tests
+    type: checklist
+    description: >
+      Vitest configured and running for unit tests with at least one passing
+      test.
+    links:
+      - {target: 217845b40c8f, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-002
+    hash: cd9ec303e282
+    name: playwright-installed
+    type: checklist
+    description: >
+      Playwright installed with OS dependencies; headless Chromium launches.
+    links:
+      - {target: f34f055c75c5, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-003
+    hash: a8a20e29fa32
+    name: golden-fixture-recorded
+    type: checklist
+    description: >
+      Golden fixture recorder built; at least one external API fixture
+      recorded from live traffic.
+    links:
+      - {target: 135eccfbae17, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-004
+    hash: 70cc4097e39b
+    name: integration-tests-in-k8s
+    type: checklist
+    description: >
+      Integration tests run against a deployed container in Kubernetes (e.g.,
+      local kind cluster), with real PostgreSQL connections.
+    links:
+      - {target: db116b037c86, rel: verifies}
+      - {target: 2485ba0453b8, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-005
+    hash: 58672304c9d2
+    name: component-tests-in-browser
+    type: checklist
+    description: >
+      Component tests run in headless Chromium via Playwright, not JSDOM.
+    links:
+      - {target: f34f055c75c5, rel: verifies}
+      - {target: 4276faad79f4, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-006
+    hash: 0dcc3d6b670e
+    name: e2e-test-passing
+    type: checklist
+    description: >
+      Full-page E2E test suite has at least one passing test covering a core
+      workflow.
+    links:
+      - {target: 32ab573dc484, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-007
+    hash: fb899ca2312e
+    name: four-ci-workflows
+    type: checklist
+    description: >
+      All four CI workflows created (unit, integration, component, E2E).
+    links:
+      - {target: fab7da1aaf57, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-008
+    hash: 7a6de39eeb2e
+    name: ci-runs-all-suites
+    type: checklist
+    description: >
+      CI executes all defined suites (unit, integration, component, E2E) on
+      every merge-gated change.
+    links:
+      - {target: 3450e2a1cbdb, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-009
+    hash: 6d71b8f70b27
+    name: canonical-commands-documented
+    type: checklist
+    description: >
+      Canonical per-suite commands are documented and identical between local
+      and CI execution.
+    links:
+      - {target: 9f579d269f3e, rel: verifies}
+      - {target: 2a5242355dd5, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-010
+    hash: 34c0790ac993
+    name: quality-gate-workflow
+    type: checklist
+    description: >
+      Dedicated CI quality-gate workflow exists and runs lint, format check,
+      and build verification.
+    links:
+      - {target: e89af6c2f0d3, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-011
+    hash: 9673d6a79b8a
+    name: suite-workflows-tests-only
+    type: checklist
+    description: >
+      Test-suite CI workflows execute tests only with no duplicated quality
+      checks.
+    links:
+      - {target: e89af6c2f0d3, rel: verifies}
+      - {target: ff3651f8db7d, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-012
+    hash: e01fc87ad565
+    name: merge-gate-configured
+    type: checklist
+    description: >
+      Merge gate configured: all workflows must pass before merge.
+    links:
+      - {target: 3450e2a1cbdb, rel: verifies}
+      - {target: 13e1b783765f, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-013
+    hash: c788e858d862
+    name: test-stubs-exist
+    type: checklist
+    description: >
+      Test stubs exist for all planned feature areas. Failing is expected;
+      missing is not.
+    links:
+      - {target: 3c6ad8d36525, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-014
+    hash: f8776a7fc7da
+    name: ledger-replay-tests
+    type: checklist
+    description: >
+      Ledger replay tests exist: genesis replay, checkpoint replay, and
+      materialized-state comparison.
+    links:
+      - {target: 7e1f4bd87e6f, rel: verifies}
+      - {target: a6f272bc5960, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-015
+    hash: b8b90c432e76
+    name: backup-restore-test
+    type: checklist
+    description: >
+      Backup restore test exists: clean environment restored and replayed to
+      current state.
+    links:
+      - {target: 7e1f4bd87e6f, rel: verifies}
+      - {target: a6f272bc5960, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-016
+    hash: 8ff4458283c5
+    name: twin-lifecycle-test
+    type: checklist
+    description: >
+      Digital twin lifecycle test exists: clone creation, sandbox execution,
+      teardown, and proof that production state is unchanged.
+    links:
+      - {target: 7e1f4bd87e6f, rel: verifies}
+      - {target: 9b05a04ba813, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-017
+    hash: b70f8063710d
+    name: consequential-transaction-tests
+    type: checklist
+    description: >
+      Consequential transaction tests cover dual attribution, delegated
+      authority, and compensation paths.
+    links:
+      - {target: a6f272bc5960, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-018
+    hash: 757f0cb7f942
+    name: no-mocks
+    type: checklist
+    description: >
+      No mocks in any test file; grep for mock, jest.fn, vi.fn returns zero
+      results in test code.
+    links:
+      - {target: 1b3bbdf1be70, rel: verifies}
+      - {target: 02319b90c14c, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-019
+    hash: 05d7d8bf3011
+    name: fixture-refresh-pipeline
+    type: checklist
+    description: >
+      Fixture refresh pipeline runs on schedule; schema drift alerts
+      configured.
+    links:
+      - {target: cd574357727a, rel: verifies}
+      - {target: 135eccfbae17, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-020
+    hash: 44b95721cd57
+    name: suites-under-five-minutes
+    type: checklist
+    description: >
+      All four test suites run in under five minutes total in CI.
+    links:
+      - {target: 79e2238757ad, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-021
+    hash: 15aa30217ba8
+    name: zero-flaky-tests
+    type: checklist
+    description: >
+      Zero flaky tests; any intermittent failure is treated as a bug and fixed
+      immediately.
+    links:
+      - {target: 0917f9171c4c, rel: verifies}
+      - {target: 0fc8dd426891, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-022
+    hash: a9aac2bccf29
+    name: coverage-measured
+    type: checklist
+    description: >
+      Test coverage measured and reported (not gated, but visible).
+    links: []
+    deprecated: false
+
+  - number: TEST-C-023
+    hash: 904267ec78f8
+    name: component-interaction-tests
+    type: checklist
+    description: >
+      Component tests cover all critical UI components with at least one
+      interaction test each.
+    links:
+      - {target: f34f055c75c5, rel: verifies}
+      - {target: 58672304c9d2, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-024
+    hash: a4f8d9204053
+    name: e2e-covers-workflows
+    type: checklist
+    description: >
+      Full-page E2E tests cover all user-facing workflows documented in the
+      PRD.
+    links:
+      - {target: 32ab573dc484, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-025
+    hash: 2e780501c8e9
+    name: fixtures-refreshed
+    type: checklist
+    description: >
+      Golden fixtures refreshed within the last 30 days; no stale fixtures.
+    links:
+      - {target: cd574357727a, rel: verifies}
+      - {target: 135eccfbae17, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-026
+    hash: d4e204527e22
+    name: ci-passes-last-fifty
+    type: checklist
+    description: >
+      CI passes on every commit to main for the last 50 commits with no
+      broken-window tolerance.
+    links:
+      - {target: 3450e2a1cbdb, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-027
+    hash: 1be4caaaa2b1
+    name: execution-time-monitored
+    type: checklist
+    description: >
+      Test suite execution time monitored; degradation triggers investigation.
+    links:
+      - {target: 44b95721cd57, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-028
+    hash: 510e8a346547
+    name: features-require-tests
+    type: checklist
+    description: >
+      New features cannot be merged without corresponding test coverage in the
+      appropriate suite.
+    links:
+      - {target: 3c6ad8d36525, rel: verifies}
+      - {target: 3450e2a1cbdb, rel: verifies}
+    deprecated: false
+
+  - number: TEST-C-029
+    hash: 1f1ad92e6e0f
+    name: test-documentation
+    type: checklist
+    description: >
+      Test documentation in docs/ describes how to run each suite locally and
+      how to add new tests.
+    links:
+      - {target: 9f579d269f3e, rel: verifies}
+    deprecated: false
+
+  # ── Antipatterns ─────────────────────────────────────────────────────────
+
+  - number: TEST-X-001
+    hash: 02319b90c14c
+    name: mock-everything
+    type: antipattern
+    description: >
+      Replacing every external dependency with a mock so tests run fast and
+      pass reliably. The tests validate the mock's behavior, not the system's.
+      When the real dependency changes, tests still pass and production
+      breaks.
+    links:
+      - {target: 1b3bbdf1be70, rel: contradicts}
+      - {target: d32ec4d74c54, rel: contradicts}
+    deprecated: false
+
+  - number: TEST-X-002
+    hash: 02bc6ae8570c
+    name: fabricated-fixtures
+    type: antipattern
+    description: >
+      Writing API response fixtures by hand based on documentation or memory
+      instead of recording them from live traffic. Handwritten fixtures
+      reflect incomplete understanding of the API. The golden fixture recorder
+      exists to prevent this.
+    links:
+      - {target: 5fc6e1e1a2da, rel: contradicts}
+      - {target: 135eccfbae17, rel: contradicts}
+    deprecated: false
+
+  - number: TEST-X-003
+    hash: 73c69823c03a
+    name: fixtures-in-env-vars
+    type: antipattern
+    description: >
+      Encoding replay data in .env files or environment variables. Env vars
+      are configuration channels, not fixture storage.
+    links:
+      - {target: 65d4d742b6e6, rel: contradicts}
+    deprecated: false
+
+  - number: TEST-X-004
+    hash: a12043dd7788
+    name: monolithic-ci-workflow
+    type: antipattern
+    description: >
+      Running all test suites in a single workflow and scanning logs to find
+      which suite failed. A failed unit test and a failed E2E test produce the
+      same red check, requiring manual log inspection.
+    links:
+      - {target: fab7da1aaf57, rel: contradicts}
+      - {target: 37d0664a0b4b, rel: contradicts}
+      - {target: d69a992372b2, rel: contradicts}
+    deprecated: false
+
+  - number: TEST-X-005
+    hash: 75558009a61e
+    name: local-ci-divergence
+    type: antipattern
+    description: >
+      Running one set of commands locally and another in CI. Any divergence
+      breaks confidence in local results.
+    links:
+      - {target: 9f579d269f3e, rel: contradicts}
+      - {target: 2a5242355dd5, rel: contradicts}
+    deprecated: false
+
+  - number: TEST-X-006
+    hash: ff3651f8db7d
+    name: duplicated-quality-checks
+    type: antipattern
+    description: >
+      Re-running lint/format/build inside every suite workflow despite having
+      a dedicated quality gate.
+    links:
+      - {target: e89af6c2f0d3, rel: contradicts}
+      - {target: 9673d6a79b8a, rel: contradicts}
+    deprecated: false
+
+  - number: TEST-X-007
+    hash: 0dc684f05dd6
+    name: tests-after-features
+    type: antipattern
+    description: >
+      Writing tests after the feature is implemented to confirm it works.
+      These tests encode current behavior, not intended behavior. Bugs become
+      encoded as expected behavior. Test stubs must be written first.
+    links:
+      - {target: 3c6ad8d36525, rel: contradicts}
+      - {target: e045a36e1210, rel: contradicts}
+    deprecated: false
+
+  - number: TEST-X-008
+    hash: 0fc8dd426891
+    name: ignored-flakiness
+    type: antipattern
+    description: >
+      Re-running a failed test because it is flaky instead of investigating
+      the root cause. Flaky tests have hidden dependencies on timing,
+      ordering, or shared state. Every flaky test is a bug.
+    links:
+      - {target: 0917f9171c4c, rel: contradicts}
+      - {target: 15aa30217ba8, rel: contradicts}
+    deprecated: false
+
+  - number: TEST-X-009
+    hash: 2485ba0453b8
+    name: test-environment-shortcuts
+    type: antipattern
+    description: >
+      Running integration tests natively on the host instead of inside the
+      full Kubernetes container deployment. If production runs in Kubernetes,
+      integration tests must run against containers in Kubernetes.
+    links:
+      - {target: db116b037c86, rel: contradicts}
+      - {target: 70cc4097e39b, rel: contradicts}
+    deprecated: false

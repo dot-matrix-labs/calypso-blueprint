@@ -126,11 +126,28 @@ init/scaffold-task.md                  ── project bootstrap entrypoint
 
 ---
 
+## YAML Rule System
+
+The canonical rule corpus lives in `rules/`. Start with the graph index, then load specific rule files on demand:
+
+```
+rules/graph.yaml          ── compact graph index (load first, ~757 rules)
+rules/changelog.yaml      ── version history
+rules/blueprints/*.yaml   ── 9 blueprint rule files (ARCH, AUTH, DATA, DEPLOY, ENV, PROCESS, TEST, UX, WORKER)
+rules/implementations/*.yaml ── 8 implementation rule files (IMPL-ARCH, IMPL-AUTH, etc.)
+```
+
+Each rule has a stable hash identity (`sha256("NUMBER:name")[:12]`), typed links to other rules, and a category (principle, threat, design_pattern, architecture, checklist, antipattern, implementation).
+
+The markdown files in `blueprints/` and `implementation-ts/` are retained for reference but `rules/` is canonical.
+
+---
+
 ## Precedence
 
 When documents conflict, see `agent-communication.md` §Document Precedence Rules. Summary:
 
 ```
-development docs  >  implementation docs  >  blueprints
+rules/ (YAML)  >  development docs  >  implementation docs (markdown)  >  blueprints (markdown)
 Within a tier: most recent last-edited date wins.
 ```

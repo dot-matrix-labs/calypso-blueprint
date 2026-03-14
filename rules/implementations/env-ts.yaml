@@ -1,0 +1,137 @@
+meta:
+  domain: IMPL-ENV
+  title: Environment - TypeScript Implementation
+  implements: ENV
+  version: 1
+
+rules:
+  - number: IMPL-ENV-001
+    hash: 19ab8bfb8730
+    name: host-dep-git
+    type: implementation
+    description: >
+      git is a required host dependency for version control.
+    links:
+      - {target: 9bf3512d80fc, rel: implements}  # ENV-C-001
+    deprecated: false
+
+  - number: IMPL-ENV-002
+    hash: 1410fbb52e79
+    name: host-dep-gh-https
+    type: implementation
+    description: >
+      gh (GitHub CLI) is a required host dependency, authenticated via HTTPS
+      using gh auth login -p https -w.
+    links:
+      - {target: 9bf3512d80fc, rel: implements}  # ENV-C-001
+    deprecated: false
+
+  - number: IMPL-ENV-003
+    hash: 0d10d95fe4b7
+    name: host-dep-tmux
+    type: implementation
+    description: >
+      tmux is a required host dependency for persistent terminal sessions
+      that survive SSH disconnects.
+    links:
+      - {target: 1d0d5a6c0fde, rel: implements}  # ENV-C-008
+    deprecated: false
+
+  - number: IMPL-ENV-004
+    hash: e75f10e67aee
+    name: host-dep-bun
+    type: implementation
+    description: >
+      Bun is the JavaScript/TypeScript runtime and package manager. It replaces
+      Node, npm, webpack, and jest in a single binary.
+    links:
+      - {target: 9bf3512d80fc, rel: implements}  # ENV-C-001
+    deprecated: false
+
+  - number: IMPL-ENV-005
+    hash: 6eecad0d40e5
+    name: host-dep-agent-cli
+    type: implementation
+    description: >
+      An agent CLI (Claude Code, Cursor server, Gemini CLI, or equivalent) is
+      a required host dependency. The agent runs on the cloud host, not locally.
+    links:
+      - {target: 54bdaf625e7e, rel: implements}  # ENV-C-004
+    deprecated: false
+
+  - number: IMPL-ENV-006
+    hash: a9398935df4c
+    name: host-dep-playwright
+    type: implementation
+    description: >
+      Playwright OS dependencies are required on the host for headless Chromium.
+      Install via bunx playwright install-deps.
+    links:
+      - {target: 7add10d6242f, rel: implements}  # ENV-C-016
+    deprecated: false
+
+  - number: IMPL-ENV-007
+    hash: 90c694d2af9d
+    name: session-start-read-context
+    type: implementation
+    description: >
+      At session start, the agent reads all files in agent-context/ before
+      any development or documentation work.
+    links:
+      - {target: 223b1f507440, rel: implements}  # ENV-C-009
+    deprecated: false
+
+  - number: IMPL-ENV-008
+    hash: d4f76137c782
+    name: preview-server-port-31415
+    type: implementation
+    description: >
+      The Calypso dev server binds to port 31415. This is the project-wide
+      convention and must be exposed on the host firewall.
+    links:
+      - {target: edd5ed9ab836, rel: implements}  # ENV-C-005
+    deprecated: false
+
+  - number: IMPL-ENV-009
+    hash: a48d8014980f
+    name: justified-tmux
+    type: implementation
+    description: >
+      tmux is justified as a buy decision. Session persistence with decades
+      of stability; a DIY terminal multiplexer is absurd.
+    links:
+      - {target: 1d0d5a6c0fde, rel: implements}  # ENV-C-008
+    deprecated: false
+
+  - number: IMPL-ENV-010
+    hash: 853e1a23ff81
+    name: justified-bun
+    type: implementation
+    description: >
+      Bun is justified as a buy decision. Runtime, bundler, test runner, and
+      package manager in one binary; replaces Node + npm + webpack + jest.
+    links:
+      - {target: 9bf3512d80fc, rel: implements}  # ENV-C-001
+    deprecated: false
+
+  - number: IMPL-ENV-011
+    hash: b176e3163d31
+    name: justified-gh
+    type: implementation
+    description: >
+      gh is justified as a buy decision. GitHub API integration with auth
+      management; a DIY approach is fragile and under-tested.
+    links:
+      - {target: 9bf3512d80fc, rel: implements}  # ENV-C-001
+    deprecated: false
+
+  - number: IMPL-ENV-012
+    hash: 0d36858cdab3
+    name: justified-playwright
+    type: implementation
+    description: >
+      Playwright is justified as a buy decision. Headless browser automation
+      with cross-browser support; no viable DIY alternative.
+    links:
+      - {target: 7add10d6242f, rel: implements}  # ENV-C-016
+    deprecated: false

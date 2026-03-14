@@ -1,0 +1,373 @@
+meta:
+  domain: IMPL-TEST
+  title: Testing - TypeScript Implementation
+  implements: TEST
+  version: 1
+
+rules:
+  # ── Test Driver ────────────────────────────────────────────────────────
+
+  - number: IMPL-TEST-001
+    hash: 6548c9fd87e3
+    name: vitest-single-driver
+    type: implementation
+    description: >
+      Vitest is the single test driver for all TypeScript test categories
+      (unit, API integration, component, E2E). No other test runner (Jest,
+      Mocha, standalone Playwright runner) is permitted.
+    links:
+      - {target: e71a98fb1de2, rel: implements}   # TEST-C-001 vitest-unit-tests
+      - {target: a12043dd7788, rel: implements}   # TEST-X-004 monolithic-ci-workflow
+    deprecated: false
+
+  - number: IMPL-TEST-002
+    hash: 0d46961a3ef9
+    name: playwright-browser-provider
+    type: implementation
+    description: >
+      Playwright is used exclusively as a browser provider under Vitest, not
+      as a top-level test runner. Vitest owns lifecycle and reporting;
+      Playwright provides the headless Chromium engine.
+    links:
+      - {target: f34f055c75c5, rel: implements}   # TEST-D-004 headless-browser-testing
+      - {target: 4276faad79f4, rel: implements}   # TEST-T-004 browser-fidelity
+    deprecated: false
+
+  - number: IMPL-TEST-003
+    hash: 7b5baf097198
+    name: bun-runtime-infra-owner
+    type: implementation
+    description: >
+      Infrastructure setup and teardown (containers, servers, fixtures, env
+      wiring) is always performed from the Bun runtime side of Vitest hooks
+      or setup files. The Bun runtime owns subprocesses and environment values.
+    links:
+      - {target: 217845b40c8f, rel: implements}   # TEST-P-005 suite-independence
+      - {target: e9f7459b95e2, rel: implements}   # TEST-T-001 environment-parity
+    deprecated: false
+
+  # ── Test Category Locations ────────────────────────────────────────────
+
+  - number: IMPL-TEST-004
+    hash: e62998fded69
+    name: unit-test-location
+    type: implementation
+    description: >
+      Unit tests reside in /tests/unit, run via Vitest with no browser engine,
+      and execute in Bun runtime.
+    links:
+      - {target: e71a98fb1de2, rel: implements}   # TEST-C-001 vitest-unit-tests
+    deprecated: false
+
+  - number: IMPL-TEST-005
+    hash: e39a2442bd54
+    name: api-integration-location
+    type: implementation
+    description: >
+      API integration tests reside in /tests/integration, run via Vitest with
+      no browser engine, and execute in Bun runtime.
+    links:
+      - {target: 1b3bbdf1be70, rel: implements}   # TEST-P-001 prefer-real-systems
+    deprecated: false
+
+  - number: IMPL-TEST-006
+    hash: bf4555596741
+    name: component-test-location
+    type: implementation
+    description: >
+      React component tests reside in /tests/component, run via Vitest with
+      Playwright providing the headless Chromium engine.
+    links:
+      - {target: 58672304c9d2, rel: implements}   # TEST-C-005 component-tests-in-browser
+    deprecated: false
+
+  - number: IMPL-TEST-007
+    hash: c3506c5e6ac5
+    name: e2e-test-location
+    type: implementation
+    description: >
+      Full-page user story tests reside in /tests/e2e, run via Vitest with
+      Playwright providing the headless Chromium engine.
+    links:
+      - {target: 0dcc3d6b670e, rel: implements}   # TEST-C-006 e2e-test-passing
+    deprecated: false
+
+  # ── CI Workflow Structure ──────────────────────────────────────────────
+
+  - number: IMPL-TEST-008
+    hash: d31b7fc8e801
+    name: per-suite-ci-workflows
+    type: implementation
+    description: >
+      Separate CI workflow files exist for each test suite: test-unit.yml,
+      test-api.yml, test-component.yml, test-e2e.yml, and test-pg-container.yml.
+      Each installs runtime dependencies, runs its canonical command, and
+      reports pass/fail independently.
+    links:
+      - {target: fab7da1aaf57, rel: implements}   # TEST-D-002 suite-per-workflow-ci
+      - {target: fb899ca2312e, rel: implements}   # TEST-C-007 four-ci-workflows
+    deprecated: false
+
+  - number: IMPL-TEST-009
+    hash: dfe04c2a1b92
+    name: quality-gate-workflow
+    type: implementation
+    description: >
+      quality-gate.yml installs Bun and dependencies, runs lint, format check,
+      and build verification. It is separate from test-suite workflows.
+    links:
+      - {target: e89af6c2f0d3, rel: implements}   # TEST-D-005 separate-quality-gate
+      - {target: 34c0790ac993, rel: implements}   # TEST-C-010 quality-gate-workflow
+    deprecated: false
+
+  - number: IMPL-TEST-010
+    hash: c818e5cd4dd6
+    name: test-workflows-tests-only
+    type: implementation
+    description: >
+      Test-suite CI workflows run the suite's canonical test command only.
+      Quality checks (lint, format, build) are not duplicated in test workflows.
+    links:
+      - {target: 9673d6a79b8a, rel: implements}   # TEST-C-011 suite-workflows-tests-only
+      - {target: ff3651f8db7d, rel: implements}   # TEST-X-006 duplicated-quality-checks
+    deprecated: false
+
+  - number: IMPL-TEST-011
+    hash: 99b4eb127d53
+    name: merge-gate-all-pass
+    type: implementation
+    description: >
+      Merge is blocked unless the quality gate and all required test workflows
+      pass.
+    links:
+      - {target: e01fc87ad565, rel: implements}   # TEST-C-012 merge-gate-configured
+      - {target: 3450e2a1cbdb, rel: implements}   # TEST-T-006 merge-gating
+    deprecated: false
+
+  - number: IMPL-TEST-012
+    hash: d842c3e42341
+    name: local-ci-command-parity
+    type: implementation
+    description: >
+      Local invocation uses the exact same per-suite commands as CI. CI cannot
+      use alternate runners or alternate suite entrypoints.
+    links:
+      - {target: 2a5242355dd5, rel: implements}   # TEST-D-003 local-ci-command-parity
+      - {target: 9f579d269f3e, rel: implements}   # TEST-P-006 local-ci-parity
+      - {target: 6d71b8f70b27, rel: implements}   # TEST-C-009 canonical-commands-documented
+    deprecated: false
+
+  - number: IMPL-TEST-029
+    hash: 4c1456a6189a
+    name: release-workflow-gates
+    type: implementation
+    description: >
+      Release builds must pass the release workflow gates (release.yml) before
+      tagged publication.
+    links:
+      - {target: 3450e2a1cbdb, rel: implements}   # TEST-T-006 merge-gating
+    deprecated: false
+
+  # ── Fixture Format ─────────────────────────────────────────────────────
+
+  - number: IMPL-TEST-013
+    hash: 21b9f880e12a
+    name: golden-fixture-recorder
+    type: implementation
+    description: >
+      The fixture recorder is a Bun script that reads runtime configuration,
+      makes real HTTP requests to external services, writes response bodies
+      and headers to JSON files in /tests/fixtures/, and logs schema changes
+      compared to existing fixtures.
+    links:
+      - {target: 135eccfbae17, rel: implements}   # TEST-D-001 golden-fixture-recording
+      - {target: a8a20e29fa32, rel: implements}   # TEST-C-003 golden-fixture-recorded
+    deprecated: false
+
+  - number: IMPL-TEST-014
+    hash: 341b8e46ce49
+    name: fixtures-are-files
+    type: implementation
+    description: >
+      Fixtures are file artifacts under /tests/fixtures/ or suite-specific
+      fixture folders. Environment variables are configuration only and must
+      not be used as fixture storage.
+    links:
+      - {target: 65d4d742b6e6, rel: implements}   # TEST-P-002 fixtures-are-files
+      - {target: 73c69823c03a, rel: implements}   # TEST-X-003 fixtures-in-env-vars
+    deprecated: false
+
+  # ── Environment Setup Contract ─────────────────────────────────────────
+
+  - number: IMPL-TEST-015
+    hash: 20c8d61245ee
+    name: vitest-lifecycle-setup
+    type: implementation
+    description: >
+      Vitest lifecycle hooks (beforeAll, afterAll, setup files, test projects)
+      create and destroy infrastructure. Setup logic is never delegated to
+      ad hoc shell sessions or external manual orchestration.
+    links:
+      - {target: 217845b40c8f, rel: implements}   # TEST-P-005 suite-independence
+    deprecated: false
+
+  - number: IMPL-TEST-016
+    hash: 064d094db901
+    name: dynamic-infra-values
+    type: implementation
+    description: >
+      Dynamic infrastructure values (e.g. DB URL with random port) are
+      generated in Bun runtime and passed into app processes started by
+      Vitest-controlled setup.
+    links:
+      - {target: 217845b40c8f, rel: implements}   # TEST-P-005 suite-independence
+      - {target: 1b3bbdf1be70, rel: implements}   # TEST-P-001 prefer-real-systems
+    deprecated: false
+
+  - number: IMPL-TEST-017
+    hash: 4e58adb00633
+    name: no-fixed-database-url
+    type: implementation
+    description: >
+      Never rely on a fixed DATABASE_URL for browser/integration suites when
+      the container helper provides a random host port.
+    links:
+      - {target: 1b3bbdf1be70, rel: implements}   # TEST-P-001 prefer-real-systems
+    deprecated: false
+
+  # ── Browser Test Configuration ─────────────────────────────────────────
+
+  - number: IMPL-TEST-018
+    hash: 807ec56c57c5
+    name: headless-no-display
+    type: implementation
+    description: >
+      Browser tests run in real Playwright browsers in headless mode. Execution
+      has no GUI, no display server, and no DISPLAY dependency. Browser tests
+      are launched through Vitest configuration, not a standalone Playwright
+      runner.
+    links:
+      - {target: f34f055c75c5, rel: implements}   # TEST-D-004 headless-browser-testing
+      - {target: 58672304c9d2, rel: implements}   # TEST-C-005 component-tests-in-browser
+    deprecated: false
+
+  # ── Dependency Justification ───────────────────────────────────────────
+
+  - number: IMPL-TEST-019
+    hash: 126d03ac1ce4
+    name: vitest-dependency
+    type: implementation
+    description: >
+      Vitest is a Buy dependency: mandatory TypeScript test driver owning
+      lifecycle, orchestration, and reporting.
+    links:
+      - {target: e71a98fb1de2, rel: implements}   # TEST-C-001 vitest-unit-tests
+    deprecated: false
+
+  - number: IMPL-TEST-020
+    hash: 58a6c32dc03b
+    name: playwright-dependency
+    type: implementation
+    description: >
+      Playwright is a Buy dependency: browser provider used by Vitest for real
+      headless browser execution.
+    links:
+      - {target: cd9ec303e282, rel: implements}   # TEST-C-002 playwright-installed
+    deprecated: false
+
+  - number: IMPL-TEST-021
+    hash: 8e2c00e7ef7f
+    name: eslint-dependency
+    type: implementation
+    description: >
+      ESLint is a Buy dependency: linting with ecosystem plugins, infeasible
+      to replicate.
+    links:
+      - {target: 34c0790ac993, rel: implements}   # TEST-C-010 quality-gate-workflow
+    deprecated: false
+
+  - number: IMPL-TEST-022
+    hash: 4c73eecd149b
+    name: prettier-dependency
+    type: implementation
+    description: >
+      Prettier is a Buy dependency: deterministic formatting, agent-generated
+      formatter would diverge.
+    links:
+      - {target: 34c0790ac993, rel: implements}   # TEST-C-010 quality-gate-workflow
+    deprecated: false
+
+  # ── Antipatterns (TypeScript/Web-Specific) ──────────────────────────────
+
+  - number: IMPL-TEST-023
+    hash: 53e686c26eab
+    name: no-split-runners
+    type: implementation
+    description: >
+      Do not run some TypeScript suites in Vitest and others in standalone
+      Playwright, Jest, or Mocha. This fragments setup and lifecycle logic.
+      All TS suites must be driven by Vitest.
+    links:
+      - {target: a12043dd7788, rel: implements}   # TEST-X-004 monolithic-ci-workflow
+    deprecated: false
+
+  - number: IMPL-TEST-024
+    hash: 6814bcd073bd
+    name: no-infra-outside-bun
+    type: implementation
+    description: >
+      Do not start databases or servers manually and hope tests discover them.
+      Infrastructure must be created and cleaned by Bun-side Vitest setup so
+      each suite is self-contained.
+    links:
+      - {target: 2485ba0453b8, rel: implements}   # TEST-X-009 test-environment-shortcuts
+      - {target: 217845b40c8f, rel: implements}   # TEST-P-005 suite-independence
+    deprecated: false
+
+  - number: IMPL-TEST-025
+    hash: 54bcfd23d5c9
+    name: no-fixtures-in-env-vars
+    type: implementation
+    description: >
+      Do not put replay payloads or expected responses in .env values. Fixtures
+      must be committed file artifacts.
+    links:
+      - {target: 73c69823c03a, rel: implements}   # TEST-X-003 fixtures-in-env-vars
+    deprecated: false
+
+  - number: IMPL-TEST-026
+    hash: b938820a47b2
+    name: no-local-ci-drift
+    type: implementation
+    description: >
+      Do not run a suite with one command locally and a different command in CI.
+    links:
+      - {target: 75558009a61e, rel: implements}   # TEST-X-005 local-ci-divergence
+    deprecated: false
+
+  - number: IMPL-TEST-027
+    hash: db50ca7cf782
+    name: no-jsdom-as-browser
+    type: implementation
+    description: >
+      Do not run component tests in JSDOM or Happy DOM. These are DOM
+      simulations, not browsers; they lack layout, rendering, real event
+      dispatch, and network behavior. A component that passes in JSDOM and
+      fails in Chromium fails in production.
+    links:
+      - {target: 4276faad79f4, rel: implements}   # TEST-T-004 browser-fidelity
+      - {target: 58672304c9d2, rel: implements}   # TEST-C-005 component-tests-in-browser
+    deprecated: false
+
+  - number: IMPL-TEST-028
+    hash: 4285d870e3ab
+    name: schema-upgrade-not-yet-implemented
+    type: implementation
+    description: >
+      Schema-upgrade compatibility is a required release doctrine but this
+      repository does not yet ship a canonical test-schema-upgrade-compatibility
+      CI workflow. Do not claim that workflow exists until the suite and its
+      entrypoint actually exist in the repo.
+    links:
+      - {target: 3450e2a1cbdb, rel: implements}   # TEST-T-006 merge-gating
+    deprecated: false
