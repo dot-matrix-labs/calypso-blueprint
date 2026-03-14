@@ -1,0 +1,1341 @@
+version: 1
+name: rust-feature
+description: >
+  Full Calypso workflow for a Rust project. Covers the top-level development
+  phase machine, the init sub-machine, and the complete per-feature lifecycle
+  from issue creation to merge. CI checks are Rust-toolchain-specific.
+  Extend or override agent_prompts, checks, and hard_gates for your project.
+
+# ── Development Phase (top-level machine) ────────────────────────────────────
+#
+# This machine governs the overall repository lifecycle. It is not a per-feature
+# machine — it is the outer wrapper that determines which mode the repository is in.
+# The feature_workflow (below) runs entirely within the Development phase.
+
+development_phase:
+  initial: init
+  persisted_state: .calypso/repository-state.json
+
+  states:
+    init:
+      kind: orchestrator
+      description: >
+        Repository setup. Delegates entirely to the init_step sub-machine.
+        Entering this phase triggers `calypso init`. Default entry point for a
+        new repository.
+      sub_machine: init_step
+      on_enter:
+        gh_commands:
+          - cmd: "gh auth status"
+            purpose: Verify gh CLI is authenticated before any init work begins
+      next:
+        on_success: development  # triggered when init_step reaches complete
+
+    development:
+      kind: orchestrator
+      description: >
+        Active feature development. Each feature runs feature_workflow in its
+        own branch and worktree. The orchestrator reads the Implementation Plan
+        issue to determine which feature to start next.
+      context:
+        - source: github_issue
+          description: Implementation Plan issue (links to all feature issues)
+          load: "gh issue view <impl-plan-issue> --json title,body,comments"
+        - source: github_issue_list
+          description: Open feature issues
+          load: "gh issue list --label feature --state open --json number,title,labels"
+        - source: file
+          description: PRD
+          load: docs/prd.md
+      on_enter:
+        prompt: |
+          Read the Implementation Plan GitHub issue. Identify the next unstarted
+          feature (lowest-numbered open feature issue with no active branch).
+          Create a feature branch and worktree, then begin feature_workflow for
+          that feature. If no features remain, transition to testing.
+        gh_commands:
+          - cmd: "gh issue view <impl-plan-issue>"
+            purpose: Read current implementation plan
+          - cmd: "gh issue list --label feature --state open"
+            purpose: Identify next feature to work on
+          - cmd: "git worktree add ../worktrees/<slug> -b feat/<slug>"
+            purpose: Create isolated worktree for feature
+      next:
+        all_features_done: testing
+        reinit_requested: init
+
+    testing:
+      kind: agent
+      role: reviewer
+      description: >
+        Final QA pass before release. All features merged. Reviewer validates
+        the full integration on main.
+      context:
+        - source: file
+          description: PRD acceptance criteria
+          load: docs/prd.md
+        - source: command_output
+          description: Full test suite output on main
+          load: "cargo test --all"
+        - source: command_output
+          description: Coverage report
+          load: "cargo llvm-cov --summary-only"
+      prompt: |
+        Run the full test suite on main. Validate every acceptance criterion
+        in docs/prd.md is covered by at least one passing test. Produce a
+        release-readiness report as a GitHub issue comment. Flag any criterion
+        not covered by a test as a blocking gap.
+      expected_response:
+        format: github_issue_comment
+        required_sections:
+          - "CRITERIA COVERAGE — one line per PRD acceptance criterion: PASS or FAIL"
+          - "COVERAGE SUMMARY — overall line coverage percentage"
+          - "BLOCKING GAPS — list of uncovered criteria (empty if none)"
+          - "VERDICT — RELEASE READY or BLOCKED"
+      next:
+        release_ready: development  # back to development to ship
+        blocked: development        # corrections needed
+
+# ── Init Sub-Machine ──────────────────────────────────────────────────────────
+#
+# Strictly linear. Each step has exactly one successor. Interrupted inits resume
+# from the last completed step via .calypso/init-state.json.
+# Completion of this machine triggers development_phase → development.
+
+init_step:
+  initial: prompt-directory
+  persisted_state: .calypso/init-state.json
+  description: >
+    Sets up the repository for Calypso usage. All steps are idempotent —
+    re-running init (calypso-cli init --reinit) safely re-executes every step.
+
+  states:
+    prompt-directory:
+      kind: orchestrator
+      description: >
+        Confirm the workspace directory. Non-interactive when run from CWD.
+      context:
+        - source: env
+          description: Current working directory
+          load: "$PWD"
+      prompt: |
+        Confirm the workspace directory. If running from CWD non-interactively,
+        use $PWD. Write the confirmed path to .calypso/init-state.json as
+        repo_path. Do not prompt for input if a path is already known.
+      expected_response:
+        - .calypso/init-state.json written with repo_path field set
+      next:
+        on_success: create-git-repo
+
+    create-git-repo:
+      kind: orchestrator
+      description: >
+        Initialize .git if the directory is not already a git repository.
+      context:
+        - source: file
+          description: init-state.json
+          load: .calypso/init-state.json
+      prompt: |
+        Check whether repo_path contains a .git directory. If not, run
+        `git init`. Update completed_steps in init-state.json. This step is
+        a no-op if .git already exists.
+      expected_response:
+        - .git/ directory exists at repo_path
+        - init-state.json completed_steps includes create-git-repo
+      gh_commands: []
+      next:
+        on_success: create-upstream
+
+    create-upstream:
+      kind: orchestrator
+      description: >
+        Create or configure the GitHub upstream remote. Skipped if a GitHub
+        remote already exists.
+      context:
+        - source: file
+          description: init-state.json
+          load: .calypso/init-state.json
+        - source: command_output
+          description: Existing git remotes
+          load: "git remote -v"
+      prompt: |
+        Check if a remote named origin pointing to github.com already exists.
+        If it does, record github_org and github_repo from the URL and skip
+        to next step. If it does not, create a new GitHub repository and set
+        origin. Write github_org and github_repo to init-state.json.
+      expected_response:
+        - origin remote exists pointing to a github.com URL
+        - init-state.json has github_org and github_repo fields
+      gh_commands:
+        - cmd: "git remote -v"
+          purpose: Check for existing remote before creating
+        - cmd: "gh repo create <org>/<repo> --private --source=. --remote=origin --push"
+          purpose: Create GitHub repo, set remote, and push initial commit (if no remote)
+        - cmd: "gh repo view --json nameWithOwner,url"
+          purpose: Confirm repository exists and record coordinates
+      next:
+        on_success: scaffold-github-actions
+
+    scaffold-github-actions:
+      kind: orchestrator
+      description: >
+        Write required CI workflow files to .github/workflows/. Existing files
+        are never overwritten. Commit all new files.
+      context:
+        - source: directory_listing
+          description: Existing .github/workflows/ contents (if any)
+          load: "ls .github/workflows/ 2>/dev/null || echo empty"
+        - source: blueprint
+          description: Workflow file templates
+          load: examples/github-workflows/ (from calypso-blueprint)
+      prompt: |
+        Write the following files if they do not already exist. Do not
+        overwrite any file that is already present.
+
+          .github/workflows/rust-quality.yml  — build + lint + format gate
+          .github/workflows/rust-unit.yml     — cargo test --lib
+          .github/workflows/rust-integration.yml — cargo test --test '*'
+          .github/workflows/rust-e2e.yml      — end-to-end CLI tests
+          .github/workflows/rust-coverage.yml — cargo llvm-cov threshold gate
+          .github/workflows/pr-checklist.yml  — PR task item enforcement
+          .github/workflows/pr-depends-on.yml — Depends-on merge order
+          .github/PULL_REQUEST_TEMPLATE.md    — PR template
+
+        After writing, stage and commit all new files:
+          git add .github/
+          git commit -m "ci: scaffold GitHub Actions workflows"
+      expected_response:
+        - All 8 files present (new or pre-existing)
+        - All new files committed (not just staged)
+        - No existing files modified
+      gh_commands:
+        - cmd: "gh workflow list"
+          purpose: Verify workflows are visible to GitHub after push
+      next:
+        on_success: configure-local
+
+    configure-local:
+      kind: orchestrator
+      description: >
+        Write .calypso/ configuration and install the pre-push git hook.
+        The hook runs quality checks only — it must not gate on next-prompt.md
+        or the Implementation Plan issue.
+      context:
+        - source: file
+          description: init-state.json
+          load: .calypso/init-state.json
+        - source: blueprint
+          description: Workflow definition to activate
+          load: examples/workflows/rust-feature.yaml (this file)
+      prompt: |
+        Write the following files:
+
+          .calypso/repository-state.json
+            { "phase": "init", "github_org": "<org>", "github_repo": "<repo>",
+              "initialized_at": "<ISO timestamp>" }
+
+          .calypso/workflow.yaml
+            Copy of the active Calypso workflow definition (this file).
+
+          .git/hooks/pre-push  (chmod +x)
+            #!/bin/sh
+            set -e
+            cargo build --quiet
+            cargo clippy --quiet -- -D warnings
+            cargo fmt --check --quiet
+
+        The pre-push hook must not reference next-prompt.md, docs/plans/,
+        or any GitHub Issue. It runs locally and gates on code quality only.
+      expected_response:
+        - .calypso/repository-state.json written with correct fields
+        - .calypso/workflow.yaml written
+        - .git/hooks/pre-push written and executable
+      next:
+        on_success: verify-setup
+
+    verify-setup:
+      kind: orchestrator
+      description: >
+        Run calypso doctor. Apply the branch protection ruleset. Pre-register
+        all 9 CI check names with GitHub.
+      context:
+        - source: file
+          description: init-state.json (all fields)
+          load: .calypso/init-state.json
+        - source: blueprint
+          description: Ruleset template
+          load: examples/github-workflows/ruleset.json
+      prompt: |
+        1. Run `calypso doctor`. All checks must pass. Fix any failures before
+           continuing.
+
+        2. Apply the branch protection ruleset:
+             gh api --method POST repos/<org>/<repo>/rulesets \
+               --input .calypso/ruleset.json
+           Confirm bypass_actors is [] in the created ruleset.
+
+        3. Pre-register all 9 CI check names by triggering each workflow once:
+             gh workflow run rust-quality.yml
+             gh workflow run rust-unit.yml
+             gh workflow run rust-integration.yml
+             gh workflow run rust-e2e.yml
+             gh workflow run rust-coverage.yml
+             gh workflow run pr-checklist.yml
+             gh workflow run pr-depends-on.yml
+           (build, lint, format share rust-quality.yml — one run registers all three)
+
+        4. Open and close a draft PR to register checklist and depends-on check
+           names if workflow_dispatch is not available for those workflows.
+
+        5. Verify ruleset via `gh api repos/<org>/<repo>/rulesets` — confirm
+           all 9 check names are listed as required.
+      expected_response:
+        - calypso doctor exits 0
+        - Ruleset applied with bypass_actors: []
+        - All 9 check names registered in GitHub
+        - Ruleset lists all 9 checks as required status checks
+      gh_commands:
+        - cmd: "calypso doctor"
+          purpose: Validate all prerequisites pass
+        - cmd: "gh api --method POST repos/<org>/<repo>/rulesets --input .calypso/ruleset.json"
+          purpose: Apply branch protection ruleset
+        - cmd: "gh api repos/<org>/<repo>/rulesets"
+          purpose: Verify ruleset applied — confirm bypass_actors is []
+        - cmd: "gh workflow run rust-quality.yml --ref main"
+          purpose: Pre-register build/lint/format check names
+        - cmd: "gh workflow run rust-unit.yml --ref main"
+          purpose: Pre-register unit check name
+        - cmd: "gh workflow run rust-integration.yml --ref main"
+          purpose: Pre-register integration check name
+        - cmd: "gh workflow run rust-e2e.yml --ref main"
+          purpose: Pre-register e2e check name
+        - cmd: "gh workflow run rust-coverage.yml --ref main"
+          purpose: Pre-register coverage check name
+        - cmd: "gh workflow run pr-checklist.yml --ref main"
+          purpose: Pre-register checklist check name
+        - cmd: "gh workflow run pr-depends-on.yml --ref main"
+          purpose: Pre-register depends-on check name
+      next:
+        on_success: complete
+        on_failure: prompt-directory  # restart from beginning if doctor fails
+
+    complete:
+      kind: terminal
+      description: >
+        Init is done. DevelopmentPhase transitions to Development automatically.
+        .calypso/repository-state.json is updated to phase: development.
+
+# ── Feature Workflow ──────────────────────────────────────────────────────────
+#
+# Per-feature lifecycle. Runs inside Development phase. One instance per feature.
+# Feature-unit invariant: one feature = one branch = one worktree = one PR.
+
+feature_unit:
+  invariant: feature-equals-branch-equals-worktree-equals-pr
+  branch_prefix: feat/
+  branch_from: main
+  branch_required: true
+  worktree_required: true
+  push_to_origin_required: true
+  pull_request_required: true
+
+prd_requirements:
+  read_before_feature_definition: true
+  source_documents:
+    - docs/prd.md
+
+pull_request_template:
+  required_sections:
+    - id: summary
+      label: Summary
+      type: prose
+    - id: key-decisions
+      label: Key decisions
+      type: prose
+      required: false
+    - id: test-plan
+      label: Test plan
+      type: checklist
+  completion_checks:
+    - pull-request-open
+    - pull-request-description-has-required-sections
+    - pull-request-test-plan-is-checklist
+
+initial_state: feature-definition
+
+states:
+  feature-definition:
+    kind: agent
+    role: feature-definer
+    context:
+      - source: github_issue
+        description: Feature issue (number, title, body)
+        load: "gh issue view <feature-issue> --json number,title,body,labels"
+      - source: github_issue
+        description: Implementation Plan issue
+        load: "gh issue view <impl-plan-issue> --json title,body"
+      - source: file
+        description: PRD
+        load: docs/prd.md
+    prompt: |
+      Read the feature issue and confirm it has the required sections:
+      Motivation, Features (bullet list), Test Plan, and Stage. If any
+      section is missing, add it using `gh issue edit`. Set Stage to "new".
+
+      Then create the feature worktree and branch:
+        git worktree add ../worktrees/<slug> -b feat/<slug> main
+
+      Push the branch and open a DRAFT pull request with the required
+      PR template sections filled from the feature issue. The PR description
+      must have: Summary (from Motivation), Test plan (checklist from Test Plan).
+
+      Update Stage to "feature-definition" on the feature issue.
+    expected_response:
+      format: pull_request + github_issue_update
+      required:
+        - Feature issue has all four sections (Motivation, Features, Test Plan, Stage)
+        - feat/<slug> branch created from main
+        - Worktree created at ../worktrees/<slug>
+        - Branch pushed to origin
+        - Draft PR opened with Summary and Test plan sections
+        - Stage set to "feature-definition" on feature issue
+    gh_commands:
+      - cmd: "gh issue view <feature-issue> --json number,title,body,labels"
+        purpose: Read feature issue content
+      - cmd: "gh issue edit <feature-issue> --body '<updated body with all sections>'"
+        purpose: Add missing sections if needed
+      - cmd: "git worktree add ../worktrees/<slug> -b feat/<slug> main"
+        purpose: Create isolated worktree for this feature
+      - cmd: "git push -u origin feat/<slug>"
+        purpose: Push branch to origin
+      - cmd: "gh pr create --draft --title 'feat: <name>' --body '<PR body>' --head feat/<slug>"
+        purpose: Open draft PR
+    completion:
+      all_of:
+        - feature-issue-sections-complete
+        - worktree-created-from-main
+        - branch-created-from-main
+        - branch-pushed-to-origin
+        - pull-request-open
+        - pull-request-description-has-required-sections
+        - pull-request-test-plan-is-checklist
+    next:
+      on_success: pr-template-review
+      on_failure: blocked
+
+  pr-template-review:
+    kind: agent
+    role: pr-template-reviewer
+    context:
+      - source: github_pr
+        description: Draft PR (title, body, head branch)
+        load: "gh pr view <pr-number> --json title,body,headRefName"
+      - source: github_issue
+        description: Feature issue
+        load: "gh issue view <feature-issue> --json body"
+    prompt: |
+      Review the draft PR description. Confirm:
+      1. Summary is present as prose and accurately reflects the feature issue Motivation
+      2. Test plan is a markdown checklist (- [ ] items) matching the feature's test scope
+      3. The feature scope in the PR matches what is in the feature issue
+
+      If correct: post a comment "pr-template: approved" on the PR.
+      If corrections needed: post specific feedback as a PR comment and return
+      to feature-definition.
+    expected_response:
+      format: github_pr_comment
+      pass: PR comment "pr-template: approved"
+      fail: PR comment with specific items to correct
+    gh_commands:
+      - cmd: "gh pr view <pr-number> --json title,body"
+        purpose: Inspect PR description
+      - cmd: "gh pr comment <pr-number> --body 'pr-template: approved'"
+        purpose: Signal template is correct
+    completion:
+      all_of:
+        - pr-template-correct
+    next:
+      on_success: architecture-plan
+      on_failure: feature-definition
+
+  architecture-plan:
+    kind: agent
+    role: architect
+    context:
+      - source: file
+        description: PRD
+        load: docs/prd.md
+      - source: github_issue
+        description: Feature issue (full body including Motivation and Test Plan)
+        load: "gh issue view <feature-issue> --json number,title,body,comments"
+      - source: command_output
+        description: Existing source tree (file listing)
+        load: "find src/ -name '*.rs' | sort"
+      - source: command_output
+        description: Key module signatures (no function bodies)
+        load: "grep -rn '^pub ' src/ | head -100"
+      - source: file
+        description: Cargo.toml (dependencies)
+        load: Cargo.toml
+      - source: blueprint_rules
+        description: Relevant architecture and data rules
+        load: calypso-blueprint/rules/blueprints/arch.yaml
+      - source: blueprint_rules
+        description: Relevant implementation rules for Rust
+        load: calypso-blueprint/rules/implementations/rs/arch-rs.yaml
+    prompt: |
+      You are an architect. Read the PRD and feature issue carefully.
+      Produce an architecture plan as a comment on the feature issue.
+
+      Your plan must have exactly these sections:
+
+      ## Files
+      List every new or modified .rs file with its path relative to src/.
+      For each file: state whether it is new or modified.
+
+      ## Types
+      List every struct, enum, and trait to define. For each: field names and
+      types (structs), variants (enums), or method signatures (traits). Be
+      precise enough that an engineer can stub these without guessing.
+
+      ## Errors
+      List error types using thiserror. Include the error variants and the
+      #[error("...")] message for each.
+
+      ## CLI
+      If this feature adds CLI commands: list the subcommand name, arguments,
+      and flags (clap-compatible). If no CLI changes: write "None."
+
+      ## Storage
+      If this feature touches persistent state: describe the .calypso/ file
+      format changes or new files. If no storage changes: write "None."
+
+      ## Test strategy
+      For each file listed: specify which tests are unit (#[cfg(test)]) vs
+      integration (tests/ directory) vs e2e. List the test function names
+      and what each asserts. Be specific — the engineer must be able to write
+      empty test shells from this list alone.
+
+      ## Dependency order
+      List the implementation order: which types/modules must exist before
+      others can be implemented. Number them.
+
+      Do not write any code. Do not open a PR. Post the plan as a GitHub
+      issue comment and update Stage to "architecture-plan".
+    expected_response:
+      format: github_issue_comment
+      required_sections:
+        - "## Files"
+        - "## Types"
+        - "## Errors"
+        - "## CLI"
+        - "## Storage"
+        - "## Test strategy"
+        - "## Dependency order"
+      gates_satisfied:
+        - implementation-plan-ready
+    gh_commands:
+      - cmd: "gh issue view <feature-issue> --json body,comments"
+        purpose: Read full feature issue including any prior comments
+      - cmd: "gh issue comment <feature-issue> --body '<architecture plan>'"
+        purpose: Post the architecture plan
+      - cmd: "gh issue edit <feature-issue> --body '<body with Stage: architecture-plan>'"
+        purpose: Update Stage in issue body
+    completion:
+      all_of:
+        - implementation-plan-ready
+        - prd-impl-plan-reconciled
+        - branch-has-new-commit
+        - branch-pushed-to-origin
+        - pr-description-current
+    next:
+      on_success: scaffold-tdd
+      on_failure: blocked
+
+  scaffold-tdd:
+    kind: agent
+    role: engineer
+    context:
+      - source: github_issue
+        description: Feature issue with architecture plan comment
+        load: "gh issue view <feature-issue> --json body,comments"
+      - source: command_output
+        description: Current src/ tree
+        load: "find src/ -name '*.rs' | sort"
+      - source: file
+        description: Cargo.toml
+        load: Cargo.toml
+    prompt: |
+      You are an engineer. Read the architecture plan posted on the feature issue.
+      Your job is to create empty scaffolding only — no logic.
+
+      Steps:
+
+      1. Create every .rs file listed in the architecture plan's ## Files section.
+         Each file must declare the types from ## Types (structs with fields,
+         enums with variants, trait method signatures) but with no implementations.
+         All function bodies must return `todo!()` or be left unimplemented.
+
+      2. Write every test function listed in ## Test strategy.
+         - Unit tests go in #[cfg(test)] mod tests blocks in the relevant src/ file.
+         - Integration tests go in tests/<name>.rs.
+         - Test bodies must be empty or contain a single `todo!()`. They must
+           compile but are expected to fail at runtime.
+
+      3. Register new modules in lib.rs or main.rs as needed.
+
+      4. Add required dependencies to Cargo.toml if the architecture plan implies
+         crates not already present (e.g. thiserror, clap).
+
+      5. Run: cargo build
+         This MUST succeed. If it does not, fix compilation errors before committing.
+         cargo test is expected to fail — that is correct at this stage.
+
+      6. Commit:
+           git add -p
+           git commit -m "scaffold(<feature-slug>): module stubs and test cases"
+
+      7. Push and update the draft PR description to reflect scaffold is complete.
+
+      8. Update Stage to "scaffold-tdd" on the feature issue.
+
+      Do not implement any logic. If a function needs more than `todo!()` to
+      compile, reconsider the type signatures or ask for architect clarification.
+    expected_response:
+      required:
+        - All planned .rs files exist with correct type declarations
+        - All test function shells present (unit and integration)
+        - cargo build passes (zero compilation errors)
+        - cargo test output shows test failures (expected, not compilation failures)
+        - New commit on feat/<slug>
+        - Branch pushed to origin
+        - Stage: scaffold-tdd on feature issue
+    gh_commands:
+      - cmd: "gh issue view <feature-issue> --json comments"
+        purpose: Read architecture plan
+      - cmd: "gh pr view <pr-number> --json body"
+        purpose: Read current PR description before updating
+      - cmd: "gh pr edit <pr-number> --body '<updated PR body>'"
+        purpose: Update PR to reflect scaffold commit
+      - cmd: "gh issue edit <feature-issue> --body '<body with Stage: scaffold-tdd>'"
+        purpose: Update Stage
+    completion:
+      all_of:
+        - scaffold-ready
+        - tests-added-first
+        - branch-has-new-commit
+        - branch-pushed-to-origin
+        - pr-description-current
+    next:
+      on_success: architecture-review
+      on_failure: blocked
+
+  architecture-review:
+    kind: agent
+    role: architect
+    context:
+      - source: github_issue
+        description: Feature issue with architecture plan comment
+        load: "gh issue view <feature-issue> --json body,comments"
+      - source: github_pr
+        description: Draft PR diff (scaffold commit only)
+        load: "gh pr diff <pr-number>"
+      - source: command_output
+        description: Scaffold file listing
+        load: "find src/ tests/ -name '*.rs' | sort"
+    prompt: |
+      You are an architect reviewing the scaffold PR against your own architecture plan.
+      Your goal is to catch structural divergences before full implementation begins.
+
+      Check each item in the architecture plan:
+
+      1. FILES — Every file listed in ## Files exists at the correct path.
+      2. TYPES — Every struct/enum/trait is declared with the correct fields,
+         variants, or method signatures. Signatures match the plan exactly.
+         No additional types have been introduced without justification.
+      3. ERRORS — Error types declared with thiserror. Variants match the plan.
+      4. CLI — If CLI commands were planned: clap struct/enum declared with
+         correct subcommand name, argument names, and flag names.
+      5. TESTS — Every test function listed in ## Test strategy exists.
+         Test names match exactly. They compile (even if they fail at runtime).
+      6. NO LOGIC — No function contains more than `todo!()` or `unimplemented!()`.
+         If any function has logic, flag it.
+
+      If the scaffold is correct:
+        - Approve the PR review with body "architecture-review: approved"
+        - Update Stage to "architecture-review" on the feature issue
+
+      If corrections are needed:
+        - Request changes on the PR with line-level comments for each issue
+        - Do not rewrite the engineer's code yourself
+        - Each comment must reference the specific item in the architecture plan
+    expected_response:
+      pass:
+        - PR approved with comment "architecture-review: approved"
+        - Stage: architecture-review on feature issue
+      fail:
+        - PR changes requested
+        - Each issue has a specific PR line comment referencing the plan
+    gh_commands:
+      - cmd: "gh pr diff <pr-number>"
+        purpose: Read full scaffold diff
+      - cmd: "gh pr review <pr-number> --approve --body 'architecture-review: approved'"
+        purpose: Approve scaffold if correct
+      - cmd: "gh pr review <pr-number> --request-changes --body '<structured feedback>'"
+        purpose: Request corrections with specific line references
+      - cmd: "gh issue edit <feature-issue> --body '<body with Stage: architecture-review>'"
+        purpose: Update Stage on approval
+    completion:
+      all_of:
+        - architecture-review-approved
+    next:
+      on_success: implementation
+      on_failure: scaffold-tdd  # engineer corrects scaffold
+
+  implementation:
+    kind: agent
+    role: engineer
+    context:
+      - source: github_issue
+        description: Feature issue with architecture plan and review comment
+        load: "gh issue view <feature-issue> --json body,comments"
+      - source: github_pr
+        description: Current PR state (diff, CI checks)
+        load: "gh pr view <pr-number> --json files,statusCheckRollup,reviews"
+      - source: command_output
+        description: Failing test output
+        load: "cargo test 2>&1 | tail -50"
+      - source: file
+        description: PRD acceptance criteria
+        load: docs/prd.md
+      - source: blueprint_rules
+        description: Rust implementation rules
+        load: calypso-blueprint/rules/implementations/rs/
+    prompt: |
+      You are an engineer. Implement the feature to make all tests pass.
+      Follow the dependency order in the ## Dependency order section of the
+      architecture plan comment.
+
+      Rules:
+        - Work one module at a time, following the dependency order
+        - Do not modify test function signatures or test assertions
+        - After each module: run cargo test for that module's tests
+        - Before each commit: run cargo clippy -- -D warnings (fix all warnings)
+        - Before each commit: run cargo fmt
+        - Commit after each module passes its tests:
+            git commit -m "feat(<module>): <what changed>"
+        - If a test assertion is wrong (the test itself has a bug), stop.
+          Post a comment on the feature issue describing the discrepancy and
+          transition to waiting-for-human.
+
+      When all tests pass:
+        - Run cargo llvm-cov --summary-only and confirm coverage >= 99%
+        - If coverage < 99%: add tests for uncovered branches before continuing
+        - Run cargo clippy -- -D warnings one final time
+        - Run cargo fmt --check
+        - Mark the PR ready for review: gh pr ready <pr-number>
+        - Update the PR test plan checklist: check off every completed test
+        - Update Stage to "implementation" on the feature issue
+        - Write next-prompt.md locally (do not commit):
+            "Feature <name> implementation complete. PR #<n> open and passing
+             CI. Ready for QA validation."
+    expected_response:
+      required:
+        - All tests pass (cargo test --all)
+        - cargo clippy -- -D warnings produces no warnings
+        - cargo fmt --check produces no diff
+        - cargo llvm-cov >= 99% line coverage
+        - PR marked ready for review (not draft)
+        - PR test plan checklist fully checked
+        - Stage: implementation on feature issue
+        - next-prompt.md written locally (not committed)
+    gh_commands:
+      - cmd: "gh pr view <pr-number> --json statusCheckRollup"
+        purpose: Check CI status after each push
+      - cmd: "gh pr ready <pr-number>"
+        purpose: Convert draft PR to ready for review
+      - cmd: "gh pr edit <pr-number> --body '<PR body with checked test plan>'"
+        purpose: Update PR test plan checklist
+      - cmd: "gh issue edit <feature-issue> --body '<body with Stage: implementation>'"
+        purpose: Update Stage
+      - cmd: "gh issue comment <feature-issue> --body '<blocking question>'"
+        purpose: Post clarification request (only if test assertion appears wrong)
+    completion:
+      any_of:
+        - implementation-complete
+        - clarification-required
+    next:
+      on:
+        implementation-complete: deterministic-validation
+        clarification-required: waiting-for-human
+        gate-failed: blocked
+
+  waiting-for-human:
+    kind: human
+    role: operator
+    context:
+      - source: github_issue
+        description: Feature issue comment thread (blocking question from engineer)
+        load: "gh issue view <feature-issue> --json comments"
+    prompt: |
+      The engineer has posted a blocking question as a comment on the feature
+      issue. Read the comment. Either:
+        - Answer the question in a reply comment, OR
+        - Update the architecture plan comment with the correction, OR
+        - Update the feature issue Test Plan section if a test assertion is wrong
+
+      After answering, update Stage to "implementation" to signal the engineer
+      can continue.
+    expected_response:
+      - Blocking question answered in issue comment
+      - Stage updated to resume state
+    gh_commands:
+      - cmd: "gh issue view <feature-issue> --comments"
+        purpose: Read the blocking question
+      - cmd: "gh issue comment <feature-issue> --body '<answer>'"
+        purpose: Answer blocking question
+      - cmd: "gh issue edit <feature-issue> --body '<updated stage>'"
+        purpose: Signal agent to resume
+    completion:
+      all_of:
+        - clarification-answered
+    next:
+      on_success: implementation
+
+  deterministic-validation:
+    kind: deterministic
+    checks:
+      - cargo-build-passes
+      - cargo-lint-passes
+      - cargo-format-passes
+      - cargo-unit-passes
+      - cargo-integration-passes
+      - cargo-e2e-passes
+      - cargo-coverage-passes
+      - ci-all-green
+      - blueprint-policy-clean
+    next:
+      on_pass: ready-for-review
+      on_fail: blocked
+
+  ready-for-review:
+    kind: agent
+    role: release-reviewer
+    context:
+      - source: github_pr
+        description: Full PR diff and CI results
+        load: "gh pr view <pr-number> --json files,statusCheckRollup,reviews,body"
+      - source: github_issue
+        description: Feature issue with architecture plan and all comments
+        load: "gh issue view <feature-issue> --json body,comments"
+      - source: file
+        description: PRD acceptance criteria
+        load: docs/prd.md
+    prompt: |
+      You are a QA reviewer. Validate the implementation against the PRD
+      acceptance criteria and the architecture plan. You verify — you do not
+      rewrite.
+
+      Produce a QA report as a PR comment with exactly these sections:
+
+      ## PASS
+      List each PRD acceptance criterion that is covered by a passing test.
+      Format: "✓ <criterion> — covered by <test name>"
+
+      ## FAIL
+      List each PRD acceptance criterion not covered or failing.
+      Format: "✗ <criterion> — <reason>"
+
+      ## CODE REVIEW
+      Flag any of the following if present:
+        - unwrap() or expect() in non-test code
+        - Error types not using thiserror
+        - Dead code (#[allow(dead_code)] without a comment explaining why)
+        - todo!() or unimplemented!() in non-test code
+        - Functions that are clearly untestable by design
+        - Logic that does not match the architecture plan without explanation
+
+      ## NOTES
+      Anything worth flagging that is not a hard blocker.
+
+      ## VERDICT
+      APPROVED or CHANGES REQUESTED
+
+      If APPROVED: approve the PR with your report as the review body.
+      If CHANGES REQUESTED: request changes with your report.
+    expected_response:
+      format: github_pr_review
+      required_sections:
+        - "## PASS"
+        - "## FAIL"
+        - "## CODE REVIEW"
+        - "## NOTES"
+        - "## VERDICT"
+      pass: PR approved
+      fail: PR changes requested with specific items
+    gh_commands:
+      - cmd: "gh pr view <pr-number> --json files,statusCheckRollup,reviews"
+        purpose: Read PR state and CI results
+      - cmd: "gh pr diff <pr-number>"
+        purpose: Read full implementation diff
+      - cmd: "gh pr review <pr-number> --approve --body '<QA report>'"
+        purpose: Approve if all checks pass
+      - cmd: "gh pr review <pr-number> --request-changes --body '<QA report>'"
+        purpose: Request changes if any checks fail
+    completion:
+      all_of:
+        - pr-features-checkboxes-complete
+        - pr-test-plan-checkboxes-complete
+        - pr-description-current
+        - qa-approved
+    next:
+      on_success: merge-readiness
+      on_failure: implementation
+
+  merge-readiness:
+    kind: deterministic
+    checks:
+      - main-clean-mergeable
+      - review-approved
+      - ci-all-green
+      - checklist-complete
+      - depends-on-merged
+    next:
+      on:
+        pass: merge-queue
+        main-clean-mergeable-failed: merge-reconciliation
+        fail: blocked
+
+  merge-queue:
+    kind: agent
+    role: merge-queue
+    context:
+      - source: github_pr_list
+        description: All open PRs targeting main
+        load: "gh pr list --state open --json number,title,labels,headRefName"
+      - source: github_issue
+        description: Implementation Plan issue (merge ordering context)
+        load: "gh issue view <impl-plan-issue> --json body"
+      - source: github_pr
+        description: This feature's PR
+        load: "gh pr view <pr-number> --json number,title,reviews,statusCheckRollup"
+    prompt: |
+      Evaluate the current feature against all other open merge-ready PRs.
+      Determine the correct landing order.
+
+      Factors to consider:
+        - Foundational PRs (schema, shared types, core modules) must land
+          before feature PRs that depend on them
+        - PRs with Depends-on: #N declarations must wait for #N
+        - Smallest, most isolated PRs reduce main drift risk and should land first
+          when there is no other constraint
+        - PRs open longest are deprioritized if they have accumulated main drift
+
+      Produce a merge queue comment on the Implementation Plan issue with:
+        - Queue position for this PR (1 = next to merge)
+        - Features ahead in the queue (if any) and why
+        - Features behind this PR and why
+        - Whether this PR is the current queue head
+
+      If this PR is queue head: proceed to awaiting-merge.
+      If not: mark this feature as blocked on queue position.
+    expected_response:
+      format: github_issue_comment
+      required:
+        - Queue position assigned with rationale
+        - Features ahead/behind identified
+        - QUEUE HEAD: YES or QUEUE HEAD: NO clearly stated
+    gh_commands:
+      - cmd: "gh pr list --state open --base main --json number,title,labels"
+        purpose: See all PRs competing for merge
+      - cmd: "gh issue comment <impl-plan-issue> --body '<merge queue comment>'"
+        purpose: Record queue decision
+    completion:
+      all_of:
+        - merge-queue-position-assigned
+        - merge-order-explained
+      any_of:
+        - current-feature-at-queue-head
+        - waiting-for-earlier-feature
+    next:
+      on:
+        current-feature-at-queue-head: awaiting-merge
+        waiting-for-earlier-feature: blocked
+        fail: blocked
+
+  awaiting-merge:
+    kind: agent
+    role: merge-queue
+    context:
+      - source: github_pr
+        description: PR status at time of merge
+        load: "gh pr view <pr-number> --json mergeable,statusCheckRollup,reviews,mergeStateStatus"
+    prompt: |
+      Execute the merge for this PR. Before merging, verify all conditions
+      still hold (they may have changed since merge-queue ran):
+        1. All 9 required CI checks are green
+        2. At least 1 approving review from a human
+        3. No changes requested reviews outstanding
+        4. Branch is mergeable (no conflicts with main)
+        5. PR checklist is fully checked
+        6. Any Depends-on PRs are merged
+
+      If all conditions hold: merge using squash merge.
+      After merge:
+        - Close the feature issue
+        - Update the Implementation Plan issue: mark this feature complete
+        - Write next-prompt.md locally:
+            "Merged: <feature name> (PR #<n>). Next feature: <next unstarted
+             feature from implementation plan>."
+    expected_response:
+      required:
+        - PR merged to main via squash merge
+        - Feature issue closed
+        - Implementation Plan issue updated with feature marked complete
+        - next-prompt.md written locally
+    gh_commands:
+      - cmd: "gh pr view <pr-number> --json mergeable,statusCheckRollup,reviews"
+        purpose: Final pre-merge gate check
+      - cmd: "gh pr merge <pr-number> --squash --delete-branch"
+        purpose: Squash merge and delete feature branch
+      - cmd: "gh issue close <feature-issue> --comment 'Merged in PR #<n>.'"
+        purpose: Close feature issue
+      - cmd: "gh issue edit <impl-plan-issue> --body '<plan with feature checked off>'"
+        purpose: Update implementation plan
+      - cmd: "git worktree remove ../worktrees/<slug>"
+        purpose: Clean up worktree
+    completion:
+      all_of:
+        - pull-request-merged
+    next:
+      on_success: done
+      on_failure: blocked
+
+  merge-reconciliation:
+    kind: agent
+    role: documentation-merge
+    context:
+      - source: command_output
+        description: Merge conflict markers
+        load: "git diff --name-only --diff-filter=U"
+      - source: github_pr
+        description: Current PR description
+        load: "gh pr view <pr-number> --json body"
+    prompt: |
+      Reconcile the feature branch with main. The branch has conflicts.
+
+      For each conflicting file:
+        - If the conflict is in a .rs source file: resolve by reading both
+          versions, understanding what each change intended, and producing
+          a merged result that satisfies both intentions. Do not blindly
+          take ours or theirs.
+        - If the conflict is in a documentation file (.md, .yaml): read both
+          versions, infer author intent from which is more recent and what
+          changed, and rewrite into one coherent document.
+        - If the conflict is in Cargo.toml / Cargo.lock: resolve by keeping
+          all dependencies, using the higher version when versions conflict.
+
+      After resolving all conflicts:
+        git add -A
+        git commit -m "chore: reconcile feat/<slug> with main"
+        git push
+
+      Update the PR description if the reconciliation changed any scope.
+    expected_response:
+      required:
+        - All conflict markers resolved
+        - cargo build passes after reconciliation
+        - New reconciliation commit pushed
+        - PR description updated if scope changed
+    gh_commands:
+      - cmd: "git fetch origin main && git rebase origin/main"
+        purpose: Rebase onto current main to surface conflicts
+      - cmd: "gh pr edit <pr-number> --body '<updated PR body>'"
+        purpose: Update PR if scope changed during reconciliation
+    completion:
+      all_of:
+        - documentation-merge-resolved
+        - main-clean-mergeable
+        - branch-has-new-commit
+        - branch-pushed-to-origin
+        - pr-description-current
+    next:
+      on_success: merge-readiness
+      on_failure: blocked
+
+  done:
+    kind: terminal
+
+  blocked:
+    kind: human
+    role: operator-or-orchestrator
+    prompt: |
+      Resolve the blocking issue or explicitly redirect the feature.
+      Read next-prompt.md if it exists — it describes the agent's last known
+      state before blocking.
+    gh_commands:
+      - cmd: "gh issue view <feature-issue> --comments"
+        purpose: Read last agent comment for blocking reason
+      - cmd: "cat next-prompt.md 2>/dev/null"
+        purpose: Read session recovery context
+    next:
+      on:
+        issue-cleared: implementation
+        redefine-feature: feature-definition
+        abort: aborted
+
+  aborted:
+    kind: terminal
+
+# ── Checks ────────────────────────────────────────────────────────────────────
+
+checks:
+  # Deterministic — state / file
+  feature-issue-sections-complete:
+    kind: deterministic
+  worktree-created-from-main:
+    kind: deterministic
+  branch-created-from-main:
+    kind: deterministic
+  branch-pushed-to-origin:
+    kind: deterministic
+  branch-has-new-commit:
+    kind: deterministic
+  pull-request-open:
+    kind: deterministic
+  pull-request-description-has-required-sections:
+    kind: deterministic
+  pull-request-test-plan-is-checklist:
+    kind: deterministic
+
+  # Agent checks
+  pr-template-correct:
+    kind: agent
+    role: pr-template-reviewer
+  implementation-plan-ready:
+    kind: agent
+    role: architect
+  prd-impl-plan-reconciled:
+    kind: agent
+    role: architect
+  architecture-review-approved:
+    kind: agent
+    role: architect
+  scaffold-ready:
+    kind: agent
+    role: engineer
+  tests-added-first:
+    kind: agent
+    role: engineer
+  implementation-complete:
+    kind: agent
+    role: engineer
+  clarification-required:
+    kind: agent
+    role: engineer
+  clarification-answered:
+    kind: human
+  qa-approved:
+    kind: agent
+    role: release-reviewer
+  pr-features-checkboxes-complete:
+    kind: agent
+    role: release-reviewer
+  pr-test-plan-checkboxes-complete:
+    kind: agent
+    role: release-reviewer
+  pr-description-current:
+    kind: agent
+    role: pr-editor
+  documentation-merge-resolved:
+    kind: agent
+    role: documentation-merge
+  merge-queue-position-assigned:
+    kind: agent
+    role: merge-queue
+  merge-order-explained:
+    kind: agent
+    role: merge-queue
+  current-feature-at-queue-head:
+    kind: agent
+    role: merge-queue
+  waiting-for-earlier-feature:
+    kind: agent
+    role: merge-queue
+
+  # Blueprint
+  blueprint-policy-clean:
+    kind: agent
+    role: blueprint
+
+  # Rust toolchain — pre-push (local)
+  cargo-build-passes:
+    kind: deterministic
+    source: git-hook
+    hook: pre-push
+    cmd: "cargo build --quiet"
+    description: Project compiles without errors.
+  cargo-lint-passes:
+    kind: deterministic
+    source: git-hook
+    hook: pre-push
+    cmd: "cargo clippy --quiet -- -D warnings"
+    description: No lint warnings (deny-warnings).
+  cargo-format-passes:
+    kind: deterministic
+    source: git-hook
+    hook: pre-push
+    cmd: "cargo fmt --check --quiet"
+    description: All code formatted per project style.
+
+  # Rust toolchain — CI (remote)
+  cargo-unit-passes:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/rust-unit.yml
+    check_name: unit
+    description: All unit tests pass (cargo test --lib).
+  cargo-integration-passes:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/rust-integration.yml
+    check_name: integration
+    description: Integration tests pass against real external dependencies.
+  cargo-e2e-passes:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/rust-e2e.yml
+    check_name: e2e
+    description: End-to-end CLI tests pass.
+  cargo-coverage-passes:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/rust-coverage.yml
+    check_name: coverage
+    description: Line coverage >= 99% (cargo llvm-cov).
+  ci-all-green:
+    kind: deterministic
+    source: ci
+    description: >
+      All 9 required CI checks green: build, lint, format, unit, integration,
+      e2e, coverage, checklist, depends-on.
+
+  # Merge readiness
+  main-clean-mergeable:
+    kind: deterministic
+    builtin: builtin.git.is_main_compatible
+    description: Branch rebases cleanly onto current main without conflicts.
+  review-approved:
+    kind: human
+    description: At least one human approving review on the PR.
+  checklist-complete:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/pr-checklist.yml
+    check_name: checklist
+    description: All PR task items checked (no unchecked - [ ] items in PR body).
+  depends-on-merged:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/pr-depends-on.yml
+    check_name: depends-on
+    description: Any declared Depends-on predecessor PR is merged.
+  pull-request-merged:
+    kind: deterministic
+
+# ── Agent Prompts (role-level defaults) ──────────────────────────────────────
+#
+# These are injected as system context when an agent is dispatched for a role.
+# State-level prompts (above) are the task instruction and take precedence.
+
+agent_prompts:
+  feature-definer: |
+    You are setting up a new feature unit. Your job is to create the branch,
+    worktree, and draft PR, and ensure the feature issue is fully structured
+    before any implementation begins. Precision here prevents re-work later.
+
+  pr-template-reviewer: |
+    You are reviewing a PR description for structural correctness, not for
+    code quality. Your only job is to confirm the template sections are present
+    and accurate. Do not comment on implementation decisions.
+
+  architect: |
+    You are an architect. You produce plans and review scaffold against those
+    plans. You do not write implementation code. Your plans must be precise
+    enough that an engineer can scaffold from them without asking questions.
+    When reviewing scaffold, you are verifying structure only — not logic.
+
+  engineer: |
+    You are an engineer executing a narrowly scoped task. You follow the
+    architecture plan exactly. You do not add features, refactor unrelated
+    code, or make decisions that belong to the architect. If you encounter
+    ambiguity that requires an architectural decision, stop and ask.
+
+  release-reviewer: |
+    You are a QA reviewer. You verify the implementation against stated
+    acceptance criteria. You do not rewrite code. Your report must be specific
+    enough that an engineer knows exactly what to fix without asking follow-up
+    questions.
+
+  documentation-merge: |
+    You resolve merge conflicts by reading both versions and synthesising a
+    coherent result. You do not blindly accept ours or theirs. When conflicts
+    involve requirements or plans, the more recent version takes precedence
+    unless the older version contains a constraint the newer version lost.
+
+  blueprint: |
+    You review current work against the calypso-blueprint YAML rules. Flag
+    any rule in rules/blueprints/ or rules/implementations/rs/ that the
+    current implementation violates. Do not suggest fixes — only identify
+    violations with rule number and description.
+
+  pr-editor: |
+    You keep the PR description aligned with current feature state. Update
+    the summary if scope changed. Check off test plan items that are done.
+    Do not change the PR description in ways that would uncheck completed items.
+
+  merge-queue: |
+    You own merge ordering and merge execution. You are not a code reviewer.
+    You decide which PR lands next based on dependency constraints, main drift
+    risk, and feature completeness. You execute merges when a PR reaches queue
+    head and all conditions hold.
+
+# ── Hard Gates ────────────────────────────────────────────────────────────────
+
+hard_gates:
+  git_hooks:
+    - hook: pre-push
+      blocking: true
+      checks:
+        - cargo-build-passes
+        - cargo-lint-passes
+        - cargo-format-passes
+      note: >
+        Must not gate on next-prompt.md, implementation plan, or any GitHub
+        Issue. Quality checks only.
+  ci_workflows:
+    - workflow: .github/workflows/rust-quality.yml
+      blocking: true
+      check_names: [build, lint, format]
+    - workflow: .github/workflows/rust-unit.yml
+      blocking: true
+      check_names: [unit]
+    - workflow: .github/workflows/rust-integration.yml
+      blocking: true
+      check_names: [integration]
+    - workflow: .github/workflows/rust-e2e.yml
+      blocking: true
+      check_names: [e2e]
+    - workflow: .github/workflows/rust-coverage.yml
+      blocking: true
+      check_names: [coverage]
+    - workflow: .github/workflows/pr-checklist.yml
+      blocking: true
+      check_names: [checklist]
+    - workflow: .github/workflows/pr-depends-on.yml
+      blocking: true
+      check_names: [depends-on]
+  merge_compatibility:
+    blocking: true
+    check: main-clean-mergeable
+    remediation_state: merge-reconciliation
