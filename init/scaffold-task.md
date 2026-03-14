@@ -158,7 +158,97 @@ git push -u origin main
 
 ---
 
-## Step 8: Set KUBE_CONFIG Secret
+## Step 8: Apply Branch Protection Ruleset
+
+Apply the GitHub repository ruleset to protect main immediately after the first push. This step requires the repository to exist (Step 5) and your `GITHUB_TOKEN` to be authenticated (Step 4).
+
+**Copy the pr-checklist workflow into the repository:**
+
+```bash
+mkdir -p .github/workflows
+cp /path/to/calypso-blueprint/examples/github-workflows/pr-checklist.yml \
+  .github/workflows/pr-checklist.yml
+git add .github/workflows/pr-checklist.yml
+git commit -m "ci: add pr-checklist workflow"
+git push
+```
+
+**Apply the branch protection ruleset:**
+
+```bash
+# Substitute {owner} and {repo} with actual values, then:
+cat > /tmp/ruleset.json <<'EOF'
+{
+  "name": "main-protection",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "include": ["~DEFAULT_BRANCH"],
+      "exclude": []
+    }
+  },
+  "bypass_actors": [],
+  "rules": [
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "required_status_checks": [
+          {"context": "build"},
+          {"context": "clippy"},
+          {"context": "format"},
+          {"context": "unit"},
+          {"context": "integration"},
+          {"context": "e2e"},
+          {"context": "coverage"},
+          {"context": "checklist"}
+        ]
+      }
+    },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_approving_review_count": 0,
+        "required_review_thread_resolution": false
+      }
+    }
+  ]
+}
+EOF
+
+gh api --method POST "repos/${GITHUB_OWNER}/${PROJECT_NAME}/rulesets" \
+  --input /tmp/ruleset.json
+```
+
+The canonical ruleset template lives at `examples/github-workflows/ruleset.json` in the calypso-blueprint repository.
+
+**Pre-register the checklist check name:**
+
+The `checklist` status check only appears as a known GitHub check name after the first PR that triggers `pr-checklist.yml`. Create a dummy PR to register it:
+
+```bash
+git checkout -b ci/register-checklist-check
+git commit --allow-empty -m "ci: register checklist check name"
+git push -u origin ci/register-checklist-check
+gh pr create --title "ci: register checklist check name" \
+  --body "Registering the checklist status check. All items complete:
+- [x] checklist check registered" \
+  --base main
+# Wait for the checklist check to appear green, then close the PR
+gh pr close ci/register-checklist-check --delete-branch
+```
+
+- [ ] `main-protection` ruleset confirmed active on the repository.
+- [ ] `pr-checklist.yml` workflow present and passing on at least one PR.
+- [ ] `checklist` check name registered; visible as a required check in the ruleset.
+
+---
+
+## Step 9: Set KUBE_CONFIG Secret
 
 Extract the kubeconfig with the cluster's public IP and set it as a GitHub Actions secret so CI can deploy:
 
@@ -174,13 +264,13 @@ kubectl config view --raw \
 
 ---
 
-## Step 9: Load Context
+## Step 10: Load Context
 
 Read `AGENT.md` and `agent-context/index.md`. These define the curriculum and document graph. Do NOT read all blueprints upfront — follow the context escalation loop in `AGENT.md` to load documents as needed during subsequent steps.
 
 ---
 
-## Step 10: Product Owner Interview
+## Step 11: Product Owner Interview
 
 Conduct the product owner interview per `agent-context/development/product-owner-interview.md`. Do not skip or abbreviate it.
 
@@ -191,7 +281,7 @@ Conduct the product owner interview per `agent-context/development/product-owner
 
 ---
 
-## Step 11: Scaffold
+## Step 12: Scaffold
 
 Verify all foundational elements are present before moving to prototyping. Fix anything missing yourself before proceeding.
 
@@ -236,7 +326,7 @@ Verify all foundational elements are present before moving to prototyping. Fix a
 
 ---
 
-## Step 12: Confirm Ready
+## Step 13: Confirm Ready
 
 Tell the operator:
 

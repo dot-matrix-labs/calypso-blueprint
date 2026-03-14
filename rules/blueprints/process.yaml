@@ -173,6 +173,20 @@ rules:
       - {target: 309a8b908fc1, rel: depends_on}
     deprecated: false
 
+  - number: PROCESS-T-012
+    hash: "a1f3c8e24b91"
+    name: merge-without-required-checks
+    type: threat
+    description: >
+      A PR is merged to main before all required CI checks pass. Without
+      enforced branch protection rulesets, no bypass actor restriction, and
+      a PR checklist gate, broken or incomplete code can enter the main
+      branch and be deployed.
+    links:
+      - {target: 7d2a9f1e50c3, rel: depends_on}
+      - {target: 501fa0288e4a, rel: depends_on}
+    deprecated: false
+
   # ── Principles ───────────────────────────────────────────────────────────────
 
   - number: PROCESS-P-001
@@ -296,6 +310,23 @@ rules:
     links:
       - {target: 501fa0288e4a, rel: mitigates}
       - {target: 309a8b908fc1, rel: refines}
+    deprecated: false
+
+  - number: PROCESS-P-009
+    hash: "7d2a9f1e50c3"
+    name: main-is-always-deployable
+    type: principle
+    description: >
+      Every commit on main has passed all eight required CI checks: build,
+      clippy, format, unit, integration, e2e, coverage (≥99% line threshold),
+      and checklist. No bypass actors are permitted — not even admins. The
+      branch protection ruleset is applied to the repository immediately after
+      first push and is never relaxed. Violations are not corrected after the
+      fact; they are prevented at the gate.
+    links:
+      - {target: a1f3c8e24b91, rel: mitigates}
+      - {target: 6fab3fb9c823, rel: refines}
+      - {target: b4e71d903a28, rel: refines}
     deprecated: false
 
   # ── Design Patterns ─────────────────────────────────────────────────────────
@@ -570,6 +601,52 @@ rules:
       - {target: f67b4697ac23, rel: refines}
       - {target: 8f6e7b3a1ff9, rel: mitigates}
       - {target: a9a86673862d, rel: mitigates}
+    deprecated: false
+
+  - number: PROCESS-D-010
+    hash: "b4e71d903a28"
+    name: github-branch-protection-ruleset
+    type: design_pattern
+    description: >
+      Apply a GitHub repository ruleset immediately after the first push.
+      The ruleset targets ~DEFAULT_BRANCH, sets bypass_actors to [], and
+      requires eight named status checks before merge: build, clippy, format,
+      unit, integration, e2e, coverage, and checklist. A pr-checklist.yml
+      GitHub Actions workflow enforces that all PR description task items are
+      checked before the checklist status check goes green. Because the
+      checklist check only appears as a required check after the first PR that
+      triggers it, a dummy PR or workflow_dispatch run must be used to
+      pre-register the check name immediately after setup.
+    problem: |
+      Without enforced branch protection, any actor — including admins — can
+      merge a PR with failing tests, incomplete checklist items, or no CI run
+      at all. This is a single point of failure that bypasses every other
+      process guarantee the project depends on.
+    solution: |
+      Use the GitHub Rulesets API to create a ruleset with enforcement: active,
+      bypass_actors: [], and a required_status_checks rule listing all eight
+      check names. Store the ruleset JSON template in
+      examples/github-workflows/ruleset.json and apply it with:
+
+        gh api --method POST repos/{owner}/{repo}/rulesets \
+          --input ruleset.json
+
+      Add .github/workflows/pr-checklist.yml (from
+      examples/github-workflows/pr-checklist.yml) to the repository before
+      the first PR. After applying the ruleset, open and close a dummy PR or
+      trigger the workflow via workflow_dispatch so GitHub registers the
+      checklist check name as a known status check that the ruleset can
+      validate against.
+    tradeoffs: |
+      The checklist check requires at least one PR to have been opened before
+      it appears as a selectable required check in the GitHub UI. The ruleset
+      JSON must list the exact check name (checklist) that the workflow job
+      uses. Keeping the ruleset JSON in the repository makes it reproducible
+      and agent-applicable; it is not sensitive data.
+    links:
+      - {target: 7d2a9f1e50c3, rel: refines}
+      - {target: a1f3c8e24b91, rel: mitigates}
+      - {target: 3d643a9a5413, rel: refines}
     deprecated: false
 
   # ── Architectures ────────────────────────────────────────────────────────────
@@ -925,6 +1002,44 @@ rules:
       - {target: 309a8b908fc1, rel: verifies}
     deprecated: false
 
+  - number: PROCESS-C-020
+    hash: "f9b2c5a7e16d"
+    name: branch-protection-ruleset-applied
+    type: checklist
+    description: >
+      GitHub repository ruleset applied targeting ~DEFAULT_BRANCH with all
+      eight required status checks (build, clippy, format, unit, integration,
+      e2e, coverage, checklist) and bypass_actors set to [].
+    links:
+      - {target: 7d2a9f1e50c3, rel: verifies}
+      - {target: b4e71d903a28, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-021
+    hash: "c3e8d4b0f925"
+    name: pr-checklist-workflow-deployed
+    type: checklist
+    description: >
+      .github/workflows/pr-checklist.yml present in the repository and
+      confirmed to run on pull_request events, failing when unchecked task
+      items (- [ ]) exist in the PR body.
+    links:
+      - {target: b4e71d903a28, rel: verifies}
+      - {target: 7d2a9f1e50c3, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-022
+    hash: "d7a1f6e39b04"
+    name: checklist-check-name-registered
+    type: checklist
+    description: >
+      The checklist status check name is registered in GitHub (appears as a
+      known check) via a dummy PR or workflow_dispatch run, so the branch
+      protection ruleset can validate it on future PRs.
+    links:
+      - {target: b4e71d903a28, rel: verifies}
+    deprecated: false
+
   # ── Antipatterns ─────────────────────────────────────────────────────────────
 
   - number: PROCESS-X-001
@@ -1031,4 +1146,20 @@ rules:
     links:
       - {target: 86131854ce87, rel: contradicts}
       - {target: 036dcf4739fc, rel: contradicts}
+    deprecated: false
+
+  - number: PROCESS-X-009
+    hash: "e5c0a2d87f43"
+    name: admin-bypass-on-main
+    type: antipattern
+    description: >
+      Configuring branch protection with admin bypass actors or leaving the
+      ruleset in evaluate or disabled enforcement mode. Any bypass actor
+      creates a path for unreviewed, untested code to reach main. The
+      temptation to add bypass actors for "hotfixes" is the canonical failure
+      mode; the correct response is a fast, automated fix PR through the
+      normal pipeline.
+    links:
+      - {target: 7d2a9f1e50c3, rel: contradicts}
+      - {target: b4e71d903a28, rel: contradicts}
     deprecated: false
