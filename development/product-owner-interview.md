@@ -4,6 +4,7 @@
 
 CONTEXT MAP
 this ──extends──────────▶ agent-communication.md §Workflow: Product Requirements Collection (steps 1–7)
+this ──references───────▶ development/userflow-state-machines.md (formalize workflows as state machines)
 this ◀──referenced by──── init/scaffold-task.md §Step 10
 
 > **Scope:** This document is the interview template supplement for the Product Requirements Collection workflow defined in `agent-communication.md §Workflow: Product Requirements Collection`. Follow the steps defined there; use this document for the questionnaire content at step 2. Do NOT duplicate those workflow steps here.
@@ -34,6 +35,7 @@ The full Product Requirements Collection workflow is defined in `agent-communica
 5. Present the pre-filled questionnaire to the Product Owner in a single message. Do not ask one question at a time.
 6. Wait for the Product Owner to confirm, correct, or expand on the pre-filled answers.
 7. Synthesize confirmed answers into GitHub Issues: create an Implementation Plan issue with phases, and create feature issues per feature, per `agent-communication.md §Workflow: Product Requirements Collection` step 4.
+8. For each primary user goal (from "Core Workflows & User Stories"), map the workflow to a state machine using the template in `development/userflow-state-machines.md`. This formalization must be completed before implementation begins.
 
 ---
 
