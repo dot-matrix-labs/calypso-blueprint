@@ -1417,6 +1417,75 @@ development_state_machine:
     - "cli/tests/state.rs — development_phase_* test suite"
     - "issues: #95, #96"
 
+  init_state_machine:
+    description: >
+      The first step of the development lifecycle: initializing the environment
+      and control plane. The `calypso init` command drives a strictly linear
+      state machine that sets up a repository for Calypso usage. Progress is
+      persisted to `.calypso/init-state.json` so an interrupted init can be
+      resumed from the last completed step. Implemented in cli/src/init.rs.
+      See also: issues #94, #95.
+
+    steps:
+      - slug: prompt-directory
+        name: PromptDirectory
+        description: >
+          Choose or confirm the workspace directory. Non-interactive when run
+          from CWD.
+      - slug: create-git-repo
+        name: CreateGitRepo
+        description: >
+          Initialize .git if the directory is not already a git repository.
+      - slug: create-upstream
+        name: CreateUpstream
+        description: >
+          Create or configure the GitHub upstream remote (origin). Skipped if
+          a GitHub remote already exists.
+      - slug: scaffold-github-actions
+        name: ScaffoldGithubActions
+        description: >
+          Write the core GitHub Actions workflow files under
+          .github/workflows/. Existing files are left unchanged.
+        scaffolds:
+          - file: .github/workflows/pr-checklist.yml
+            purpose: Fails CI if any unchecked task items remain in a PR body
+          - file: .github/workflows/pr-depends-on.yml
+            purpose: Blocks merge if a Depends-on predecessor PR is unmerged
+          - file: .github/workflows/ci.yml
+            purpose: Generic CI placeholder; teams replace the run step with their test command
+      - slug: configure-local
+        name: ConfigureLocal
+        description: >
+          Write .calypso/ directory with repository-state.json, template YAML
+          files, and the pre-push git hook.
+      - slug: verify-setup
+        name: VerifySetup
+        description: >
+          Run doctor checks to confirm prerequisites and repository
+          configuration. Validates: git installed and CWD is a repo, gh CLI
+          authenticated, GitHub remote is a GitHub URL, required workflow
+          files present.
+      - slug: complete
+        name: Complete
+        description: Terminal state. Init is done.
+
+    transitions: "PromptDirectory -> CreateGitRepo -> CreateUpstream -> ScaffoldGithubActions -> ConfigureLocal -> VerifySetup -> Complete"
+
+    persisted_state_file: ".calypso/init-state.json"
+
+    cli_commands:
+      - command: "calypso-cli init"
+        effect: Run init from the current directory (resume if in progress)
+      - command: "calypso-cli init --reinit"
+        effect: Re-run all init steps even if previously completed
+      - command: "calypso-cli init --state"
+        effect: Show the current init state from .calypso/init-state.json
+
+    implementation_references:
+      - "cli/src/init.rs — InitStep, InitProgress, run_init_interactive, scaffold_github_actions"
+      - "cli/tests/init.rs — unit and integration tests"
+      - "issues: #94, #95"
+
   future_phases:
     - slug: deployment
       name: Deployment
