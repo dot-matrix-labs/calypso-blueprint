@@ -318,7 +318,7 @@ rules:
     type: principle
     description: >
       Every commit on main has passed all nine required CI checks: build,
-      clippy, format, unit, integration, e2e, coverage (≥99% line threshold),
+      lint, format, unit, integration, e2e, coverage (≥99% line threshold),
       checklist, and depends-on. No bypass actors are permitted — not even admins. The
       branch protection ruleset is applied to the repository immediately after
       first push and is never relaxed. Violations are not corrected after the
@@ -336,29 +336,37 @@ rules:
     name: three-document-planning-loop
     type: design_pattern
     description: >
-      Maintain three documents with distinct scopes: a Product Requirements
-      Document (what to build, human-owned), an Implementation Plan (all tasks
-      with ordering and completion state, agent-owned, updated every commit),
-      and a Next Prompt (single next action, agent-owned, written at each
-      commit end). The PRD constrains the plan; the plan generates the next
-      prompt. Information flows down; overrides flow up.
+      Maintain three planning artifacts with distinct scopes and storage: a
+      Product Requirements Document (what to build, human-owned, committed to
+      the repository), an Implementation Plan (all tasks with ordering and
+      completion state, agent-owned, maintained as a GitHub Issue), and a Next
+      Prompt (single next action, agent-owned, written as a local untracked
+      file for session recovery). The PRD constrains the plan; the plan
+      generates the next prompt. Information flows down; overrides flow up.
     problem: |
       An agent needs to know what the product should do, what work remains, and what to do right
       now. These are three different questions with different owners and different update
-      frequencies. Maintaining them as files in the repository creates merge conflicts, state drift,
-      and requires manual synchronization.
+      frequencies. Maintaining all of them as committed repository files creates merge conflicts,
+      state drift, and requires synchronization at commit time. Not all planning artifacts belong
+      in version control.
     solution: |
-      Maintain planning state in GitHub Issues instead of repository files: an Implementation Plan
-      Issue (a unique global tracking issue with phase headings linking to feature issues), Feature
-      Issues (one per feature, with structured sections for Motivation, Features, Test Plan, and
-      Stage), and Issue Descriptions (containing the next action for the agent). The issues form a
-      hierarchy: requirements produce feature issues, feature issues are linked in the
-      Implementation Plan issue.
+      Store each artifact where it belongs:
+      - PRD: committed to the repository at docs/prd.md. Human-owned. Version-controlled because
+        it is the product contract that every agent and reviewer must be able to inspect.
+      - Implementation Plan: a GitHub Issue. Agent-owned, updated by the agent after each task.
+        Lives where pull requests live, making task tracking and PR context visible in the same
+        system. An Implementation Plan Issue links to feature issues, each with Motivation,
+        Features, Test Plan, and Stage sections.
+      - Next Prompt: a local untracked file (next-prompt.md, gitignored or otherwise not
+        committed). Agent-owned, written at the end of each work session. Exists purely for
+        recovery when an agent loses session context — it is not a team artifact and must not
+        enter version control.
     tradeoffs: |
-      Moving planning to GitHub Issues eliminates repository file synchronization overhead and
-      eliminates pre-commit hook gates. The agent must use gh to create and update issues instead
-      of editing files. In return, planning state lives where pull requests live, integrating
-      naturally with code review and team visibility.
+      Moving the implementation plan to GitHub Issues means the agent uses gh to update it instead
+      of editing a file. The next-prompt file being untracked means it cannot be recovered from
+      git history if lost — but it is a transient artifact by design; the implementation plan
+      issue provides the durable state. Pre-commit hooks must not gate on either the plan issue or
+      the next-prompt file.
     links:
       - {target: 22de09615f92, rel: refines}
       - {target: c93476ff124b, rel: refines}
@@ -603,7 +611,7 @@ rules:
       - {target: a9a86673862d, rel: mitigates}
     deprecated: false
 
-  - number: PROCESS-D-011
+  - number: PROCESS-D-010
     hash: "4a9c2e7d1b83"
     name: pr-depends-on-enforcement
     type: design_pattern
@@ -638,14 +646,14 @@ rules:
       - {target: 3d643a9a5413, rel: refines}
     deprecated: false
 
-  - number: PROCESS-D-010
+  - number: PROCESS-D-011
     hash: "b4e71d903a28"
     name: github-branch-protection-ruleset
     type: design_pattern
     description: >
       Apply a GitHub repository ruleset immediately after the first push.
       The ruleset targets ~DEFAULT_BRANCH, sets bypass_actors to [], and
-      requires nine named status checks before merge: build, clippy, format,
+      requires nine named status checks before merge: build, lint, format,
       unit, integration, e2e, coverage, checklist, and depends-on. A
       pr-checklist.yml workflow enforces all PR task items are checked; a
       pr-depends-on.yml workflow blocks merge until any declared `Depends-on:
@@ -830,11 +838,11 @@ rules:
 
   - number: PROCESS-C-002
     hash: 2110600d43f2
-    name: implementation-plan-updated
+    name: implementation-plan-issue-current
     type: checklist
     description: >
-      docs/plans/implementation-plan.md exists and has been updated within the
-      last commit.
+      A GitHub Implementation Plan issue exists, links to all active feature
+      issues, and reflects the current state of completed and remaining work.
     links:
       - {target: 22de09615f92, rel: verifies}
       - {target: ce4b1e4f537f, rel: verifies}
@@ -845,8 +853,10 @@ rules:
     name: next-prompt-valid
     type: checklist
     description: >
-      docs/plans/next-prompt.md exists and contains a valid, self-contained
-      next action.
+      next-prompt.md exists locally (untracked, not committed to the
+      repository) and contains a valid, self-contained next action. This file
+      is a session recovery artifact — it is not a team artifact and must not
+      enter version control.
     links:
       - {target: c93476ff124b, rel: verifies}
       - {target: 7adecf113ceb, rel: verifies}
@@ -869,11 +879,13 @@ rules:
     name: pre-commit-hook-enforces-updates
     type: checklist
     description: >
-      Pre-commit hook rejects commits that do not include plan and next-prompt
-      updates.
+      Pre-commit hook does not gate on plan or next-prompt artifacts. Hooks
+      run quality checks only (build, lint, format). Planning state lives in
+      GitHub Issues; next-prompt.md is untracked. Neither is a valid hook
+      target.
     links:
       - {target: 22de09615f92, rel: verifies}
-      - {target: c93476ff124b, rel: verifies}
+      - {target: ce4b1e4f537f, rel: verifies}
     deprecated: false
 
   - number: PROCESS-C-006
@@ -1044,7 +1056,7 @@ rules:
     type: checklist
     description: >
       GitHub repository ruleset applied targeting ~DEFAULT_BRANCH with all
-      nine required status checks (build, clippy, format, unit, integration,
+      nine required status checks (build, lint, format, unit, integration,
       e2e, coverage, checklist, depends-on) and bypass_actors set to [].
     links:
       - {target: 7d2a9f1e50c3, rel: verifies}
@@ -1227,3 +1239,272 @@ rules:
       - {target: 4a9c2e7d1b83, rel: contradicts}
       - {target: 8f6e7b3a1ff9, rel: contradicts}
     deprecated: false
+
+  # ── Additional Checklist Items (repo bootstrap verification) ─────────────────
+
+  - number: PROCESS-C-024
+    hash: "a8f2b4c1e703"
+    name: all-check-names-pre-registered
+    type: checklist
+    description: >
+      All 9 required CI check names (build, lint, format, unit, integration,
+      e2e, coverage, checklist, depends-on) are pre-registered with GitHub by
+      running each workflow at least once before the branch protection ruleset
+      is enabled. GitHub only recognizes a required status check by name after
+      the workflow that produces it has run at least once.
+    links:
+      - {target: b4e71d903a28, rel: verifies}
+      - {target: 7d2a9f1e50c3, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-025
+    hash: "b9e3d5f2c814"
+    name: first-pr-all-checks-pass
+    type: checklist
+    description: >
+      The first PR through the gate demonstrates all required status checks
+      (build, lint, format, unit, integration, e2e, coverage, checklist,
+      depends-on) as required and passing before merge is permitted.
+    links:
+      - {target: 7d2a9f1e50c3, rel: verifies}
+      - {target: b4e71d903a28, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-026
+    hash: "c0d4e6a3f925"
+    name: admin-bypass-verified-blocked
+    type: checklist
+    description: >
+      An admin account has been verified unable to bypass the gate: a PR with
+      a failing required check was confirmed unmergeable even by a repository
+      admin or owner.
+    links:
+      - {target: 7d2a9f1e50c3, rel: verifies}
+      - {target: b4e71d903a28, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-027
+    hash: "d1e5f7b2a038"
+    name: coverage-gate-verified
+    type: checklist
+    description: >
+      Coverage threshold verified: a PR that drops below 99% line coverage is
+      blocked by the coverage required status check and cannot be merged.
+    links:
+      - {target: 7d2a9f1e50c3, rel: verifies}
+      - {target: b4e71d903a28, rel: verifies}
+    deprecated: false
+
+repo_standards:
+  description: >
+    Concrete repository configuration standards for all Calypso projects.
+    These are the machine-enforceable settings that back the principles and
+    design patterns declared in the rules above.
+
+  branch_protection:
+    target: "~DEFAULT_BRANCH"
+    enforcement: active
+    bypass_actors: []
+    required_pull_request_reviews:
+      required_approving_review_count: 1
+      dismiss_stale_reviews_on_push: true
+      require_last_push_approval: true
+    required_status_checks:
+      - name: build
+        verifies: Project compiles without errors
+      - name: lint
+        verifies: No lint warnings
+      - name: format
+        verifies: Code formatted per project style
+      - name: unit
+        verifies: All unit tests pass
+      - name: integration
+        verifies: Integration tests pass against real external dependencies
+      - name: e2e
+        verifies: End-to-end tests pass
+      - name: coverage
+        verifies: "Line coverage >= 99%"
+      - name: checklist
+        verifies: All unchecked task items in PR body are checked before merge
+      - name: depends-on
+        verifies: Any declared Depends-on predecessor PR is merged
+
+  pr_checklist_enforcement: >
+    The pr-checklist.yml workflow scans every PR body for unchecked - [ ]
+    markdown task items. If any are found, the checklist check fails and the
+    PR cannot merge. This enforces that agents and humans explicitly attest
+    to every item in the PR description before landing code.
+
+  check_name_registration: >
+    GitHub only recognizes a required status check by name after the workflow
+    that produces it has run at least once. The scaffold procedure (see
+    init/scaffold-task.md) includes a step to pre-register all check names by
+    triggering each workflow manually before enabling the ruleset. For the
+    checklist check specifically, push a dummy PR or trigger via
+    workflow_dispatch before configuring the ruleset.
+
+  ruleset_template: "examples/github-workflows/ruleset.json"
+
+  implementation_checklist:
+    - "GitHub ruleset created via `gh api` using the template in examples/github-workflows/ruleset.json"
+    - "bypass_actors confirmed empty in the ruleset (verified via `gh api repos/{owner}/{repo}/rulesets`)"
+    - "All 9 required check names pre-registered by running each workflow at least once"
+    - ".github/workflows/pr-checklist.yml present and triggering on PR open/edit/sync/reopen"
+    - "First PR through the gate demonstrates all 9 checks required and passing before merge"
+    - "Admin account verified unable to bypass the gate (test with a PR that has a failing check)"
+    - "Coverage threshold verified: a PR that drops below 99% line coverage is blocked"
+
+development_state_machine:
+  description: >
+    The top-level lifecycle machine for a Calypso-managed repository. Tracks
+    which phase of the development process is active and delegates setup work
+    to sub-state-machines. Implemented as the DevelopmentPhase enum in
+    cli/src/state.rs. See also: issues #95, #96.
+
+  phases:
+    - slug: init
+      name: Init
+      description: >
+        Repository setup. Delegates entirely to the init state machine
+        (InitStep). Entering this phase triggers `calypso init`. This is
+        the default entry point for a new repository. Completion of the init
+        state machine (InitStep::Complete) automatically transitions the
+        development state machine to Development.
+    - slug: development
+      name: Development
+      description: >
+        Active feature development. The repository is fully set up and agents
+        are running feature work.
+    - slug: testing
+      name: Testing
+      description: >
+        Testing and QA. Features are under validation before release.
+
+  transitions:
+    - from: Init
+      to: Development
+      trigger: InitStep reaches Complete
+    - from: Development
+      to: Testing
+      trigger: feature work ready for validation
+    - from: Development
+      to: Init
+      trigger: re-init requested (calypso-cli init --reinit)
+    - from: Testing
+      to: Development
+      trigger: validation complete or correction needed
+    - from: Testing
+      to: Init
+      trigger: re-init requested (calypso-cli init --reinit)
+
+  nested_state_machine_pattern: >
+    The Init phase demonstrates the canonical nested state machine pattern
+    used throughout Calypso:
+    1. The outer machine (DevelopmentPhase) enters Init.
+    2. Control is delegated entirely to the inner machine (InitStep).
+    3. When InitStep reaches Complete, the outer machine transitions from
+       Init to Development.
+    4. The outer machine can re-enter Init at any time (e.g. to update
+       workflows or re-run doctor checks).
+    Future phases (Deployment, Operations) follow the same structure.
+
+  reinit: >
+    The Init phase can be re-entered at any time from Development or Testing
+    using `calypso-cli init --reinit`. This re-runs all init steps, refreshing
+    GitHub Actions workflows and re-verifying setup. It does not destroy
+    existing .calypso/ state.
+
+  implementation_references:
+    - "cli/src/state.rs — DevelopmentPhase enum"
+    - "cli/src/init.rs — InitStep, InitProgress, run_init_interactive"
+    - "cli/tests/state.rs — development_phase_* test suite"
+    - "issues: #95, #96"
+
+  init_state_machine:
+    description: >
+      The first step of the development lifecycle: initializing the environment
+      and control plane. The `calypso init` command drives a strictly linear
+      state machine that sets up a repository for Calypso usage. Progress is
+      persisted to `.calypso/init-state.json` so an interrupted init can be
+      resumed from the last completed step. Implemented in cli/src/init.rs.
+      See also: issues #94, #95.
+
+    steps:
+      - slug: prompt-directory
+        name: PromptDirectory
+        description: >
+          Choose or confirm the workspace directory. Non-interactive when run
+          from CWD.
+      - slug: create-git-repo
+        name: CreateGitRepo
+        description: >
+          Initialize .git if the directory is not already a git repository.
+      - slug: create-upstream
+        name: CreateUpstream
+        description: >
+          Create or configure the GitHub upstream remote (origin). Skipped if
+          a GitHub remote already exists.
+      - slug: scaffold-github-actions
+        name: ScaffoldGithubActions
+        description: >
+          Write the core GitHub Actions workflow files under
+          .github/workflows/. Existing files are left unchanged.
+        scaffolds:
+          - file: .github/workflows/pr-checklist.yml
+            purpose: Fails CI if any unchecked task items remain in a PR body
+          - file: .github/workflows/pr-depends-on.yml
+            purpose: Blocks merge if a Depends-on predecessor PR is unmerged
+          - file: .github/workflows/ci.yml
+            purpose: Generic CI placeholder; teams replace the run step with their test command
+      - slug: configure-local
+        name: ConfigureLocal
+        description: >
+          Write .calypso/ directory with repository-state.json, template YAML
+          files, and the pre-push git hook.
+      - slug: verify-setup
+        name: VerifySetup
+        description: >
+          Run doctor checks to confirm prerequisites and repository
+          configuration. Validates: git installed and CWD is a repo, gh CLI
+          authenticated, GitHub remote is a GitHub URL, required workflow
+          files present.
+      - slug: complete
+        name: Complete
+        description: Terminal state. Init is done.
+
+    transitions:
+      - from: PromptDirectory
+        to: CreateGitRepo
+      - from: CreateGitRepo
+        to: CreateUpstream
+      - from: CreateUpstream
+        to: ScaffoldGithubActions
+      - from: ScaffoldGithubActions
+        to: ConfigureLocal
+      - from: ConfigureLocal
+        to: VerifySetup
+      - from: VerifySetup
+        to: Complete
+
+    persisted_state_file: ".calypso/init-state.json"
+
+    cli_commands:
+      - command: "calypso-cli init"
+        effect: Run init from the current directory (resume if in progress)
+      - command: "calypso-cli init --reinit"
+        effect: Re-run all init steps even if previously completed
+      - command: "calypso-cli init --state"
+        effect: Show the current init state from .calypso/init-state.json
+
+    implementation_references:
+      - "cli/src/init.rs — InitStep, InitProgress, run_init_interactive, scaffold_github_actions"
+      - "cli/tests/init.rs — unit and integration tests"
+      - "issues: #94, #95"
+
+  future_phases:
+    - slug: deployment
+      name: Deployment
+      description: CI/CD pipeline management and environment targeting
+    - slug: operations
+      name: Operations
+      description: Post-release monitoring and incident response
