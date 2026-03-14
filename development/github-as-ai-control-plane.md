@@ -100,6 +100,8 @@ When the signal is ambiguous, the agent asks one clarifying question before proc
 4. Update the plan tracking issue body so the new issue appears as a bullet under its phase.
 5. Assess merge queue order implications (see Merge Queue section below) and note any sequencing constraints in the issue body.
 
+**Invariant:** Only the PLANNING agent writes to the plan tracking issue. Subagents executing feature work never touch it. This prevents concurrent write collisions on the mother issue body.
+
 **Output artifact:** Updated GitHub Issue(s). No code touched.
 
 ---
@@ -130,12 +132,12 @@ When the signal is ambiguous, the agent asks one clarifying question before proc
 ### Entry Condition
 
 - A GitHub Issue exists (or is created) with the mandatory template filled in.
-- The operator has confirmed the issue is ready to implement.
+- The agent running the development state machine has verified the issue is feature-complete: all five template sections present, dependency issues merged or explicitly waived.
 
-### Exit Condition
+### Exit Conditions
 
-- The PR is merged to `main` via the merge queue.
-- The issue is closed automatically by the merge.
+- **ISSUE_CLOSED** — PR merged to `main` via merge queue; issue auto-closed.
+- **ABANDONED** — work is cancelled at any point before merge; worktree and branch cleaned up, issue closed with reason recorded.
 
 ### Issue Template (mandatory)
 
@@ -169,18 +171,20 @@ An issue missing any of these sections is **not ready to implement**. The agent 
 ### States and Transitions
 
 ```
-ISSUE_READY
-  └─→ BRANCH_OPEN (worktree created)
-        └─→ IN_PROGRESS (commits landing)
-              └─→ PR_OPEN (push + gh pr create)
-                    └─→ CI_RUNNING (all checks executing)
-                          ├─→ CI_FAILED (one or more checks fail)  ─→ IN_PROGRESS
-                          └─→ CI_PASSED
-                                └─→ MERGE_QUEUE (enqueued)
-                                      ├─→ QUEUE_FAILED (conflict or check regression) ─→ IN_PROGRESS
-                                      └─→ MERGED (landed on main)
-                                            └─→ ISSUE_CLOSED (auto-close via PR body)
+ISSUE_READY ──────────────────────────────────────────────┐
+  └─→ BRANCH_OPEN (worktree created) ────────────────────┤
+        └─→ IN_PROGRESS (commits landing) ───────────────┤
+              └─→ PR_OPEN (push + gh pr create) ─────────┤
+                    └─→ CI_RUNNING (all checks executing) ┤
+                          ├─→ CI_FAILED ─→ IN_PROGRESS    ┤
+                          └─→ CI_PASSED                   ┤  → ABANDONED
+                                └─→ MERGE_QUEUE ──────────┤
+                                      ├─→ QUEUE_FAILED ─→ IN_PROGRESS
+                                      └─→ MERGED
+                                            └─→ ISSUE_CLOSED
 ```
+
+ABANDONED is reachable from any state before MERGED.
 
 ---
 
@@ -188,7 +192,7 @@ ISSUE_READY
 
 **Meaning:** The issue template is complete and the feature has been approved for implementation.
 
-**Entry:** Operator confirms the issue or assigns it to an agent.
+**Entry:** The development state machine agent verifies the issue is feature-complete and spawns a subagent in a dedicated worktree. Each open issue maps to exactly one subagent; multiple subagents run concurrently across their respective worktrees.
 
 **Invariants:**
 - Issue has all five template sections.
@@ -197,12 +201,20 @@ ISSUE_READY
 **Available Actions:**
 - Create worktree and branch → BRANCH_OPEN
 
-**Branch naming convention:** `feat/<issue-slug>` where slug is the issue title lowercased and hyphenated.
+**Branch and worktree naming:** To avoid collisions between similarly titled issues and across concurrent subagents, the identifier is a short hash derived from the issue title and the commit SHA being branched from:
 
-**Worktree command:**
 ```bash
-git worktree add ../<repo>-<issue-slug> -b feat/<issue-slug>
+BASE=$(git rev-parse --short HEAD)
+SLUG=$(echo "<issue-title>" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/-*$//')
+HASH=$(echo "${SLUG}-${BASE}" | sha1sum | cut -c1-6)
+BRANCH="feat/${SLUG}-${HASH}"
+WORKTREE="../<repo>-${SLUG}-${HASH}"
+git worktree add "$WORKTREE" -b "$BRANCH"
 ```
+
+Example: issue "Add rate limiting", branched from `a3f9c1` → `feat/add-rate-limiting-e7d2a1`, worktree `../<repo>-add-rate-limiting-e7d2a1`.
+
+The hash component guarantees uniqueness even when two issues share a title prefix or when the same issue is retried from a different base commit.
 
 ---
 
@@ -233,8 +245,8 @@ git worktree add ../<repo>-<issue-slug> -b feat/<issue-slug>
 - Commits are small and logically atomic. The pre-commit hook warns if > 10 files are staged.
 
 **Available Actions:**
-- All feature checklist items complete, tests pass, lint clean → PR_OPEN
-- CI failure discovered post-push → (stay in IN_PROGRESS, address failures)
+- Open PR at any point — CI runs immediately on push; there is no minimum completeness threshold for opening a PR → PR_OPEN
+- Requirements cancelled or approach invalidated → ABANDONED
 
 ---
 
@@ -243,6 +255,8 @@ git worktree add ../<repo>-<issue-slug> -b feat/<issue-slug>
 **Meaning:** The branch has been pushed and a pull request has been created.
 
 **Entry:** `git push && gh pr create`
+
+PRs are never opened as drafts. CI runs immediately on every open PR — this is intentional. Testing early, granularly, and often means the first push triggers the full check suite. There is no "ready for review" gate between pushing and CI.
 
 **PR body format (mandatory):**
 
@@ -262,13 +276,15 @@ Closes #<issue-number>
 - No "Generated with Claude Code" or co-author attribution lines.
 
 **Available Actions:**
-- All CI checks start executing → CI_RUNNING
+- PR opened, subagent stops → CI_RUNNING
+
+The subagent's job ends here. It does not wait for CI. The orchestrator (development state machine) takes ownership and polls or listens for CI status events.
 
 ---
 
 ### State: CI_RUNNING
 
-**Meaning:** GitHub Actions workflows are executing against the PR.
+**Meaning:** GitHub Actions workflows are executing against the PR. No subagent is active; the orchestrator is waiting for CI to complete.
 
 **Required checks (all must pass):**
 
@@ -280,28 +296,26 @@ Closes #<issue-number>
 | `unit` | All unit tests pass |
 | `integration` | Integration tests pass against real Postgres |
 | `e2e` | End-to-end tests pass |
-| `coverage` | Line coverage ≥ 99% |
+| `coverage` | Line coverage ≥ `<COVERAGE_THRESHOLD>`% (configured per repo) |
 | `checklist` | All `- [ ]` items in PR body are checked |
 
-These checks are deterministic. There is no flakiness budget. A check that fails nondeterministically is a broken check and must be fixed.
+These checks are deterministic. A failing check means the code is wrong; fix the root cause before re-pushing.
 
-**Available Actions:**
-- Any check fails → CI_FAILED
-- All checks pass → CI_PASSED
+**Available Actions (orchestrator decides):**
+- Any check fails → orchestrator spawns a fix agent → CI_FAILED
+- All checks pass → orchestrator enqueues the PR → CI_PASSED
 
 ---
 
 ### State: CI_FAILED
 
-**Meaning:** One or more required checks have failed.
+**Meaning:** One or more required checks have failed. The orchestrator spawns a new subagent in the existing worktree, passing it the CI failure log as context.
 
-**Entry:** GitHub marks a required check as failed.
-
-**What the agent does:**
+**What the spawned agent does:**
 1. Read the failing check's log output.
-2. Determine root cause (do not re-push without understanding the failure).
+2. Determine root cause — do not re-push without understanding the failure.
 3. Fix the issue on the branch.
-4. Push — CI re-runs automatically.
+4. Push — CI re-runs and the agent stops. The orchestrator re-enters CI_RUNNING.
 
 **Invariants:**
 - Never push `--no-verify` to bypass hooks.
@@ -309,60 +323,59 @@ These checks are deterministic. There is no flakiness budget. A check that fails
 - If the test itself is wrong (testing incorrect behavior), rewrite the test with a clear commit message explaining the correction.
 
 **Available Actions:**
-- Fix pushed, all checks pass → CI_PASSED
+- Fix pushed, agent stops → CI_RUNNING
 
 ---
 
 ### State: CI_PASSED
 
-**Meaning:** All required checks have passed. The PR is eligible for the merge queue.
+**Meaning:** All required checks have passed. The orchestrator enqueues the PR — no subagent required for this transition.
 
-**Available Actions:**
-- Add PR to merge queue → MERGE_QUEUE
-
-**Merge queue command:**
+**Orchestrator action:**
 ```bash
 gh pr merge <PR-number> --merge --auto
 ```
 
-The `--auto` flag enqueues the PR rather than merging immediately. GitHub will merge it when the queue processes it and all checks pass in the queue context.
+The `--auto` flag enqueues the PR rather than merging immediately. GitHub merges it when the queue processes it and all checks pass in the queue context.
+
+**Available Actions:**
+- PR enqueued → MERGE_QUEUE
 
 ---
 
 ### State: MERGE_QUEUE
 
-**Meaning:** The PR has been added to the repository's merge queue and is awaiting its turn.
+**Meaning:** The PR is in the merge queue. The orchestrator is waiting for the queue outcome — no subagent is active.
 
 **Why merge queues:**
 The merge queue prevents a class of bug where two PRs both pass CI independently but fail when combined. Each PR in the queue is re-tested against the accumulated state of all PRs ahead of it. This makes `main` a stable branch by construction — no individual PR can regress it.
 
-**Agent ordering discipline:**
-When multiple PRs are open simultaneously, the agent must enqueue them in dependency order:
+**Orchestrator ordering discipline:**
+When multiple PRs are open simultaneously, the orchestrator enqueues them in dependency order:
 1. Check the `Dependencies` section of each issue.
 2. Enqueue blocked-by issues first.
 3. Dependent issues must not be enqueued until their blockers are merged or explicitly waived.
 
 This sequencing should also be reflected in the plan tracking issue (phases and bullet order).
 
-**Available Actions:**
-- Queue check fails (conflict or regression) → QUEUE_FAILED
+**Available Actions (orchestrator decides):**
+- Queue check fails (conflict or regression) → orchestrator spawns a rebase agent → QUEUE_FAILED
 - Queue processes successfully → MERGED
 
 ---
 
 ### State: QUEUE_FAILED
 
-**Meaning:** The merge queue rejected the PR — either a merge conflict arose from a PR ahead in the queue, or a CI check regressed in the queue context.
+**Meaning:** The merge queue rejected the PR. The orchestrator spawns a new subagent in the existing worktree, passing it the conflict or regression details as context.
 
-**What the agent does:**
+**What the spawned agent does:**
 1. Pull the latest `main` (or queue base).
 2. Rebase the branch: `git rebase origin/main`.
 3. Resolve conflicts — do not blindly accept either side.
-4. Push the rebased branch.
-5. Re-enqueue.
+4. Push the rebased branch and stop. The orchestrator re-enters CI_RUNNING.
 
 **Available Actions:**
-- Rebase and re-push → CI_RUNNING (CI re-runs on the rebased branch)
+- Rebase pushed, agent stops → CI_RUNNING
 
 ---
 
@@ -384,6 +397,23 @@ git branch -d feat/<issue-slug>
 ### State: ISSUE_CLOSED
 
 **Meaning:** The feature is complete. The issue is closed; the plan tracking issue's bullet for this issue shows a closed-issue icon (no manual checkbox update needed — GitHub renders the icon by issue state).
+
+**Terminal state.** No further transitions.
+
+---
+
+### State: ABANDONED
+
+**Meaning:** The feature has been cancelled — requirements changed, the approach was invalidated, or a dependency was dropped. Reachable from any state before MERGED.
+
+**What the agent does:**
+1. If a PR is open: close it with a comment explaining why the work is being abandoned.
+2. Remove the worktree: `git worktree remove "$WORKTREE"`.
+3. Delete the branch: `git push origin --delete "$BRANCH" && git branch -d "$BRANCH"`.
+4. Close the issue with a comment recording the reason and any work that should be preserved or re-examined in a future issue.
+5. Notify the PLANNING agent so it can update the phase in the plan tracking issue (remove the bullet or replace it with a successor issue).
+
+**Invariant:** The subagent records the reason before any cleanup. An abandoned issue with no explanation is indistinguishable from an accidental closure.
 
 **Terminal state.** No further transitions.
 
@@ -413,9 +443,46 @@ Every project has exactly one **plan tracking issue** — the "mother issue." It
 ### Rules
 
 - Bullets are issues, not checkboxes. The icon next to each linked issue changes color automatically when the issue is closed — there is no status divergence.
-- Phases reflect the merge queue order. Issues in Phase 1 must all be merged before Phase 2 begins.
-- When a new issue is created (PLANNING state), the agent adds it to the appropriate phase in the plan tracking issue body.
+- **Phases are strict gates, not loose groupings.** All issues in a phase must be merged before any issue in the next phase may enter ISSUE_READY. This is intentional: it enforces a QA and stabilization boundary between phases, prevents half-finished foundations from being built on, and gives the codebase time to settle before the next wave of changes compounds on top of it.
+- Phase boundaries are planned by the human and PLANNING agent together. The cost of strict sequencing is lower throughput; the benefit is a stable, fully-verified base at every phase transition. This trade-off is accepted by design.
+- When a new issue is created (PLANNING state), the agent adds it to the appropriate phase in the plan tracking issue body. Phase assignment is a planning decision — it encodes both dependency order and the stabilization intent.
 - The plan tracking issue is the **only** planning artifact. No project boards, no wikis, no separate roadmap docs.
+
+---
+
+## Human Touchpoints
+
+Agents run the full development loop autonomously. Humans do not review PRs as part of normal feature work — automated CI gates are the quality bar for merging to `main`.
+
+The two points where humans intervene are:
+
+| Touchpoint | Who | What |
+|------------|-----|-------|
+| **Instruct new work** | Operator | Sends a prompt to the agent: create a feature, revert a feature, plan a phase, or conduct R&D. |
+| **Tag a release** | Operator | Decides when `main` is ready to ship. Creates the release tag manually or instructs the agent to do so. No agent tags a release autonomously. |
+
+### Instructing Agents
+
+Operators interact with the system by sending natural-language prompts. The prompt classification machine (State Machine 1) routes the prompt to the correct sub-machine.
+
+Common operator prompts and their classifications:
+
+| Prompt example | Classification |
+|----------------|----------------|
+| "Implement rate limiting on the `/api/v1/ingest` endpoint (issue #31)" | FEATURE_WORK |
+| "Revert the rate limiting feature — it's causing false positives" | FEATURE_WORK |
+| "Add a phase 4 to the plan: observability" | PLANNING |
+| "Research the tradeoffs between JWT and opaque tokens for our auth layer" | R&D |
+
+### Rolling Back a Feature
+
+A rollback is treated as a new feature, not a special operation. The operator prompts the agent: "Revert feature X." The agent:
+
+1. Creates a new GitHub Issue with the mandatory template — motivation is the regression or decision to remove, technical considerations include which commits to revert.
+2. Enters the normal Feature Lifecycle: branch, worktree, commits (`git revert <sha>` or equivalent), PR, CI, merge queue.
+3. The original issue is referenced in the new revert issue for traceability.
+
+There is no fast-path or bypass for rollbacks. Running the revert through CI is what confirms the system is stable after removal.
 
 ---
 
@@ -429,10 +496,6 @@ The following configuration must be applied to every repository before the first
 - No bypass actors — not even repo admins
 - Required status checks (all eight listed in CI_RUNNING state above)
 - Require pull request before merging
-- Require at least 1 approving review
-- Dismiss stale reviews on push
-- Require last-push approval
-- Require signed commits
 - Require merge queue
 
 ### Bootstrap API Script
@@ -483,17 +546,7 @@ gh api --method POST \
   "rules": [
     { "type": "deletion" },
     { "type": "non_fast_forward" },
-    { "type": "required_signatures" },
-    {
-      "type": "pull_request",
-      "parameters": {
-        "dismiss_stale_reviews_on_push": true,
-        "require_code_owner_review": false,
-        "require_last_push_approval": true,
-        "required_approving_review_count": 1,
-        "required_review_thread_resolution": false
-      }
-    },
+    { "type": "pull_request" },
     {
       "type": "required_status_checks",
       "parameters": {
@@ -595,9 +648,9 @@ CI_RUNNING                                            │
 
 | Scenario | Current State | Trigger | Resolution |
 |----------|---------------|---------|------------|
+| Operator requests a rollback | N/A | Operator prompt "revert feature X" | Create a new issue + branch + revert commits; run the full lifecycle. No bypass. |
 | Two features accidentally on one branch | IN_PROGRESS | Discovered at PR review | Split branch: cherry-pick one feature to a new branch, reset the original |
 | Dependency merged out of order | MERGE_QUEUE | Queue failure due to missing dep | Remove from queue, wait for blocker to merge, re-enqueue |
-| Flaky CI check | CI_RUNNING | Nondeterministic failure | Fix the test — flakiness is not a budget item |
 | Issue template incomplete | ISSUE_READY | Agent begins work without full template | Stop. Complete the template first. No exceptions |
 | PR body has undecided `- [ ]` items | PR_OPEN | Checklist CI job fails | Check the boxes or remove the item with a comment in the PR thread |
 | Main has diverged significantly | QUEUE_FAILED | Many conflicts on rebase | Rebase interactively, resolve each conflict deliberately |
