@@ -513,215 +513,507 @@ branches:
       # Goal: advance one feature through feature_workflow
       # next-prompt.md is written HERE at the end of each work session
 
+      # ── Sub: Feature Dev ───────────────────────────────────────────────────
+      # The orchestrator selects the feature and constructs the developer
+      # context (instructions + GitHub issue). The engineer receives a
+      # fully-formed handoff — it does not decide what to work on.
+
       sub-feature-dev:
         kind: orchestrator
         description: >
-          Picks up the current in-progress feature (or next unstarted one)
-          and runs one transition of feature_workflow. Writes next-prompt.md
-          at the end of each work session.
-        context:
-          - source: file
-            load: "cat next-prompt.md 2>/dev/null || echo 'no next-prompt'"
-          - source: github_issue
-            load: "gh issue view <impl-plan-issue> --json body,comments"
-          - source: github_issue_list
-            load: "gh issue list --label feature --state open --json number,title,body,labels"
-        prompt: |
-          Determine the correct feature and stage to work on.
+          Orchestrator selects the correct feature and stage, constructs the
+          developer context, and hands it to the engineer. The engineer's
+          starting point is always explicit: a GitHub issue number, a stage
+          to resume, and any relevant prior context from next-prompt.md.
+        states:
+          construct-developer-context:
+            kind: orchestrator
+            description: >
+              Read the implementation plan and next-prompt.md. Identify the
+              feature and stage. Assemble the complete developer context
+              (issue body, architecture plan comment, PR number if open,
+              next-prompt if valid) and pass it to dispatch-to-engineer.
+            context:
+              - source: file
+                description: Session recovery (local, may not exist)
+                load: "cat next-prompt.md 2>/dev/null || echo 'no next-prompt'"
+              - source: github_issue
+                description: Implementation Plan issue
+                load: "gh issue view <impl-plan-issue> --json body,comments"
+              - source: github_issue_list
+                description: Open feature issues with Stage
+                load: "gh issue list --label feature --state open --json number,title,body,labels"
+            prompt: |
+              Select the feature to work on this session.
 
-          Priority:
-          1. next-prompt.md exists and references a valid open feature issue
-             → use that feature and stage
-          2. A feature issue has Stage in an in-progress state
-             (scaffold-tdd, architecture-review, implementation, qa-validation)
-             → resume at current stage
-          3. All in-progress features are blocked or waiting-for-human
-             → transition to branch-done; do not start new work
-          4. No in-progress features exist
-             → pick the lowest-numbered unstarted feature from the plan
+              Selection priority:
+              1. next-prompt.md is valid and references an open feature issue
+                 → use the issue number and stage it specifies
+              2. A feature issue has Stage in a non-terminal in-progress state
+                 (feature-definition, architecture-plan, scaffold-tdd,
+                 architecture-review, implementation, qa-validation)
+                 → resume that feature at its current Stage
+              3. All in-progress features are blocked or waiting-for-human
+                 → transition to branch-done; do not start new work
+              4. No in-progress features
+                 → pick the lowest-numbered unstarted feature from the
+                   Implementation Plan issue
 
-          After completing work for this session:
-            Write next-prompt.md locally (do not commit):
-              ## Context
-              <1-3 sentences: where we are in the project>
-              ## Last completed
-              <what was done this session>
-              ## Next action
-              <specific: feature issue #, stage, PR # if open>
-              ## Blockers
-              <any waiting-for-human or external blockers>
-        gh_commands:
-          - cmd: "cat next-prompt.md 2>/dev/null"
-            purpose: Read session recovery context
-          - cmd: "gh issue list --label feature --state open --json number,title,body"
-            purpose: Find in-progress and unstarted features
-        sub_machine: feature_workflow
-        sub_machine_entry: resume_at_stage
-        next:
-          on_success: branch-done
-          on_blocked: branch-done
-          on_waiting_for_human: branch-done
+              Assemble the developer context package:
+                feature_issue:     <issue number>
+                resume_stage:      <stage slug>
+                issue_body:        <full issue body including all sections>
+                architecture_plan: <architecture plan comment if exists, else null>
+                pr_number:         <open PR number if exists, else null>
+                next_prompt:       <next-prompt.md content if valid, else null>
+                instructions: |
+                  You are picking up feature #<n>: <title>.
+                  Resume at stage: <stage>.
+                  <if next-prompt exists: "Last session: <last-completed from next-prompt>">
+                  <if pr exists: "Your PR is #<pr-number> at <url>">
+                  Your first action: read the issue body and <stage-specific instruction>.
+
+              Pass this package to dispatch-to-engineer.
+            gh_commands:
+              - cmd: "cat next-prompt.md 2>/dev/null"
+                purpose: Read session recovery context
+              - cmd: "gh issue list --label feature --state open --json number,title,body,labels"
+                purpose: Find in-progress and unstarted features
+              - cmd: "gh issue view <feature-issue> --json body,comments"
+                purpose: Load full issue context for the selected feature
+              - cmd: "gh pr list --head feat/<slug> --json number,url"
+                purpose: Find open PR for this feature if it exists
+            next:
+              context_ready: dispatch-to-engineer
+              all_blocked: branch-done
+
+          dispatch-to-engineer:
+            kind: orchestrator
+            description: >
+              Hand the assembled developer context to feature_workflow,
+              entering at the identified stage. The engineer receives a
+              fully-formed instruction — it does not need to re-derive state.
+            sub_machine: feature_workflow
+            sub_machine_entry: resume_at_stage
+            developer_context: from_construct_developer_context
+            on_session_end:
+              write_next_prompt: true
+              format: |
+                ## Context
+                <1-3 sentences: where we are in the project>
+                ## Last completed
+                <what was done this session>
+                ## Next action
+                Feature #<n>: <title>. Resume at stage: <stage>.
+                <PR #<n> if open>
+                ## Blockers
+                <any waiting-for-human or external blockers, or "none">
+            next:
+              on_success: branch-done
+              on_blocked: branch-done
+              on_waiting_for_human: branch-done
 
       # ── Sub: R&D ───────────────────────────────────────────────────────────
-      # Trigger: open issues with label "research" or "request" that have
-      # "needs-specification" label (or no acceptance criteria yet)
-      # Goal: turn a vague request into a specification document;
-      # output is a doc, NOT code. Only after spec is approved does the issue
-      # become a feature-dev task (label changes from "research" to "feature").
+      # Starts with a user query: "I want to add X to the PRD."
+      # Triggers a dialog and reflection loop with the architect.
+      # Output is a written document (spec or PRD amendment).
+      # Issues are only created from the output AFTER human approval.
+      # The architect never jumps straight to creating issues.
 
       sub-rnd:
         kind: agent
         role: architect
         description: >
-          Processes one vague feature request into a specification document.
-          The output is a written spec posted as a GitHub issue comment or
-          committed to docs/specs/. The issue is not turned into a feature-dev
-          task until the spec is approved by a human.
-        context:
-          - source: github_issue_list
-            load: "gh issue list --label research --state open --json number,title,body,comments,createdAt --order created"
-          - source: file
-            load: docs/prd.md
-          - source: github_issue
-            load: "gh issue view <impl-plan-issue> --json body"
-        prompt: |
-          Take the oldest open issue labeled "research". Produce a specification
-          document for it. One issue per cycle.
+          Processes a user query about adding something to the product.
+          Runs a structured dialog: clarify → reflect → propose.
+          Output is a document (spec comment or docs/specs/ file).
+          Human approves before any issues are created.
+        states:
+          receive-query:
+            kind: human
+            role: operator
+            description: >
+              The user has submitted a query: "I want to add X."
+              This is the entry point for the R&D sub-branch.
+              The query is the raw input; it is not yet a requirement.
+            context:
+              - source: github_issue_list
+                description: Open research issues (user queries in issue form)
+                load: "gh issue list --label research --state open --json number,title,body,comments,createdAt --order created"
+            prompt: |
+              You have submitted a feature idea or PRD amendment request.
+              The architect will now run a clarification dialog with you.
+              Your query has been captured as a GitHub issue labeled "research".
+              Await the architect's first clarifying question.
+            next:
+              query_received: dialog
 
-          Step 1 — Scope and readiness check:
-          Read docs/prd.md. Is this request in scope?
-            Out of scope → comment why, add label "out-of-scope", close.
-            Transition to branch-done.
+          dialog:
+            kind: agent
+            role: architect
+            description: >
+              Structured dialog between architect and user. The architect asks
+              targeted questions; the user answers on the GitHub issue.
+              The loop continues until the architect has enough information
+              to write a specification.
+            context:
+              - source: github_issue
+                description: Research issue (query + any prior comments)
+                load: "gh issue view <research-issue> --json number,title,body,comments"
+              - source: file
+                description: Current PRD
+                load: docs/prd.md
+              - source: github_issue
+                description: Implementation Plan (existing planned work)
+                load: "gh issue view <impl-plan-issue> --json body"
+            prompt: |
+              You are an architect in a dialog with the user about a product idea.
+              Read the research issue. The user has proposed: "<query from issue body>"
 
-          Does the request have enough information to specify?
-            No → post 3-5 targeted clarifying questions on the issue.
-            Add label "needs-clarification". Transition to branch-done.
+              Your goal is to gather enough information to write a precise
+              specification. Run the dialog in rounds:
 
-          Step 2 — Research and specify:
-          Investigate the request. Consider:
-            - What problem does this solve? For whom?
-            - What are the boundaries (what it is NOT)?
-            - What are the concrete acceptance criteria?
-            - What are the technical constraints or open questions?
-            - What is the simplest solution that satisfies the criteria?
-            - What are the alternatives considered and why rejected?
+              ROUND 1 — Understand the need:
+              Post a comment with 3-5 targeted questions. Focus on:
+                - What problem does this solve? (not what feature to build)
+                - Who experiences this problem?
+                - How do they currently work around it?
+                - What does "done" look like from the user's perspective?
+                - Are there constraints (performance, compatibility, scope)?
 
-          Step 3 — Write the specification:
-          Post the spec as a comment on the research issue using this format:
+              Wait for the user to answer before proceeding.
+              (The orchestrator will re-enter this state when the user replies.)
 
-            ## Specification: <feature name>
-            ### Problem
-            <what problem this solves and for whom>
-            ### Scope
-            <what is included / what is explicitly excluded>
-            ### Proposed solution
-            <description of the approach>
-            ### Acceptance criteria
-            - [ ] <testable criterion 1>
-            - [ ] <testable criterion 2>
-            ### Open questions
-            <any unresolved questions that need human input before this can
-             become an engineering task>
-            ### Out of scope
-            <explicitly excluded items to prevent scope creep>
+              ROUND 2+ — Dig deeper if needed:
+              If the answers raise new questions, post a follow-up round.
+              Stop when you can write concrete acceptance criteria.
 
-          If there are no open questions: add label "spec-ready" to the issue.
-          A human must review and approve the spec before it becomes a feature.
-          Do NOT create a feature issue or change the label to "feature" yet.
+              REFLECTION — before writing the spec:
+              Explicitly consider:
+                - Does this belong in the PRD or is it a standalone feature?
+                - Does this conflict with anything already planned or built?
+                - What is the simplest form of this feature that has value?
+                - What should explicitly be OUT of scope?
+                - What are 2-3 alternative approaches and why is one preferred?
 
-          If there are open questions: add label "needs-clarification".
-          The issue stays as "research" until the human answers.
-        expected_response:
-          spec_written:
-            - Specification comment posted on research issue
-            - Label "spec-ready" added (if no open questions)
-            - No feature issue created yet (human must approve spec first)
-          needs_clarification:
-            - Questions posted on research issue
-            - Label "needs-clarification" added
-          out_of_scope:
-            - Issue commented, labeled, closed
-        gh_commands:
-          - cmd: "gh issue list --label research --state open --json number,title,body"
-            purpose: Find oldest research issue
-          - cmd: "gh issue comment <research-issue> --body '## Specification: <name>\n...'"
-            purpose: Post specification document
-          - cmd: "gh issue edit <research-issue> --add-label spec-ready"
-            purpose: Signal spec is ready for human review
-          - cmd: "gh issue edit <research-issue> --add-label needs-clarification"
-            purpose: Signal more information needed
-        next:
-          spec_written: branch-done
-          needs_clarification: branch-done
-          out_of_scope: branch-done
+              Post the reflection as a comment before writing the spec, so
+              the user can course-correct before the spec is written.
+            expected_response:
+              round_n:
+                - Comment posted with targeted clarifying questions
+                - Label "needs-clarification" set
+              reflection:
+                - Reflection comment posted (alternatives, scope, simplest form)
+                - Awaiting user confirmation before spec is written
+            gh_commands:
+              - cmd: "gh issue comment <research-issue> --body '<round N questions>'"
+                purpose: Post clarifying questions
+              - cmd: "gh issue comment <research-issue> --body '## Reflection\n...'"
+                purpose: Post architectural reflection before writing spec
+              - cmd: "gh issue edit <research-issue> --add-label needs-clarification"
+                purpose: Signal dialog is in progress
+            next:
+              dialog_complete: write-spec
+              needs_more_input: branch-done  # return next cycle when user replies
+
+          write-spec:
+            kind: agent
+            role: architect
+            description: >
+              User has answered all questions and confirmed the reflection.
+              Write the specification document.
+            context:
+              - source: github_issue
+                load: "gh issue view <research-issue> --json body,comments"
+              - source: file
+                load: docs/prd.md
+            prompt: |
+              The dialog is complete. Write the specification document.
+
+              Format (post as a comment on the research issue AND commit
+              to docs/specs/<slug>.md):
+
+                # Specification: <feature name>
+
+                ## Problem
+                <what problem this solves, for whom, confirmed by user>
+
+                ## Scope
+                IN: <what is included>
+                OUT: <what is explicitly excluded — reference dialog if relevant>
+
+                ## Proposed solution
+                <description of the chosen approach and why>
+
+                ## Alternatives considered
+                - <alternative 1>: rejected because <reason>
+                - <alternative 2>: rejected because <reason>
+
+                ## Acceptance criteria
+                - [ ] <testable, specific criterion 1>
+                - [ ] <testable, specific criterion 2>
+
+                ## PRD impact
+                <does this amend docs/prd.md? If yes: quote the exact section
+                to add/change and mark it clearly as a proposed amendment>
+
+                ## Issue template
+                <if this spec is approved, the following GitHub issues should
+                be created — one per independent deliverable:>
+                - feat: <deliverable 1> (acceptance criteria: ...)
+                - feat: <deliverable 2> (acceptance criteria: ...)
+
+              After posting: add label "spec-ready". Remove "needs-clarification".
+              A human must review and approve before any issues are created or
+              docs/prd.md is changed.
+            expected_response:
+              - Specification comment posted on research issue
+              - docs/specs/<slug>.md committed on a new branch
+              - Label "spec-ready" added, "needs-clarification" removed
+              - No feature issues created yet
+              - PRD not modified yet (amendment is proposed in the spec only)
+            gh_commands:
+              - cmd: "gh issue comment <research-issue> --body '# Specification: <name>\n...'"
+                purpose: Post specification on issue
+              - cmd: "git checkout -b spec/<slug> && git add docs/specs/<slug>.md && git commit -m 'docs(spec): <name>'"
+                purpose: Commit spec document to a branch for review
+              - cmd: "gh pr create --title 'spec: <name>' --body 'Specification for #<research-issue>. Awaiting human approval before creating feature issues or amending PRD.'"
+                purpose: Open spec PR for human review
+              - cmd: "gh issue edit <research-issue> --add-label spec-ready --remove-label needs-clarification"
+                purpose: Signal spec is ready for review
+            next:
+              on_success: branch-done
 
       # ── Sub: Hardening ─────────────────────────────────────────────────────
-      # Trigger: no active feature-dev work, no r&d pending (idle)
-      # Goal: background quality improvement — no specific instructions;
-      # engineer uses judgment. Output is a small PR.
+      # Trigger: orchestrator detects nothing active (no feature-dev, no r&d)
+      # The orchestrator forks from main and runs one of four specific passes.
+      # Engineer does not pick freely — the orchestrator selects the pass
+      # based on what the analysis finds. Each pass produces a focused PR.
 
       sub-hardening:
-        kind: agent
-        role: engineer
+        kind: orchestrator
         description: >
-          Background quality work when nothing else is active. No specific
-          instructions — the engineer identifies and fixes the most valuable
-          quality issue in the codebase. Output is always a small, focused PR.
-        context:
-          - source: command_output
-            description: Clippy output (warnings, even non-blocking ones)
-            load: "cargo clippy 2>&1"
-          - source: command_output
-            description: Coverage summary
-            load: "cargo llvm-cov --summary-only 2>&1 || echo 'coverage unavailable'"
-          - source: command_output
-            description: Recent commits (avoid duplicating recent work)
-            load: "git log origin/main --oneline -20"
-          - source: command_output
-            description: Open TODOs and FIXMEs in source
-            load: "grep -rn 'TODO\\|FIXME\\|HACK\\|unwrap()' src/ | head -30"
-        prompt: |
-          No active feature work or R&D is pending. Use this time for
-          background hardening. Choose the most valuable improvement from
-          this priority list:
+          Nothing else is active. Orchestrator forks from main and dispatches
+          one of four hardening passes in priority order: dead-code removal,
+          test quality improvement, performance improvement, deduplication.
+          Exactly one pass per cycle. Each produces a focused PR or records
+          that the pass found nothing to do.
+        states:
+          fork-and-analyse:
+            kind: orchestrator
+            description: >
+              Fork from main into a hardening branch. Run all four analysis
+              commands to gather raw data. Select the highest-priority pass
+              that has actionable findings.
+            context:
+              - source: command_output
+                description: Dead code — unused items not caught by compiler
+                load: "cargo +nightly rustc -- -W dead_code 2>&1 | grep 'warning\\[dead_code\\]' || echo 'none'"
+              - source: command_output
+                description: Test quality — tests with no assertions (assert-free)
+                load: "grep -rn '#\\[test\\]' tests/ src/ -A 10 | grep -B 5 'fn test_' | grep -v 'assert' | head -30 || echo 'none'"
+              - source: command_output
+                description: Performance — obvious hotspots (clone in hot paths, collect into Vec)
+                load: "grep -rn '\\.clone()\\|\\.collect::<Vec' src/ | grep -v '#\\[cfg(test)\\]' | head -20 || echo 'none'"
+              - source: command_output
+                description: Duplication — repeated code blocks (>10 lines identical)
+                load: "cargo install --quiet duplicate-detector 2>/dev/null; duplicate-detector src/ 2>/dev/null | head -20 || echo 'none'"
+              - source: command_output
+                description: Recent hardening commits (avoid re-doing recent work)
+                load: "git log origin/main --oneline --grep='chore:' -10"
+            prompt: |
+              Analysis complete. Select the highest-priority pass with findings:
 
-          1. Fix any clippy warnings not caught by -D warnings (style, pedantic)
-          2. Eliminate unwrap()/expect() calls in non-test code — replace with
-             proper error propagation using ?
-          3. Increase test coverage for any branch below 99% (run llvm-cov
-             to identify uncovered lines)
-          4. Resolve TODO/FIXME comments that have clear, small fixes
-          5. Improve error messages (make them actionable for end users)
-          6. Simplify overly complex functions (split, rename, clarify)
-          7. Update dependency versions in Cargo.toml (check for patch updates)
-          8. Add or improve documentation comments (///) on public API items
+              Priority order:
+              1. dead-code   — if dead_code warnings found
+              2. test-quality — if assert-free tests found
+              3. performance  — if clone/collect patterns found in hot paths
+              4. dedup        — if duplicated code blocks found
 
-          Rules:
-          - One concern per PR — do not mix multiple hardening types
-          - Do not refactor working code without a clear quality justification
-          - Do not add features
-          - Commit: "chore(<scope>): <what was improved>"
-          - Open a PR (not draft) with a brief Summary explaining what was
-            improved and why it matters
+              Create a hardening branch:
+                git checkout -b chore/hardening-<pass>-<YYYY-MM-DD> origin/main
 
-          If the codebase is genuinely clean (no warnings, 99%+ coverage,
-          no TODOs, no unwraps): close this cycle with a comment on the
-          Implementation Plan issue noting the clean state.
-        expected_response:
-          improved:
-            - Small, focused commit on a new branch
-            - PR opened with Summary and brief rationale
-          already_clean:
-            - Comment on Implementation Plan issue: "Hardening: codebase clean"
-        gh_commands:
-          - cmd: "git checkout -b chore/<scope>-<date>"
-            purpose: Create hardening branch
-          - cmd: "gh pr create --title 'chore(<scope>): <what>' --body '<summary>'"
-            purpose: Open hardening PR
-          - cmd: "gh issue comment <impl-plan-issue> --body 'Hardening: codebase clean as of <date>'"
-            purpose: Record clean state if nothing to improve
-        next:
-          on_success: branch-done
+              Dispatch to the selected pass state.
+              If all passes report "none": record the clean state and branch-done.
+            gh_commands:
+              - cmd: "git checkout -b chore/hardening-<pass>-<date> origin/main"
+                purpose: Fork from main into isolated hardening branch
+            next:
+              dead_code_found: pass-dead-code
+              test_quality_found: pass-test-quality
+              performance_found: pass-performance
+              dedup_found: pass-dedup
+              all_clean: record-clean
+
+          pass-dead-code:
+            kind: agent
+            role: engineer
+            description: Remove dead code — unused functions, structs, enums, imports.
+            context:
+              - source: command_output
+                load: "cargo +nightly rustc -- -W dead_code 2>&1 | grep 'warning\\[dead_code\\]'"
+            prompt: |
+              Remove dead code identified in the analysis.
+
+              For each warning:
+                - If the item is truly unused: delete it entirely
+                - If it appears unused but is a public API item: add
+                  #[allow(dead_code)] with a comment explaining why it must
+                  stay (e.g. "used by downstream consumers")
+                - If unsure: leave it and note it in the PR
+
+              After removal: run cargo test — all tests must still pass.
+              Commit: "chore(dead-code): remove unused <items>"
+              Open a PR listing each removed item and why it was safe to remove.
+            expected_response:
+              - Dead code removed or annotated with justification
+              - cargo test passes
+              - PR opened with itemised list
+            gh_commands:
+              - cmd: "gh pr create --title 'chore(dead-code): remove unused items' --body '<list>'"
+                purpose: Open dead-code PR
+            next:
+              on_success: branch-done
+
+          pass-test-quality:
+            kind: agent
+            role: engineer
+            description: >
+              Improve test quality — add meaningful assertions to assert-free
+              tests, remove duplicate test setup, improve test names.
+            context:
+              - source: command_output
+                load: "grep -rn '#\\[test\\]' tests/ src/ -A 15 | head -100"
+            prompt: |
+              Improve test quality. Focus on:
+
+              1. Assert-free tests — add at least one specific assertion.
+                 An assert-free test only checks "it doesn't panic", which is
+                 rarely the actual invariant being tested.
+
+              2. Duplicate test setup — extract shared setup into helper
+                 functions rather than copy-pasting fixture construction.
+
+              3. Vague test names — rename tests that are named test_1,
+                 test_foo, or test_it to describe the invariant being tested:
+                 <function>_<condition>_<expected_outcome>
+
+              4. Tests that test implementation instead of behaviour —
+                 if a test is brittle (breaks on internal refactor without
+                 changing observable behaviour), rewrite to test the public
+                 interface.
+
+              Do not add new tests for untested functionality — that is
+              feature work. Only improve existing tests.
+
+              Commit: "test(<scope>): improve assertion quality"
+              Open a PR with a brief description of what was improved.
+            expected_response:
+              - Existing tests improved (not new tests added)
+              - cargo test passes
+              - PR opened
+            gh_commands:
+              - cmd: "gh pr create --title 'test(<scope>): improve assertion quality' --body '<summary>'"
+                purpose: Open test-quality PR
+            next:
+              on_success: branch-done
+
+          pass-performance:
+            kind: agent
+            role: engineer
+            description: >
+              Remove obvious performance anti-patterns: unnecessary clones,
+              repeated allocations, collect-into-Vec where an iterator suffices.
+            context:
+              - source: command_output
+                load: "grep -rn '\\.clone()\\|\\.collect::<Vec\\|to_string()\\|to_owned()' src/ | grep -v '#\\[cfg(test)\\]'"
+            prompt: |
+              Fix obvious performance anti-patterns. Do not speculate — only
+              fix patterns visible in the grep output.
+
+              Common patterns to fix:
+                - .clone() on a value that could be borrowed instead
+                - .to_string()/.to_owned() in a hot path where &str suffices
+                - .collect::<Vec<_>>() followed immediately by iteration
+                  (replace with lazy iterator chain)
+                - Repeated HashMap/BTreeMap lookups that could be done once
+
+              For each fix: verify the change compiles and tests still pass
+              before committing. Do not introduce unsafe code.
+
+              If a clone is genuinely necessary (e.g. ownership required by
+              API): leave it and note it in the PR.
+
+              Commit: "perf(<scope>): <what was improved>"
+              Open a PR listing each change and the pattern it removes.
+            expected_response:
+              - Anti-patterns removed where safe
+              - cargo test passes
+              - PR opened with itemised changes
+            gh_commands:
+              - cmd: "gh pr create --title 'perf(<scope>): remove allocation anti-patterns' --body '<list>'"
+                purpose: Open performance PR
+            next:
+              on_success: branch-done
+
+          pass-dedup:
+            kind: agent
+            role: engineer
+            description: >
+              Identify and deduplicate repeated code blocks. Extract common
+              logic into shared functions or traits.
+            context:
+              - source: command_output
+                load: "grep -rn '' src/ | sort | uniq -d -c | sort -rn | head -30 || echo 'no exact duplicates found'"
+              - source: command_output
+                description: Structural near-duplicates (similar function bodies)
+                load: "find src/ -name '*.rs' -exec grep -l 'fn ' {} \\; | xargs grep -h 'fn ' | sort"
+            prompt: |
+              Find and deduplicate repeated code.
+
+              Look for:
+              1. Identical or near-identical function bodies (>8 lines)
+                 → extract into a shared private function
+              2. Repeated match arms with identical handling
+                 → extract the repeated body into a helper
+              3. Copy-pasted test setup blocks
+                 → extract into a test helper (already covered by test-quality
+                 pass; skip if that pass recently ran)
+              4. Multiple functions doing the same transformation on different
+                 types → consider a generic function or trait impl
+
+              Rules:
+              - Do not deduplicate if the similarity is coincidental and the
+                two pieces of code are likely to diverge
+              - Do not change public function signatures (that is a breaking change)
+              - Deduplication must not reduce test coverage
+
+              Commit: "refactor(<scope>): deduplicate <what>"
+              Open a PR describing each duplication removed.
+            expected_response:
+              - Duplicated code extracted into shared functions
+              - cargo test passes, coverage unchanged
+              - PR opened
+            gh_commands:
+              - cmd: "gh pr create --title 'refactor(<scope>): deduplicate <what>' --body '<summary>'"
+                purpose: Open dedup PR
+            next:
+              on_success: branch-done
+
+          record-clean:
+            kind: orchestrator
+            description: All four passes found nothing actionable. Record the clean state.
+            prompt: |
+              All hardening passes returned no findings. Post a comment on the
+              Implementation Plan issue noting the clean state and the date.
+            gh_commands:
+              - cmd: "gh issue comment <impl-plan-issue> --body 'Hardening <YYYY-MM-DD>: all passes clean (dead-code, test-quality, performance, dedup).'"
+                purpose: Record that codebase is clean
+            next:
+              on_success: branch-done
+
+          branch-done:
+            kind: terminal
 
       branch-done:
         kind: terminal
