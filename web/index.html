@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Calypso — State Machine Visualizer</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.0/dist/mermaid.min.js"></script>
+  <script>
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'base',
+      flowchart: { curve: 'basis', padding: 24, nodeSpacing: 50, rankSpacing: 60 },
+      themeVariables: {
+        primaryColor: '#f8fafc',
+        primaryTextColor: '#1e293b',
+        primaryBorderColor: '#cbd5e1',
+        lineColor: '#64748b',
+        background: '#ffffff',
+        edgeLabelBackground: '#f1f5f9',
+        fontSize: '13px',
+      },
+    });
+  </script>
+
+  <script type="importmap">
+    { "imports": { "lit": "https://cdn.jsdelivr.net/gh/lit/dist@3/core/lit-core.min.js" } }
+  </script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      background: #0f172a;
+      color: #f1f5f9;
+      min-height: 100vh;
+    }
+    code, .mono { font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace; }
+  </style>
+</head>
+<body>
+  <calypso-app></calypso-app>
+
+  <script type="module">
+    import { LitElement, html, css } from 'lit';
+
+    // ── Constants ──────────────────────────────────────────────────────────────
+
+    const WORKFLOWS = [
+      { label: 'Feature Workflow (RS)',  path: 'calypso-blueprint/examples/workflows/calypso-default-feature-workflow.yaml' },
+      { label: 'Deployment Workflow',   path: 'calypso-blueprint/examples/workflows/calypso-default-deployment-workflow.yaml' },
+    ];
+
+    const KIND = {
+      agent:         { color: '#3b82f6', label: 'Agent' },
+      deterministic: { color: '#475569', label: 'Deterministic' },
+      human:         { color: '#f59e0b', label: 'Human' },
+      github:        { color: '#10b981', label: 'GitHub' },
+      terminal:      { color: '#8b5cf6', label: 'Terminal' },
+    };
+
+    // ── Mermaid helpers ────────────────────────────────────────────────────────
+
+    function sid(id) { return id.replace(/-/g, '_'); }
+
+    function nodeShape(kind) {
+      switch (kind) {
+        case 'deterministic': return ['[',   ']'  ];
+        case 'human':         return ['{{',  '}}' ];
+        case 'github':        return ['([',  '])' ];
+        case 'terminal':      return ['((',  '))' ];
+        default:              return ['(',   ')'  ];
+      }
+    }
+
+    function extractEdges(states) {
+      const edges = [];
+      const push = (from, label, to) => {
+        if (to && states[to]) edges.push({ from: sid(from), label, to: sid(to) });
+      };
+      for (const [id, s] of Object.entries(states)) {
+        const n = s?.next;
+        if (!n) continue;
+        if (n.on_success)  push(id, 'success',  n.on_success);
+        if (n.on_failure)  push(id, 'failure',  n.on_failure);
+        if (n.on_complete) push(id, 'complete', n.on_complete);
+        if (n.pass)        push(id, 'pass',     n.pass);
+        if (n.fail)        push(id, 'fail',     n.fail);
+        if (n.on) for (const [cond, to] of Object.entries(n.on)) push(id, cond, String(to));
+      }
+      return edges;
+    }
+
+    function buildMermaid(doc) {
+      const states = doc.states || {};
+      const lines = ['flowchart TD'];
+
+      for (const [id, s] of Object.entries(states)) {
+        const [o, c] = nodeShape(s?.kind);
+        lines.push(`  ${sid(id)}${o}"${id}"${c}`);
+      }
+      lines.push('');
+
+      for (const { from, label, to } of extractEdges(states)) {
+        const safe = label.replace(/[<>{}"|]/g, '');
+        lines.push(`  ${from} -->|${safe}| ${to}`);
+      }
+      lines.push('');
+
+      for (const [k, { color }] of Object.entries(KIND)) {
+        const textColor = k === 'human' ? '#1e293b' : '#fff';
+        const stroke = color + 'cc';
+        lines.push(`  classDef ${k} fill:${color},stroke:${stroke},color:${textColor}`);
+      }
+      for (const [id, s] of Object.entries(states)) {
+        lines.push(`  class ${sid(id)} ${s?.kind || 'agent'}`);
+      }
+      return lines.join('\n');
+    }
+
+    // ── <calypso-graph> ────────────────────────────────────────────────────────
+
+    class CalypsoGraph extends LitElement {
+      static properties = { doc: { type: Object } };
+      createRenderRoot() { return this; }
+
+      async updated(changed) {
+        if (!changed.has('doc')) return;
+        const el = this.querySelector('#mg');
+        if (!el) return;
+        if (!this.doc?.states) { el.innerHTML = '<p style="color:#64748b;padding:20px">No states found in document.</p>'; return; }
+        el.innerHTML = '<p style="color:#94a3b8;padding:20px;text-align:center">Rendering diagram…</p>';
+        try {
+          const { svg } = await mermaid.render('mg' + Date.now(), buildMermaid(this.doc));
+          el.innerHTML = svg;
+          const s = el.querySelector('svg');
+          if (s) { s.style.width = '100%'; s.style.height = 'auto'; s.style.maxWidth = '100%'; }
+        } catch (e) {
+          el.innerHTML = `<pre style="color:#f87171;padding:16px;font-size:0.75rem;white-space:pre-wrap">${e.message}</pre>`;
+        }
+      }
+
+      render() { return html`<div id="mg"></div>`; }
+    }
+    customElements.define('calypso-graph', CalypsoGraph);
+
+    // ── <calypso-state-card> ───────────────────────────────────────────────────
+
+    class CalypsoStateCard extends LitElement {
+      static properties = { id: { type: String }, state: { type: Object } };
+
+      static styles = css`
+        :host { display: block; }
+        .card {
+          background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+          padding: 14px; height: 100%;
+          transition: border-color 0.15s;
+        }
+        .card:hover { border-color: #38bdf8; }
+        .head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+        .name { font-family: ui-monospace, monospace; font-size: 0.8rem; font-weight: 700; color: #e2e8f0; }
+        .badge {
+          font-size: 0.65rem; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+          text-transform: uppercase; letter-spacing: 0.06em;
+        }
+        .desc { font-size: 0.77rem; color: #64748b; line-height: 1.5; margin-bottom: 10px; }
+        .label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.1em; color: #475569; margin: 8px 0 4px; }
+        .prompt {
+          font-size: 0.73rem; color: #94a3b8; background: #0f172a; padding: 8px;
+          border-radius: 4px; white-space: pre-wrap; line-height: 1.5;
+          max-height: 100px; overflow-y: auto; font-family: inherit;
+        }
+        .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+        .tag {
+          font-size: 0.68rem; padding: 2px 6px; background: #0f172a;
+          border: 1px solid #334155; border-radius: 4px; color: #94a3b8;
+          font-family: ui-monospace, monospace;
+        }
+        .trans { display: flex; flex-direction: column; gap: 3px; }
+        .tr { display: flex; align-items: baseline; gap: 5px; font-size: 0.73rem; flex-wrap: wrap; }
+        .tr-lbl { color: #475569; font-family: ui-monospace, monospace; }
+        .tr-to { color: #38bdf8; font-family: ui-monospace, monospace; }
+        .wf { display: flex; flex-direction: column; gap: 5px; }
+        .wf-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+        .wf-path { font-size: 0.72rem; color: #38bdf8; font-family: ui-monospace, monospace; }
+        .wf-check {
+          font-size: 0.63rem; padding: 1px 5px;
+          background: #10b98115; border: 1px solid #10b98150;
+          border-radius: 3px; color: #10b981; font-family: ui-monospace, monospace;
+        }
+      `;
+
+      _edges(state) {
+        const n = state?.next; if (!n) return [];
+        const t = [];
+        const add = (lbl, to) => { if (to) t.push([lbl, to]); };
+        if (n.on_success)  add('success',  n.on_success);
+        if (n.on_failure)  add('failure',  n.on_failure);
+        if (n.on_complete) add('complete', n.on_complete);
+        if (n.pass)        add('pass',     n.pass);
+        if (n.fail)        add('fail',     n.fail);
+        if (n.on) for (const [c, to] of Object.entries(n.on)) add(c, String(to));
+        return t;
+      }
+
+      render() {
+        const { id, state: s } = this;
+        if (!s) return html``;
+        const kind = s.kind || 'agent';
+        const { color, label } = KIND[kind] || KIND.agent;
+        const textColor = kind === 'human' ? '#1e293b' : '#fff';
+        const checks = s.checks || s.completion?.all_of || [];
+        const edges = this._edges(s);
+        const workflows = s.workflows || [];
+        const trigger = s.trigger;
+        const desc = (s.description || '').trim();
+
+        return html`
+          <div class="card">
+            <div class="head">
+              <span class="name">${id}</span>
+              <span class="badge" style="background:${color}22;color:${color};border:1px solid ${color}55">${label}</span>
+              ${s.role ? html`<span class="badge" style="background:#1e293b;color:#64748b;border:1px solid #334155">${s.role}</span>` : ''}
+            </div>
+
+            ${trigger ? html`<div class="desc" style="color:#475569"><span style="color:#64748b">trigger: </span>${trigger}</div>` : ''}
+            ${desc    ? html`<div class="desc">${desc}</div>` : ''}
+
+            ${s.prompt ? html`<div class="label">Prompt</div><pre class="prompt">${s.prompt.trim()}</pre>` : ''}
+
+            ${workflows.length ? html`
+              <div class="label">Workflows</div>
+              <div class="wf">
+                ${workflows.map(w => html`
+                  <div class="wf-row">
+                    <span class="wf-path">${w.path}</span>
+                    ${(w.check_names || []).map(c => html`<span class="wf-check">${c}</span>`)}
+                  </div>
+                `)}
+              </div>
+            ` : ''}
+
+            ${checks.length ? html`
+              <div class="label">Checks</div>
+              <div class="tags">${checks.map(c => html`<span class="tag">${c}</span>`)}</div>
+            ` : ''}
+
+            ${edges.length ? html`
+              <div class="label">Transitions</div>
+              <div class="trans">
+                ${edges.map(([lbl, to]) => html`
+                  <div class="tr">
+                    <span style="color:#334155">→</span>
+                    <span class="tr-lbl">${lbl}</span>
+                    <span style="color:#334155">⟶</span>
+                    <span class="tr-to">${to}</span>
+                  </div>
+                `)}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }
+    }
+    customElements.define('calypso-state-card', CalypsoStateCard);
+
+    // ── <calypso-app> ──────────────────────────────────────────────────────────
+
+    class CalypsoApp extends LitElement {
+      static properties = {
+        doc:      { type: Object  },
+        loading:  { type: Boolean },
+        error:    { type: String  },
+        wfIndex:  { type: Number  },
+        view:     { type: String  },
+      };
+
+      constructor() {
+        super();
+        this.doc = null; this.loading = false; this.error = null;
+        this.wfIndex = 0; this.view = 'diagram';
+      }
+
+      connectedCallback() { super.connectedCallback(); this._load(0); }
+
+      async _load(i) {
+        this.loading = true; this.error = null; this.doc = null;
+        try {
+          const res = await fetch('../' + WORKFLOWS[i].path);
+          if (!res.ok) throw new Error(`HTTP ${res.status} — ${WORKFLOWS[i].path}`);
+          this.doc = jsyaml.load(await res.text());
+        } catch (e) { this.error = e.message; }
+        finally { this.loading = false; }
+      }
+
+      static styles = css`
+        :host { display: block; background: #0f172a; min-height: 100vh; }
+
+        header {
+          background: #1e293b; border-bottom: 1px solid #334155;
+          padding: 0 24px; height: 52px;
+          display: flex; align-items: center; gap: 14px;
+          position: sticky; top: 0; z-index: 100;
+        }
+        .logo {
+          font-size: 0.9rem; font-weight: 700; color: #38bdf8;
+          letter-spacing: -0.02em; white-space: nowrap;
+        }
+        .logo span { color: #475569; font-weight: 400; }
+        .divider { color: #334155; }
+
+        select {
+          background: #0f172a; color: #f1f5f9; border: 1px solid #334155;
+          border-radius: 6px; padding: 5px 10px; font-size: 0.82rem; cursor: pointer; outline: none;
+        }
+        select:focus { border-color: #38bdf8; }
+
+        .tabs { margin-left: auto; display: flex; gap: 4px; }
+        .tab {
+          background: none; border: 1px solid #334155; border-radius: 6px;
+          color: #64748b; padding: 5px 12px; font-size: 0.78rem;
+          cursor: pointer; transition: all 0.12s; font-family: inherit;
+        }
+        .tab:hover { border-color: #475569; color: #94a3b8; }
+        .tab.active { background: #38bdf810; border-color: #38bdf8; color: #38bdf8; }
+
+        main { padding: 24px; max-width: 1600px; margin: 0 auto; }
+
+        .meta {
+          margin-bottom: 16px;
+          display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+        }
+        .meta-title { font-size: 1.1rem; font-weight: 700; }
+        .meta-pill {
+          font-size: 0.72rem; color: #64748b; display: flex; align-items: center; gap: 4px;
+        }
+        .meta-pill code { color: #38bdf8; font-size: 0.72rem; }
+
+        .legend {
+          display: flex; gap: 14px; flex-wrap: wrap;
+          margin-bottom: 18px; padding: 10px 14px;
+          background: #1e293b; border: 1px solid #334155; border-radius: 8px;
+        }
+        .leg { display: flex; align-items: center; gap: 6px; font-size: 0.74rem; color: #94a3b8; }
+        .leg-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+        .leg-shape { width: 18px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+
+        /* diagram view */
+        .diagram-wrap {
+          background: #fff; border-radius: 10px;
+          padding: 20px; overflow-x: auto; min-height: 180px;
+        }
+
+        /* states view */
+        .states-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+          gap: 10px;
+        }
+
+        /* gates view */
+        .section { margin-bottom: 28px; }
+        .section-title {
+          font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+          letter-spacing: 0.1em; color: #475569;
+          margin-bottom: 10px; padding-bottom: 6px;
+          border-bottom: 1px solid #1e293b;
+        }
+        table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+        th {
+          text-align: left; padding: 8px 12px; background: #1e293b;
+          color: #475569; font-size: 0.68rem; font-weight: 700;
+          text-transform: uppercase; letter-spacing: 0.06em;
+          border-bottom: 1px solid #334155;
+        }
+        td { padding: 7px 12px; border-bottom: 1px solid #1e293b40; vertical-align: middle; }
+        tr:hover td { background: #1e293b30; }
+        .check-name { font-family: ui-monospace, monospace; color: #94a3b8; font-size: 0.75rem; }
+        .wf-pill {
+          font-size: 0.68rem; padding: 2px 6px;
+          background: #10b98112; border: 1px solid #10b98140;
+          border-radius: 3px; color: #10b981;
+          font-family: ui-monospace, monospace;
+        }
+        .src-pill {
+          font-size: 0.68rem; padding: 2px 6px;
+          background: #f59e0b12; border: 1px solid #f59e0b40;
+          border-radius: 3px; color: #f59e0b;
+          font-family: ui-monospace, monospace;
+        }
+
+        .gate-card {
+          background: #1e293b; border: 1px solid #334155;
+          border-radius: 8px; padding: 12px 16px; margin-bottom: 8px;
+        }
+        .gate-card-title {
+          font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
+          letter-spacing: 0.06em; color: #64748b; margin-bottom: 8px;
+        }
+        .gate-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; flex-wrap: wrap; }
+        .gate-mono { font-family: ui-monospace, monospace; font-size: 0.75rem; }
+        .blocking { font-size: 0.63rem; padding: 2px 5px; background: #ef444418; border: 1px solid #ef444445; border-radius: 3px; color: #f87171; }
+        .gh-pill { color: #38bdf8; }
+        .hook-pill { color: #f59e0b; }
+        .check-badge { font-size: 0.68rem; padding: 1px 5px; background: #0f172a; border: 1px solid #334155; border-radius: 3px; color: #94a3b8; font-family: ui-monospace, monospace; }
+        .green-badge { background: #10b98112; border-color: #10b98140; color: #10b981; }
+
+        .status { padding: 40px; text-align: center; font-size: 0.875rem; }
+        .status.err { color: #f87171; }
+        .status.load { color: #64748b; }
+      `;
+
+      _badge(kind) {
+        const { color, label } = KIND[kind] || KIND.agent;
+        const tc = kind === 'human' ? '#1e293b' : '#fff';
+        return html`<span style="display:inline-block;font-size:0.63rem;font-weight:700;padding:2px 6px;border-radius:4px;text-transform:uppercase;letter-spacing:0.06em;background:${color}22;color:${color};border:1px solid ${color}55">${label}</span>`;
+      }
+
+      _renderChecks() {
+        const checks = this.doc?.checks;
+        if (!checks) return '';
+        return html`
+          <div class="section">
+            <div class="section-title">Checks (${Object.keys(checks).length})</div>
+            <table>
+              <thead><tr><th>Name</th><th>Kind</th><th>Source</th><th>Description</th></tr></thead>
+              <tbody>
+                ${Object.entries(checks).map(([name, c]) => html`
+                  <tr>
+                    <td class="check-name">${name}</td>
+                    <td>${this._badge(c?.kind || 'deterministic')}</td>
+                    <td style="white-space:nowrap">
+                      ${c?.workflow ? html`<span class="wf-pill">${c.workflow}</span> ` : ''}
+                      ${c?.source   ? html`<span class="src-pill">${c.source}</span> ` : ''}
+                      ${c?.hook     ? html`<span class="src-pill">hook:${c.hook}</span>` : ''}
+                    </td>
+                    <td style="color:#64748b;font-size:0.73rem;max-width:320px">${c?.description || c?.cmd || ''}</td>
+                  </tr>
+                `)}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      _renderHardGates() {
+        const g = this.doc?.hard_gates;
+        if (!g) return '';
+        return html`
+          <div class="section">
+            <div class="section-title">Hard Gates</div>
+            ${g.git_hooks ? html`
+              <div class="gate-card">
+                <div class="gate-card-title">Git Hooks</div>
+                ${g.git_hooks.map(h => html`
+                  <div class="gate-row">
+                    ${h.blocking ? html`<span class="blocking">blocking</span>` : ''}
+                    <span class="gate-mono hook-pill">${h.hook}</span>
+                    <span style="color:#334155">→</span>
+                    ${(h.checks || []).map(c => html`<span class="check-badge">${c}</span>`)}
+                  </div>
+                `)}
+              </div>
+            ` : ''}
+            ${g.ci_workflows ? html`
+              <div class="gate-card">
+                <div class="gate-card-title">CI Workflows</div>
+                ${g.ci_workflows.map(w => html`
+                  <div class="gate-row">
+                    ${w.blocking ? html`<span class="blocking">blocking</span>` : ''}
+                    <span class="gate-mono gh-pill">${w.workflow}</span>
+                    <span style="color:#334155">→</span>
+                    ${(w.check_names || (w.check ? [w.check] : [])).map(c => html`<span class="check-badge green-badge">${c}</span>`)}
+                  </div>
+                `)}
+              </div>
+            ` : ''}
+            ${g.merge_compatibility ? html`
+              <div class="gate-card">
+                <div class="gate-card-title">Merge Compatibility</div>
+                <div class="gate-row">
+                  ${g.merge_compatibility.blocking ? html`<span class="blocking">blocking</span>` : ''}
+                  <span class="gate-mono" style="color:#94a3b8">${g.merge_compatibility.check}</span>
+                  ${g.merge_compatibility.remediation_state ? html`
+                    <span style="color:#475569;font-size:0.73rem">→ remediation:</span>
+                    <span class="gate-mono gh-pill">${g.merge_compatibility.remediation_state}</span>
+                  ` : ''}
+                </div>
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }
+
+      _renderGHActions() {
+        const ga = this.doc?.github_actions?.current_required;
+        if (!ga) return '';
+        return html`
+          <div class="section">
+            <div class="section-title">GitHub Actions Manifest (${ga.length} required)</div>
+            <div class="gate-card">
+              ${ga.map(w => html`
+                <div class="gate-row">
+                  <span class="gate-mono gh-pill">${w.workflow}</span>
+                  ${w.workflow_name ? html`<span style="color:#475569;font-size:0.73rem">${w.workflow_name}</span>` : ''}
+                  ${(w.check_names || []).map(c => html`<span class="check-badge green-badge">${c}</span>`)}
+                </div>
+              `)}
+            </div>
+          </div>
+        `;
+      }
+
+      render() {
+        const { doc, loading, error, view } = this;
+        const states = doc?.states || {};
+        const stateCount = Object.keys(states).length;
+        const checkCount = Object.keys(doc?.checks || {}).length;
+
+        return html`
+          <header>
+            <div class="logo">calypso <span>/ state machine</span></div>
+            <span class="divider">|</span>
+            <select @change=${e => { this.wfIndex = +e.target.value; this._load(+e.target.value); }}>
+              ${WORKFLOWS.map((w, i) => html`<option value=${i} ?selected=${i === this.wfIndex}>${w.label}</option>`)}
+            </select>
+            <div class="tabs">
+              ${['diagram', 'states', 'gates'].map(v => html`
+                <button class="tab ${view === v ? 'active' : ''}" @click=${() => this.view = v}>${v}</button>
+              `)}
+            </div>
+          </header>
+
+          <main>
+            ${loading ? html`<div class="status load">Loading…</div>` : ''}
+            ${error   ? html`<div class="status err">Error: ${error}</div>` : ''}
+
+            ${doc ? html`
+              <div class="meta">
+                <span class="meta-title">${doc.name || 'Workflow'}</span>
+                ${doc.version      ? html`<span class="meta-pill">v${doc.version}</span>` : ''}
+                ${doc.initial_state ? html`<span class="meta-pill">initial: <code>${doc.initial_state}</code></span>` : ''}
+                ${stateCount       ? html`<span class="meta-pill">${stateCount} states</span>` : ''}
+                ${checkCount       ? html`<span class="meta-pill">${checkCount} checks</span>` : ''}
+              </div>
+
+              <div class="legend">
+                ${Object.entries(KIND).map(([k, { color, label }]) => html`
+                  <div class="leg">
+                    <div class="leg-dot" style="background:${color}"></div>
+                    <span>${label}</span>
+                  </div>
+                `)}
+                <div class="leg" style="margin-left:auto;color:#475569;font-size:0.68rem">
+                  agent() &nbsp; determin[] &nbsp; human{} &nbsp; github([]) &nbsp; terminal(())
+                </div>
+              </div>
+
+              ${view === 'diagram' ? html`
+                <div class="diagram-wrap">
+                  <calypso-graph .doc=${doc}></calypso-graph>
+                </div>
+              ` : ''}
+
+              ${view === 'states' ? html`
+                <div class="states-grid">
+                  ${Object.entries(states).map(([id, s]) => html`
+                    <calypso-state-card .id=${id} .state=${s}></calypso-state-card>
+                  `)}
+                </div>
+              ` : ''}
+
+              ${view === 'gates' ? html`
+                ${this._renderChecks()}
+                ${this._renderHardGates()}
+                ${this._renderGHActions()}
+              ` : ''}
+            ` : ''}
+          </main>
+        `;
+      }
+    }
+    customElements.define('calypso-app', CalypsoApp);
+  </script>
+</body>
+</html>
