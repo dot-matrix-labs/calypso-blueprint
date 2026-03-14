@@ -1,0 +1,770 @@
+meta:
+  domain: UX
+  title: UX Blueprint
+  version: 1
+  requires:
+    - AUTH
+
+rules:
+
+  # ── Threats (from Problem Space) ──────────────────────────────────────────────
+
+  - number: UX-T-001
+    hash: 103dbdf604b7
+    name: interface-before-service-design
+    type: threat
+    description: >
+     Interface ships before service is designed. UX is forced to compensate for
+      service design gaps; users encounter dead ends, confusing flows, and
+      tasks that cannot be completed without workarounds.
+    links:
+      - {target: d7f85752c1b1, rel: depends_on}
+      - {target: 173636ad122f, rel: depends_on}
+      - {target: fe86cd8bdfff, rel: depends_on}
+    deprecated: false
+
+  - number: UX-T-002
+    hash: ed3622189556
+    name: multiple-paths-same-action
+    type: threat
+    description: >
+     Multiple paths to the same action exist. Users cannot build reliable
+      mental models; onboarding takes longer; support costs increase;
+      automation fails when path selection is non-deterministic.
+    links:
+      - {target: 8d514b83d768, rel: depends_on}
+      - {target: 6723c3820539, rel: depends_on}
+      - {target: c2b183d34453, rel: depends_on}
+    deprecated: false
+
+  - number: UX-T-003
+    hash: 5f59ffbb3def
+    name: admin-ui-afterthought
+    type: threat
+    description: >
+     Admin UI is an afterthought. Operational tasks require developer
+      intervention or direct database access; configuration errors are not
+      caught before execution; operations are irreversible without a safety
+      net.
+    links:
+      - {target: e43e9ff85857, rel: depends_on}
+      - {target: 60c41e0c35c7, rel: depends_on}
+      - {target: e450c8a60d0d, rel: depends_on}
+    deprecated: false
+
+  - number: UX-T-004
+    hash: a2a41eddd7d4
+    name: agent-no-specified-ux
+    type: threat
+    description: >
+     AI agent has no specified UX. Agents resort to browser automation or
+      screen scraping, which breaks on any visual change and is undetectable
+      when it fails silently.
+    links:
+      - {target: e43e9ff85857, rel: depends_on}
+      - {target: 8de237165c47, rel: depends_on}
+      - {target: 5af7abcb16da, rel: depends_on}
+    deprecated: false
+
+  - number: UX-T-005
+    hash: f1508d8f738f
+    name: agent-presence-invisible
+    type: threat
+    description: >
+     AI agent's presence on the account is invisible. End-users do not know
+      what the agent can see or do; trust is violated when the agent acts on
+      data the user did not understand was shared.
+    links:
+      - {target: b6f0649c24cf, rel: depends_on}
+      - {target: 39003e63eb4b, rel: depends_on}
+    deprecated: false
+
+  - number: UX-T-006
+    hash: d6f18baa5d77
+    name: beautiful-prototype-replaced
+    type: threat
+    description: >
+     Beautiful prototype replaced by utilitarian production code. Management
+      anchor on the prototype quality is broken; stakeholders lose confidence;
+      remediation requires a design retrofit more expensive than building
+      correctly from the start.
+    links:
+      - {target: 95f2b6bff569, rel: depends_on}
+      - {target: f7986c534086, rel: depends_on}
+    deprecated: false
+
+  - number: UX-T-007
+    hash: 099bffc7e55a
+    name: design-coupled-to-framework
+    type: threat
+    description: >
+     Design is coupled to a front-end framework. Redesigning or porting the UX
+      requires rewriting both design and implementation; design decisions are
+      constrained by framework capabilities rather than user needs.
+    links:
+      - {target: e49ebcb9644c, rel: depends_on}
+    deprecated: false
+
+  - number: UX-T-008
+    hash: 6c3fb70bfa32
+    name: complexity-exposed-by-default
+    type: threat
+    description: >
+     Complexity is exposed by default. Users encounter features they do not
+      need before they understand the ones they do; first-use abandonment
+      increases; the product appears more complex than its core value warrants.
+    links:
+      - {target: 9b929c73ac69, rel: depends_on}
+      - {target: 52bdae16f26b, rel: depends_on}
+    deprecated: false
+
+  - number: UX-T-009
+    hash: c165af9c20b4
+    name: agent-scope-undefined
+    type: threat
+    description: >
+     Agent scope on the account is undefined. Agent writes, reads, or triggers
+      actions beyond the user's expectation; the system has no mechanism to
+      audit or limit what the agent did on the user's behalf.
+    links:
+      - {target: b6f0649c24cf, rel: depends_on}
+      - {target: 39003e63eb4b, rel: depends_on}
+    deprecated: false
+
+
+  # ── Principles (from Core Principles) ─────────────────────────────────────────
+
+  - number: UX-P-001
+    hash: d7f85752c1b1
+    name: service-delivery-precedes-surface-design
+    type: principle
+    description: >
+     The UX of a capability is defined as the sequence of states a user moves
+      through to accomplish a goal, not as the visual or interactive elements
+      that render those states. Interfaces are outputs of service design, not
+      inputs. Designing the screen before the service produces a screen that
+      cannot change without breaking the service.
+    links:
+      - {target: 103dbdf604b7, rel: mitigates}
+      - {target: 173636ad122f, rel: refines}
+      - {target: fe86cd8bdfff, rel: depends_on}
+    deprecated: false
+
+  - number: UX-P-002
+    hash: 8d514b83d768
+    name: one-obvious-path-per-task
+    type: principle
+    description: >
+     For every user goal, there is exactly one path through the system that is
+      clearly correct and clearly available. Alternative paths either do not
+      exist or are hidden behind an explicit escalation. Ambiguity about which
+      path to take is a design defect. This applies equally to human and
+      machine interfaces.
+    links:
+      - {target: ed3622189556, rel: mitigates}
+      - {target: 6723c3820539, rel: refines}
+      - {target: c2b183d34453, rel: depends_on}
+    deprecated: false
+
+  - number: UX-P-003
+    hash: e43e9ff85857
+    name: medium-appropriate-interface-per-user-type
+    type: principle
+    description: >
+     Human end-users interact through visual, touch, or voice surfaces.
+      Administrators interact through operational interfaces that surface
+      system state and protect against dangerous operations. AI agents interact
+      through structured, machine-readable interfaces. Exposing an agent to a
+      human interface, or an administrator to a raw API, is a design failure.
+    links:
+      - {target: 5f59ffbb3def, rel: mitigates}
+      - {target: a2a41eddd7d4, rel: mitigates}
+      - {target: 8de237165c47, rel: refines}
+      - {target: 60c41e0c35c7, rel: refines}
+      - {target: e450c8a60d0d, rel: depends_on}
+      - {target: 5af7abcb16da, rel: depends_on}
+      - {target: 96e80a0c1f27, rel: depends_on}
+    deprecated: false
+
+  - number: UX-P-004
+    hash: 95f2b6bff569
+    name: beauty-is-functional-requirement
+    type: principle
+    description: >
+     Visual quality determines whether a product survives stakeholder review,
+      earns user trust, and sets the baseline for future development. A
+      polished interface signals the product is under control. Beauty is
+      evaluated at every milestone, not deferred.
+    links:
+      - {target: d6f18baa5d77, rel: mitigates}
+      - {target: f7986c534086, rel: depends_on}
+    deprecated: false
+
+  - number: UX-P-005
+    hash: b6f0649c24cf
+    name: agent-presence-explicit-and-bounded
+    type: principle
+    description: >
+     An AI agent operating on a user's account is a shared participant, not an
+      invisible background process. The system declares the agent's presence,
+      surfaces its scope, and logs its actions in a form the account holder can
+      review. Unbounded, invisible agent access is a UX failure.
+    links:
+      - {target: f1508d8f738f, rel: mitigates}
+      - {target: c165af9c20b4, rel: mitigates}
+      - {target: 39003e63eb4b, rel: depends_on}
+    deprecated: false
+
+  - number: UX-P-006
+    hash: e49ebcb9644c
+    name: designers-specify-needs-not-implementations
+    type: principle
+    description: >
+     A UX specification describes what a user needs to accomplish, the states
+      they move through, and the feedback they receive — not the components,
+      frameworks, or libraries used to render those states. A specification
+      that references specific front-end technologies has conflated design with
+      implementation.
+    links:
+      - {target: 099bffc7e55a, rel: mitigates}
+    deprecated: false
+
+
+  # ── Design Patterns ───────────────────────────────────────────────────────────
+
+  - number: UX-D-001
+    hash: 173636ad122f
+    name: service-flow-mapping
+    type: design_pattern
+    description: >
+     Before any visual design begins, map the service flow as a state machine.
+      Define entry state, terminal state, every intermediate state, and every
+      transition. Annotate each transition with its trigger and feedback. The
+      resulting map is the authoritative UX specification from which interfaces
+      in any medium are derived. Trade-off: adds time before design begins;
+      wrong when the service is exploratory — prototype first, formalize once
+      the happy path is stable.
+    links:
+      - {target: d7f85752c1b1, rel: refines}
+      - {target: 103dbdf604b7, rel: mitigates}
+      - {target: fe86cd8bdfff, rel: contradicts}
+    deprecated: false
+
+  - number: UX-D-002
+    hash: 6723c3820539
+    name: single-path-navigation
+    type: design_pattern
+    description: >
+     For every user goal, design exactly one primary path. Secondary paths for
+      power users are explicitly labeled as alternatives and not surfaced in
+      the default flow. At every point, the next correct action is either the
+      only visible action or the most visually prominent one. Applies to visual
+      interfaces, CLI, and API. Trade-off: creates friction for teams wanting
+      multiple options; wrong when the user population is expert and expects
+      direct access to multiple routes.
+    links:
+      - {target: 8d514b83d768, rel: refines}
+      - {target: ed3622189556, rel: mitigates}
+      - {target: c2b183d34453, rel: contradicts}
+    deprecated: false
+
+  - number: UX-D-003
+    hash: 8de237165c47
+    name: agent-native-interface
+    type: design_pattern
+    description: >
+     Every capability an agent must access is exposed through a structured,
+      machine-readable interface with a stable schema. This interface is a
+      first-class product surface — versioned, documented, and tested to the
+      same standard as the human-facing interface. The human interface is built
+      on top of the same underlying capability. Trade-off: increases design and
+      implementation scope; wrong when agent access is genuinely never
+      required.
+    links:
+      - {target: e43e9ff85857, rel: refines}
+      - {target: a2a41eddd7d4, rel: mitigates}
+      - {target: 67863239eb85, rel: depends_on}
+      - {target: 300c0e349c72, rel: depends_on}
+      - {target: 5af7abcb16da, rel: contradicts}
+    deprecated: false
+
+  - number: UX-D-004
+    hash: 60c41e0c35c7
+    name: unified-design-system-across-user-types
+    type: design_pattern
+    description: >
+     A single design system governs all visual interfaces including admin.
+      Interaction patterns, information hierarchy, form behavior, feedback, and
+      error handling are specified once and applied everywhere. Role-specific
+      elements are expressed within the design system, not outside it.
+      Trade-off: requires more design investment upfront; allow layout and
+      navigation to diverge when admin and end-user workflows are fundamentally
+      different.
+    links:
+      - {target: e43e9ff85857, rel: refines}
+      - {target: 5f59ffbb3def, rel: mitigates}
+      - {target: e450c8a60d0d, rel: contradicts}
+      - {target: 96e80a0c1f27, rel: contradicts}
+    deprecated: false
+
+  - number: UX-D-005
+    hash: 9b929c73ac69
+    name: progressive-disclosure
+    type: design_pattern
+    description: >
+     The default state of any view shows only what is needed for the primary
+      task. Secondary capabilities and advanced options are accessible but not
+      immediately visible. Disclosure is triggered by explicit user intent, not
+      by scrolling. Each disclosure level is stable — once revealed, the
+      advanced state persists for the session or preference. Trade-off:
+      deciding disclosure levels requires user research; audit levels regularly
+      against actual usage.
+    links:
+      - {target: 6c3fb70bfa32, rel: mitigates}
+      - {target: 52bdae16f26b, rel: contradicts}
+    deprecated: false
+
+
+  # ── Architectures ─────────────────────────────────────────────────────────────
+
+  - number: UX-A-001
+    hash: 67863239eb85
+    name: unified-service-layer-multiple-surfaces
+    type: architecture
+    description: >
+     A single service layer encapsulates capabilities, state, business logic,
+      and access control. End-user, admin, and agent interfaces are separate
+      rendering surfaces derived from the same service layer. Appropriate for
+      products with heterogeneous user types. Trade-off: adds abstraction that
+      teams unfamiliar with service-first design find counterintuitive.
+    links:
+      - {target: d7f85752c1b1, rel: refines}
+      - {target: e43e9ff85857, rel: refines}
+      - {target: 8de237165c47, rel: refines}
+    deprecated: false
+
+  - number: UX-A-002
+    hash: 300c0e349c72
+    name: api-first-client-agnostic
+    type: architecture
+    description: >
+     A versioned, typed-schema, access-scoped capability API is the primary
+      product surface. First-party web client, admin CLI, agent SDK, and
+      third-party clients all build against this API contract. Appropriate when
+      the set of interface surfaces is unknown at design time or third-party
+      clients are expected. Trade-off: requires disciplined API design;
+      breaking changes affect all surfaces simultaneously.
+    links:
+      - {target: d7f85752c1b1, rel: refines}
+      - {target: e43e9ff85857, rel: refines}
+      - {target: 8de237165c47, rel: refines}
+    deprecated: false
+
+  - number: UX-A-003
+    hash: 63355717824e
+    name: agent-mediated-administration
+    type: architecture
+    description: >
+     Administrative operations are predominantly performed by AI agents on
+      behalf of human principals. Humans review, approve, or veto via an
+      approval interface. The agent executes approved actions via a structured
+      capability API against the same service layer as human-facing interfaces.
+      Trade-off: requires robust approval and audit surface; wrong when agents
+      lack sufficient reliability to initiate actions.
+    links:
+      - {target: b6f0649c24cf, rel: refines}
+      - {target: 8de237165c47, rel: refines}
+    deprecated: false
+
+
+  # ── Checklist ─────────────────────────────────────────────────────────────────
+
+  - number: UX-C-001
+    hash: f3f42fba19c6
+    name: service-flow-maps-before-implementation
+    type: checklist
+    description: >
+     Service flow maps are written and reviewed for all primary user goals
+      before any interface implementation begins.
+    links:
+      - {target: d7f85752c1b1, rel: verifies}
+      - {target: 173636ad122f, rel: verifies}
+    deprecated: false
+
+  - number: UX-C-002
+    hash: 0ed222dbe4b0
+    name: design-system-initialized
+    type: checklist
+    description: >
+     Design system initialized with color tokens, typography scale, spacing
+      scale, and at least one primitive component (button) defined.
+    links:
+      - {target: 95f2b6bff569, rel: verifies}
+      - {target: 60c41e0c35c7, rel: verifies}
+    deprecated: false
+
+  - number: UX-C-003
+    hash: 48d70253181f
+    name: end-user-primary-paths-complete
+    type: checklist
+    description: >
+     End-user interface implements all primary-path flows without dead ends.
+    links:
+      - {target: 8d514b83d768, rel: verifies}
+      - {target: 6723c3820539, rel: verifies}
+    deprecated: false
+
+  - number: UX-C-004
+    hash: 276120e155fd
+    name: admin-interface-uses-shared-design-system
+    type: checklist
+    description: >
+     Admin interface exists as a distinct surface and uses the shared design
+      system; no raw database UI in use.
+    links:
+      - {target: e43e9ff85857, rel: verifies}
+      - {target: 60c41e0c35c7, rel: verifies}
+      - {target: e450c8a60d0d, rel: depends_on}
+    deprecated: false
+
+  - number: UX-C-005
+    hash: 3ef7a09c5c2d
+    name: agent-api-routes-typed-json
+    type: checklist
+    description: >
+     Agent API routes exist for every capability declared as allowedActors
+      agent; routes return typed JSON, not HTML.
+    links:
+      - {target: e43e9ff85857, rel: verifies}
+      - {target: 8de237165c47, rel: verifies}
+      - {target: 5af7abcb16da, rel: depends_on}
+    deprecated: false
+
+  - number: UX-C-006
+    hash: 623ea5f1b84c
+    name: agent-presence-record-readable
+    type: checklist
+    description: >
+     AgentPresence record created and readable by the account holder for every
+      agent granted account access.
+    links:
+      - {target: b6f0649c24cf, rel: verifies}
+      - {target: 39003e63eb4b, rel: depends_on}
+    deprecated: false
+
+  - number: UX-C-007
+    hash: e8272f3dd267
+    name: agent-action-record-written
+    type: checklist
+    description: >
+     AgentActionRecord written for every agent operation against the account;
+      records are accessible from the account holder's interface.
+    links:
+      - {target: b6f0649c24cf, rel: verifies}
+      - {target: 39003e63eb4b, rel: depends_on}
+    deprecated: false
+
+  - number: UX-C-008
+    hash: 0df7d368541a
+    name: single-path-navigation-verified
+    type: checklist
+    description: >
+     Single-path navigation verified: no user flow has two equally prominent
+      routes to the same destination.
+    links:
+      - {target: 8d514b83d768, rel: verifies}
+      - {target: 6723c3820539, rel: verifies}
+      - {target: c2b183d34453, rel: depends_on}
+    deprecated: false
+
+  - number: UX-C-009
+    hash: 5efd041cefe4
+    name: visual-quality-verified-headless
+    type: checklist
+    description: >
+     Visual quality verified via headless Playwright screenshot capture;
+      screenshots reviewed by a vision-capable model or human stakeholder. No
+      live browser session required or permitted.
+    links:
+      - {target: 95f2b6bff569, rel: verifies}
+    deprecated: false
+
+  - number: UX-C-010
+    hash: e7252852006f
+    name: specs-no-framework-references
+    type: checklist
+    description: >
+     Designers have signed off that no specification references a specific
+      front-end framework, component, or CSS property.
+    links:
+      - {target: e49ebcb9644c, rel: verifies}
+      - {target: 099bffc7e55a, rel: verifies}
+    deprecated: false
+
+  - number: UX-C-011
+    hash: 8e86d53ebcb9
+    name: progressive-disclosure-implemented
+    type: checklist
+    description: >
+     Progressive disclosure implemented: advanced options are present but not
+      surfaced in the default view; verified with a first-use walkthrough.
+    links:
+      - {target: 9b929c73ac69, rel: verifies}
+      - {target: 52bdae16f26b, rel: depends_on}
+    deprecated: false
+
+  - number: UX-C-012
+    hash: 4866f47a56ed
+    name: agent-scope-displayed-in-settings
+    type: checklist
+    description: >
+     Agent scope displayed in the account settings UI: account holder can see
+      what the agent is authorized to do and when it last acted.
+    links:
+      - {target: b6f0649c24cf, rel: verifies}
+      - {target: c165af9c20b4, rel: verifies}
+    deprecated: false
+
+  - number: UX-C-013
+    hash: 6e8c829cb252
+    name: agent-action-log-accessible
+    type: checklist
+    description: >
+     Agent action log is paginated, searchable, and accessible without
+      developer tooling.
+    links:
+      - {target: b6f0649c24cf, rel: verifies}
+      - {target: 39003e63eb4b, rel: depends_on}
+    deprecated: false
+
+  - number: UX-C-014
+    hash: 567d9fedad29
+    name: admin-no-database-access-required
+    type: checklist
+    description: >
+     Admin interface covers all operational tasks without requiring database
+      access, terminal access, or API calls outside the admin UI.
+    links:
+      - {target: e43e9ff85857, rel: verifies}
+      - {target: 5f59ffbb3def, rel: verifies}
+      - {target: e450c8a60d0d, rel: depends_on}
+    deprecated: false
+
+  - number: UX-C-015
+    hash: d7eedc296133
+    name: agent-sdk-typed-signatures
+    type: checklist
+    description: >
+     Agent SDK published with typed method signatures matching every
+      agent-authorized capability; no method requires HTML parsing or visual
+      interaction.
+    links:
+      - {target: 8de237165c47, rel: verifies}
+      - {target: 5af7abcb16da, rel: depends_on}
+    deprecated: false
+
+  - number: UX-C-016
+    hash: d05e85759b1d
+    name: usability-review-all-user-types
+    type: checklist
+    description: >
+     Usability review completed with at least one human end-user, one
+      administrator, and one agent integration test.
+    links:
+      - {target: e43e9ff85857, rel: verifies}
+    deprecated: false
+
+  - number: UX-C-017
+    hash: 5de6a650de8d
+    name: headless-chromium-testing
+    type: checklist
+    description: >
+     All interface surfaces tested in headless Chromium via Playwright; no
+      surface requires a GUI, display server, or live browser window.
+    links:
+      - {target: 5efd041cefe4, rel: verifies}
+    deprecated: false
+
+  - number: UX-C-018
+    hash: 765b8473bd36
+    name: service-flow-docs-version-controlled
+    type: checklist
+    description: >
+     Full service flow documentation published and version-controlled alongside
+      the implementation.
+    links:
+      - {target: 173636ad122f, rel: verifies}
+      - {target: f3f42fba19c6, rel: verifies}
+    deprecated: false
+
+  - number: UX-C-019
+    hash: 78d3796ac54b
+    name: design-system-documented-static
+    type: checklist
+    description: >
+     Design system documented in a static HTML or markdown catalogue generated
+      by the build pipeline; no dev server or browser-only tooling required to
+      read it.
+    links:
+      - {target: 60c41e0c35c7, rel: verifies}
+      - {target: 0ed222dbe4b0, rel: verifies}
+    deprecated: false
+
+  - number: UX-C-020
+    hash: 8f52557cf80b
+    name: agent-capability-surface-versioned
+    type: checklist
+    description: >
+     Agent capability surface versioned; breaking changes require a new
+      version, not an in-place modification.
+    links:
+      - {target: 8de237165c47, rel: verifies}
+      - {target: 300c0e349c72, rel: depends_on}
+    deprecated: false
+
+  - number: UX-C-021
+    hash: a66eccfc3bf1
+    name: agent-data-exported-on-request
+    type: checklist
+    description: >
+     Agent presence and action log exported on account data export request.
+    links:
+      - {target: b6f0649c24cf, rel: verifies}
+      - {target: 623ea5f1b84c, rel: verifies}
+      - {target: e8272f3dd267, rel: verifies}
+    deprecated: false
+
+  - number: UX-C-022
+    hash: 44721418eb8b
+    name: ux-review-non-technical-signoff
+    type: checklist
+    description: >
+     UX review conducted at each milestone with explicit sign-off from a
+      non-technical stakeholder.
+    links:
+      - {target: 95f2b6bff569, rel: verifies}
+    deprecated: false
+
+
+  # ── Antipatterns ──────────────────────────────────────────────────────────────
+
+  - number: UX-X-001
+    hash: fe86cd8bdfff
+    name: screen-first-design
+    type: antipattern
+    description: >
+     Designing the interface before mapping the service flow produces
+      interfaces that expose gaps in the service design as confusing dead ends
+      or workaround paths. A screen that cannot be explained by a service flow
+      state does not belong in the product.
+    links:
+      - {target: d7f85752c1b1, rel: contradicts}
+      - {target: 173636ad122f, rel: contradicts}
+      - {target: 103dbdf604b7, rel: contradicts}
+    deprecated: false
+
+  - number: UX-X-002
+    hash: e450c8a60d0d
+    name: developer-console-as-admin-ui
+    type: antipattern
+    description: >
+     Shipping without an admin interface and substituting direct database
+      access, terminal commands, or API clients for administrative tasks means
+      the admin UX is unspecified, untested, inconsistent, and inaccessible to
+      non-developers. Administration is a product surface with real users.
+    links:
+      - {target: e43e9ff85857, rel: contradicts}
+      - {target: 60c41e0c35c7, rel: contradicts}
+      - {target: 5f59ffbb3def, rel: contradicts}
+    deprecated: false
+
+  - number: UX-X-003
+    hash: 5af7abcb16da
+    name: browser-automation-as-agent-integration
+    type: antipattern
+    description: >
+     Pointing an agent at a human-facing browser interface — whether through a
+      headless browser, DOM scraping, or visual element parsing — produces an
+      integration that breaks silently on any layout change and cannot be
+      tested deterministically. The agent interface is a product surface; it
+      must be designed and maintained as one.
+    links:
+      - {target: e43e9ff85857, rel: contradicts}
+      - {target: 8de237165c47, rel: contradicts}
+      - {target: a2a41eddd7d4, rel: contradicts}
+    deprecated: false
+
+  - number: UX-X-004
+    hash: 39003e63eb4b
+    name: invisible-agent-participation
+    type: antipattern
+    description: >
+     An AI agent operating on a user account that the user cannot see,
+      scope-limit, or audit is a trust violation regardless of what the agent
+      does. The end-user's mental model of their account does not include the
+      agent; that gap is a UX defect that becomes a support and trust problem.
+    links:
+      - {target: b6f0649c24cf, rel: contradicts}
+      - {target: f1508d8f738f, rel: contradicts}
+      - {target: c165af9c20b4, rel: contradicts}
+    deprecated: false
+
+  - number: UX-X-005
+    hash: f7986c534086
+    name: beauty-deferred
+    type: antipattern
+    description: >
+     Treating visual quality as a polish pass at the end of development anchors
+      stakeholders and users on an unpolished baseline that is expensive to
+      correct. The first demo sets the quality anchor. Ship the first demo at
+      the intended quality level or do not demo.
+    links:
+      - {target: 95f2b6bff569, rel: contradicts}
+      - {target: d6f18baa5d77, rel: contradicts}
+    deprecated: false
+
+  - number: UX-X-006
+    hash: 96e80a0c1f27
+    name: one-interface-all-actor-types
+    type: antipattern
+    description: >
+     Building a single interface that attempts to serve end-users,
+      administrators, and agents simultaneously produces an interface that
+      serves none of them well. Each actor type has distinct goals, available
+      actions, and appropriate interaction patterns. Shared foundations do not
+      imply a shared surface.
+    links:
+      - {target: e43e9ff85857, rel: contradicts}
+      - {target: 60c41e0c35c7, rel: contradicts}
+    deprecated: false
+
+  - number: UX-X-007
+    hash: c2b183d34453
+    name: multiple-prominent-paths-same-action
+    type: antipattern
+    description: >
+     Offering two buttons that appear to do the same thing, two navigation
+      entries for the same destination, or two API endpoints for the same
+      operation forces the user to reason about whether the paths are truly
+      equivalent. One path is a design decision; two paths are an unresolved
+      design conflict.
+    links:
+      - {target: 8d514b83d768, rel: contradicts}
+      - {target: 6723c3820539, rel: contradicts}
+      - {target: ed3622189556, rel: contradicts}
+    deprecated: false
+
+  - number: UX-X-008
+    hash: 52bdae16f26b
+    name: complexity-surfaced-by-default
+    type: antipattern
+    description: >
+     Showing all capabilities, settings, and options on first use causes
+      cognitive overload and slows users to the speed of their least-needed
+      feature. Default views must be designed for the primary task; everything
+      else requires deliberate disclosure.
+    links:
+      - {target: 9b929c73ac69, rel: contradicts}
+      - {target: 6c3fb70bfa32, rel: contradicts}
+    deprecated: false
+

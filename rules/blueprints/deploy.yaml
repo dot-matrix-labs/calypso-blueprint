@@ -1,0 +1,760 @@
+meta:
+  domain: DEPLOY
+  title: Deployment Blueprint
+  version: 1
+  requires:
+    - ENV
+
+rules:
+  # ---------------------------------------------------------------------------
+  # Threats
+  # ---------------------------------------------------------------------------
+  - number: DEPLOY-T-001
+    hash: "95e47760b8bd"
+    name: container-crash-no-restart
+    type: threat
+    description: >
+      Application container crashes and is not restarted. The container
+      orchestrator must restart crashed containers automatically to protect
+      service availability.
+    links:
+      - {target: f4deae0ff5d3, rel: depends_on}
+      - {target: b9d1a6dddde4, rel: depends_on}
+    deprecated: false
+
+  - number: DEPLOY-T-002
+    hash: "6e3e5055d803"
+    name: disk-exhaustion-from-unrotated-logs
+    type: threat
+    description: >
+      Server runs out of disk space due to unrotated logs. Log retention
+      policies must prevent disk exhaustion to protect host stability.
+    links:
+      - {target: 41353c4858b0, rel: depends_on}
+      - {target: 1b33ad831887, rel: depends_on}
+      - {target: e6680f845e61, rel: depends_on}
+    deprecated: false
+
+  - number: DEPLOY-T-003
+    hash: "c4bfd726ae7b"
+    name: invisible-browser-errors
+    type: threat
+    description: >
+      Errors occur in the browser and are never reported to the server.
+      Browser errors must be captured and forwarded to the server to maintain
+      observability completeness.
+    links:
+      - {target: aef55d669b45, rel: depends_on}
+      - {target: 2a36bd9bbcb2, rel: depends_on}
+      - {target: 09455ddf1dff, rel: depends_on}
+    deprecated: false
+
+  - number: DEPLOY-T-004
+    hash: "ad236a691d87"
+    name: context-window-filled-by-duplicate-errors
+    type: threat
+    description: >
+      Agent reads logs to diagnose an issue but the context window fills with
+      duplicate errors. Deduplicated error summaries must exist alongside
+      chronological logs to preserve diagnostic efficiency.
+    links:
+      - {target: 4b71998780a6, rel: depends_on}
+      - {target: a9c435b04f11, rel: depends_on}
+    deprecated: false
+
+  - number: DEPLOY-T-005
+    hash: "5a00e2a1d857"
+    name: manual-deploy-steps-block-agent
+    type: threat
+    description: >
+      Deployment requires manual steps that an agent cannot perform. The full
+      deploy process must be scriptable and non-interactive to preserve
+      deployment autonomy.
+    links:
+      - {target: 123eab1a292b, rel: depends_on}
+      - {target: 26419e6cc6ce, rel: depends_on}
+      - {target: bd28ad6f0308, rel: depends_on}
+      - {target: f5ee26f6798a, rel: depends_on}
+    deprecated: false
+
+  - number: DEPLOY-T-006
+    hash: "cccd2dd3451e"
+    name: secrets-committed-to-repo
+    type: threat
+    description: >
+      Environment variables containing secrets are committed to the
+      repository. Production secrets must never be in version control to
+      protect secret integrity.
+    links:
+      - {target: 584e64645b8f, rel: depends_on}
+      - {target: 3f7f5f443afe, rel: depends_on}
+    deprecated: false
+
+  - number: DEPLOY-T-007
+    hash: "f7384a169540"
+    name: deploy-with-failing-tests
+    type: threat
+    description: >
+      A deploy happens with failing tests. CI must gate all deployments to
+      ensure deployment safety.
+    links:
+      - {target: 9f4aeb9be1e8, rel: depends_on}
+      - {target: cb07dc6a3f20, rel: depends_on}
+      - {target: 765231ae4d6c, rel: depends_on}
+    deprecated: false
+
+  - number: DEPLOY-T-008
+    hash: "330716dd7d97"
+    name: unreachable-server-no-diagnosis
+    type: threat
+    description: >
+      The server is unreachable and no one knows why. The container
+      orchestrator and health checks must report status to provide network
+      observability.
+    links:
+      - {target: 98a04633e13c, rel: depends_on}
+      - {target: d65e70a5425b, rel: depends_on}
+      - {target: b4adb303f4a9, rel: depends_on}
+    deprecated: false
+
+  - number: DEPLOY-T-009
+    hash: "b08792cb7a13"
+    name: previous-version-unavailable-for-rollback
+    type: threat
+    description: >
+      A rollback is needed but the previous version is not available.
+      Previous builds must be recoverable from version control to maintain
+      rollback capability.
+    links:
+      - {target: 4913a0616eea, rel: depends_on}
+      - {target: 30358b6f4470, rel: depends_on}
+    deprecated: false
+
+  # ---------------------------------------------------------------------------
+  # Principles
+  # ---------------------------------------------------------------------------
+  - number: DEPLOY-P-001
+    hash: "f4deae0ff5d3"
+    name: containers-are-the-great-unifier
+    type: principle
+    description: >
+      All application processes must be packaged as immutable container images,
+      deployed to an orchestrator, and restarted on crash. Containers are used
+      exclusively across dev, test, and production. Production containers must
+      be distroless, stripped of package managers, shells, and all OS-level
+      tools not required to run the application.
+    links:
+      - {target: cebbff0e956c, rel: refines}
+      - {target: 95e47760b8bd, rel: mitigates}
+      - {target: 89b9897e5bfc, rel: refines}
+      - {target: e889c6c25ede, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-002
+    hash: "9d33a458e91a"
+    name: no-incremental-hot-reloading-dev-servers
+    type: principle
+    description: >
+      Do not use tools like vite dev for hot-reloadable on-the-fly servers.
+      Build the code with the runtime and deploy it in a background container
+      exactly as if it were production. This enforces environment parity from
+      the first line of code. Agents do not benefit from hot-reloading.
+    links:
+      - {target: cebbff0e956c, rel: refines}
+      - {target: 2a5c123b62fc, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-003
+    hash: "41353c4858b0"
+    name: logs-are-for-machines-first
+    type: principle
+    description: >
+      Every log entry must be structured, timestamped, and traceable. A
+      chronological log file is the complete record. A deduplicated summary
+      file is the diagnostic entry point. Log formats are designed for
+      parsing, not for terminal reading.
+    links:
+      - {target: 4b71998780a6, rel: refines}
+      - {target: 6e3e5055d803, rel: mitigates}
+      - {target: ad236a691d87, rel: mitigates}
+    deprecated: false
+
+  - number: DEPLOY-P-004
+    hash: "55b6ac786a19"
+    name: traces-span-the-full-stack
+    type: principle
+    description: >
+      A single user action generates a trace that follows the request from
+      browser through API server to database and back. Every component tags
+      its work with the same trace ID. Reconstructing any workflow is a
+      filter by trace ID, not a timestamp correlation exercise.
+    links:
+      - {target: fffb29a3e0a6, rel: refines}
+      - {target: 2d45f6788919, rel: refines}
+      - {target: 5ead7b43c21d, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-005
+    hash: "123eab1a292b"
+    name: deployment-is-a-build-not-a-ceremony
+    type: principle
+    description: >
+      Deploying a new version means building the code, stopping the old
+      process, starting the new process, and verifying health. These steps
+      are scripted, idempotent, and non-interactive. No SSH, no manual file
+      copy, no memorized command sequences.
+    links:
+      - {target: 5a00e2a1d857, rel: mitigates}
+      - {target: 26419e6cc6ce, rel: refines}
+      - {target: bd28ad6f0308, rel: refines}
+      - {target: f5ee26f6798a, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-006
+    hash: "9f4aeb9be1e8"
+    name: releases-from-tagged-main-commits-only
+    type: principle
+    description: >
+      A release begins from a commit already on main, not from an arbitrary
+      branch tip. That commit must have all required CI checks green before
+      receiving a release tag. Tag format is semver plus six-digit PR hash
+      for traceability. A tag on an unqualified commit is a process violation.
+    links:
+      - {target: f7384a169540, rel: mitigates}
+      - {target: cb07dc6a3f20, rel: refines}
+      - {target: 765231ae4d6c, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-007
+    hash: "7c658e789c07"
+    name: schema-upgrades-forward-compatible
+    type: principle
+    description: >
+      Database migrations and application rollout do not become visible to
+      every running component at the same instant. New application code must
+      be compatible with both the previous and new schema during the rollout
+      window. A thorough schema-upgrade compatibility check using plausible
+      fixtures is required before a release may proceed.
+    links:
+      - {target: 4913a0616eea, rel: depends_on}
+    deprecated: false
+
+  - number: DEPLOY-P-008
+    hash: "4913a0616eea"
+    name: rollouts-are-ordered-and-health-gated
+    type: principle
+    description: >
+      Once a release is built and published, rollout follows a strict
+      sequence: database migrations, frontend rollout, worker rollout, static
+      web rollout last. Each phase must prove health before the next begins.
+      A failed phase blocks the release rather than logging a warning.
+    links:
+      - {target: 7c658e789c07, rel: depends_on}
+      - {target: b08792cb7a13, rel: mitigates}
+      - {target: 98a04633e13c, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-009
+    hash: "584e64645b8f"
+    name: secrets-are-runtime-configuration
+    type: principle
+    description: >
+      Environment variables containing secrets are injected at runtime from
+      files on the host that are not in version control. Test-only
+      environment variables may be committed. If a value would be dangerous
+      in a public repository, it does not go in version control.
+    links:
+      - {target: cccd2dd3451e, rel: mitigates}
+      - {target: 3f7f5f443afe, rel: refines}
+      - {target: 5286b4639f51, rel: refines}
+    deprecated: false
+
+  # ---------------------------------------------------------------------------
+  # Design Patterns
+  # ---------------------------------------------------------------------------
+  - number: DEPLOY-D-001
+    hash: "cebbff0e956c"
+    name: immutable-distroless-container-builds
+    type: design_pattern
+    description: >
+      Every deployment, including local dev previews, starts by building an
+      immutable container image encapsulating the exact runtime, dependencies,
+      and compiled assets. Production artifacts use multi-stage builds copying
+      into a distroless base image with no shell or OS utilities. Trade-off:
+      slower than hot-reloading but guarantees mechanical reproducibility and
+      zero-trust security.
+    links:
+      - {target: f4deae0ff5d3, rel: refines}
+      - {target: 9d33a458e91a, rel: refines}
+      - {target: 89b9897e5bfc, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-D-002
+    hash: "4b71998780a6"
+    name: dual-log-architecture
+    type: design_pattern
+    description: >
+      Maintain two log outputs: a chronological log with every event in full
+      detail, and a unique error log with deduplicated error categories
+      including count and most recent timestamp. The agent reads the unique
+      log first to understand the error landscape, then consults the
+      chronological log for specifics. Trade-off: two files to manage but
+      high diagnostic benefit.
+    links:
+      - {target: 41353c4858b0, rel: refines}
+      - {target: ad236a691d87, rel: mitigates}
+      - {target: a9c435b04f11, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-D-003
+    hash: "aef55d669b45"
+    name: browser-to-server-error-forwarding
+    type: design_pattern
+    description: >
+      The browser catches all unhandled errors and forwards them to a server
+      endpoint via HTTP POST, including error message, stack trace, user
+      context, and trace ID. The server logs browser errors alongside its
+      own, creating a unified health view. The endpoint must be rate-limited
+      and payload-size-limited. Errors during network outage are acceptable
+      losses since the outage itself is detectable.
+    links:
+      - {target: c4bfd726ae7b, rel: mitigates}
+      - {target: 2a36bd9bbcb2, rel: refines}
+      - {target: 09455ddf1dff, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-D-004
+    hash: "fffb29a3e0a6"
+    name: trace-id-propagation
+    type: design_pattern
+    description: >
+      Generate a unique trace ID at the start of every user-initiated action.
+      Propagate it through every layer: browser, API request header, server
+      handler, database query tag, response header, back to browser. Every
+      log entry includes the trace ID. Middleware is implemented once in the
+      server framework and once in the browser HTTP client so individual
+      handlers need not manage it.
+    links:
+      - {target: 55b6ac786a19, rel: refines}
+      - {target: 2d45f6788919, rel: refines}
+      - {target: 5ead7b43c21d, rel: refines}
+    deprecated: false
+
+  # ---------------------------------------------------------------------------
+  # Architectures
+  # ---------------------------------------------------------------------------
+  - number: DEPLOY-A-001
+    hash: "89b9897e5bfc"
+    name: single-app-container-on-host
+    type: architecture
+    description: >
+      A single immutable app container runs on the development host via
+      Docker or Podman, serving both API routes and built static assets. Logs
+      go to stdout/stderr. Secrets are injected from a .env file at container
+      start. Appropriate for local dev and preview environments. Slightly
+      slower iteration but guarantees production-identical packaging.
+    links:
+      - {target: f4deae0ff5d3, rel: refines}
+      - {target: cebbff0e956c, rel: refines}
+      - {target: 9d33a458e91a, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-A-002
+    hash: "e889c6c25ede"
+    name: kubernetes-enterprise-deployment
+    type: architecture
+    description: >
+      Kubernetes cluster with ingress controller for TLS and routing, app
+      pods managed by ReplicaSet behind a ClusterIP service, and secrets
+      injected via ConfigMaps/Secrets. Appropriate for any enterprise-grade
+      deployment. Provides declarative infrastructure APIs ideal for agent
+      operation. Trade-off: cluster operational overhead, justified by
+      universal orchestration, replication, and self-healing.
+    links:
+      - {target: f4deae0ff5d3, rel: refines}
+      - {target: 765231ae4d6c, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-A-003
+    hash: "765231ae4d6c"
+    name: ci-driven-deploy-pipeline
+    type: architecture
+    description: >
+      CI platform builds the app bundle, layers it onto a base image, pushes
+      to registry with immutable digest, updates Kubernetes deployment via
+      kubectl set image with digest reference, waits for rollout status, and
+      auto-rolls back on failure. This is the only release mechanism Calypso
+      supports. CI service account holds narrow kubectl credentials (patch
+      deployments only). No SSH access to nodes.
+    links:
+      - {target: 9f4aeb9be1e8, rel: refines}
+      - {target: 4913a0616eea, rel: refines}
+      - {target: f7384a169540, rel: mitigates}
+      - {target: cb07dc6a3f20, rel: refines}
+      - {target: e65b8926fb2d, rel: refines}
+      - {target: e0bfaa2d54c3, rel: refines}
+    deprecated: false
+
+  # ---------------------------------------------------------------------------
+  # Checklist
+  # ---------------------------------------------------------------------------
+  - number: DEPLOY-C-001
+    hash: "3a7b8dab73da"
+    name: dockerfile-created
+    type: checklist
+    description: >
+      Dockerfile or container manifest created and application starts via
+      container runtime.
+    links:
+      - {target: f4deae0ff5d3, rel: verifies}
+      - {target: cebbff0e956c, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-002
+    hash: "b9d1a6dddde4"
+    name: orchestrator-auto-restart
+    type: checklist
+    description: >
+      Container orchestrator (K8s or local Docker) restarts containers
+      automatically after crash.
+    links:
+      - {target: 95e47760b8bd, rel: verifies}
+      - {target: f4deae0ff5d3, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-003
+    hash: "3f7f5f443afe"
+    name: secrets-injected-securely
+    type: checklist
+    description: >
+      Secrets injected into container securely at runtime, not baked into
+      the image.
+    links:
+      - {target: cccd2dd3451e, rel: verifies}
+      - {target: 584e64645b8f, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-004
+    hash: "5286b4639f51"
+    name: test-env-committed
+    type: checklist
+    description: >
+      .env.test committed with test-only credentials (no production secrets).
+    links:
+      - {target: 584e64645b8f, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-005
+    hash: "681125756d40"
+    name: stdout-stderr-captured
+    type: checklist
+    description: >
+      Stdout/stderr captured by container engine; logs accessible via
+      standard container tools.
+    links:
+      - {target: 41353c4858b0, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-006
+    hash: "969f83c41da9"
+    name: structured-log-entries
+    type: checklist
+    description: >
+      Application process writes structured log entries to standard
+      output/error.
+    links:
+      - {target: 41353c4858b0, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-007
+    hash: "2d45f6788919"
+    name: trace-id-propagated
+    type: checklist
+    description: >
+      Trace ID generated and propagated from browser through server to
+      response header.
+    links:
+      - {target: 55b6ac786a19, rel: verifies}
+      - {target: fffb29a3e0a6, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-008
+    hash: "2a36bd9bbcb2"
+    name: browser-error-forwarding-implemented
+    type: checklist
+    description: >
+      Browser error forwarding implemented; unhandled browser errors appear
+      in server logs.
+    links:
+      - {target: c4bfd726ae7b, rel: verifies}
+      - {target: aef55d669b45, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-009
+    hash: "98a04633e13c"
+    name: health-endpoint-returns-200
+    type: checklist
+    description: >
+      Health endpoint (/health) returns 200 when the application is running.
+    links:
+      - {target: 330716dd7d97, rel: verifies}
+      - {target: 4913a0616eea, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-010
+    hash: "a9c435b04f11"
+    name: uniques-log-implemented
+    type: checklist
+    description: >
+      uniques.log implemented with deduplicated error categories and counts.
+    links:
+      - {target: ad236a691d87, rel: verifies}
+      - {target: 4b71998780a6, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-011
+    hash: "1b33ad831887"
+    name: log-rotation-configured
+    type: checklist
+    description: >
+      Log rotation configured with 14-day retention verified.
+    links:
+      - {target: 6e3e5055d803, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-012
+    hash: "26419e6cc6ce"
+    name: deploy-script-idempotent
+    type: checklist
+    description: >
+      Deploy script exists and is idempotent (running twice has no side
+      effects).
+    links:
+      - {target: 123eab1a292b, rel: verifies}
+      - {target: 5a00e2a1d857, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-013
+    hash: "cb07dc6a3f20"
+    name: ci-deploy-workflow-gated
+    type: checklist
+    description: >
+      CI deploy workflow created; deploys only after all test suites pass.
+    links:
+      - {target: f7384a169540, rel: verifies}
+      - {target: 9f4aeb9be1e8, rel: verifies}
+      - {target: 765231ae4d6c, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-014
+    hash: "30358b6f4470"
+    name: rollback-procedure-tested
+    type: checklist
+    description: >
+      Rollback procedure tested: revert to previous commit, restart, and
+      verify health.
+    links:
+      - {target: b08792cb7a13, rel: verifies}
+      - {target: 4913a0616eea, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-015
+    hash: "e65b8926fb2d"
+    name: ci-service-account-kubeconfig
+    type: checklist
+    description: >
+      CI service account kubeconfig (KUBE_CONFIG) stored in GitHub Secrets,
+      generated via scripts/setup-ci-deployer.sh.
+    links:
+      - {target: 765231ae4d6c, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-016
+    hash: "e0bfaa2d54c3"
+    name: immutable-image-digest-verified
+    type: checklist
+    description: >
+      Deployment verified to use immutable image digest (not mutable tag)
+      in kubectl get deployment output.
+    links:
+      - {target: 765231ae4d6c, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-017
+    hash: "a4907601abd3"
+    name: disk-usage-monitoring
+    type: checklist
+    description: >
+      Disk usage monitoring configured; alert when log volume exceeds
+      threshold.
+    links:
+      - {target: 6e3e5055d803, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-018
+    hash: "ab5db7cd8374"
+    name: env-vars-documented
+    type: checklist
+    description: >
+      All environment variables documented in docs/ with descriptions (not
+      values).
+    links:
+      - {target: 584e64645b8f, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-019
+    hash: "bd28ad6f0308"
+    name: zero-manual-ssh-steps
+    type: checklist
+    description: >
+      Zero manual SSH steps required for a standard deploy.
+    links:
+      - {target: 123eab1a292b, rel: verifies}
+      - {target: 5a00e2a1d857, rel: verifies}
+      - {target: f5ee26f6798a, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-020
+    hash: "d65e70a5425b"
+    name: health-check-includes-dependencies
+    type: checklist
+    description: >
+      Health check includes dependency status (database, external APIs
+      reachable).
+    links:
+      - {target: 330716dd7d97, rel: verifies}
+      - {target: 98a04633e13c, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-021
+    hash: "5ead7b43c21d"
+    name: trace-id-search-works
+    type: checklist
+    description: >
+      Given a trace ID, all related log entries can be retrieved in one
+      query.
+    links:
+      - {target: 55b6ac786a19, rel: verifies}
+      - {target: fffb29a3e0a6, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-022
+    hash: "4905666fc7a6"
+    name: browser-error-rate-tracked
+    type: checklist
+    description: >
+      Browser error rate tracked; anomalous spikes trigger alerts.
+    links:
+      - {target: c4bfd726ae7b, rel: verifies}
+      - {target: aef55d669b45, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-023
+    hash: "d365a1009d3f"
+    name: backup-strategy-exists
+    type: checklist
+    description: >
+      Backup strategy for application data exists (database dumps, uploaded
+      files).
+    links:
+      - {target: b08792cb7a13, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-024
+    hash: "e9edcb824436"
+    name: disaster-recovery-tested
+    type: checklist
+    description: >
+      Disaster recovery tested: fresh host provisioned and application
+      deployed from scratch.
+    links:
+      - {target: b08792cb7a13, rel: verifies}
+      - {target: d365a1009d3f, rel: verifies}
+    deprecated: false
+
+  # ---------------------------------------------------------------------------
+  # Antipatterns
+  # ---------------------------------------------------------------------------
+  - number: DEPLOY-X-001
+    hash: "2a5c123b62fc"
+    name: hybrid-environments
+    type: antipattern
+    description: >
+      Developing with hot-reloading dev servers (vite dev) locally but
+      deploying compiled containers in production. This guarantees
+      environment drift and works-on-my-machine bugs. Agents do not benefit
+      from hot-reloading. Build the container. Run the container.
+    links:
+      - {target: 9d33a458e91a, rel: contradicts}
+      - {target: cebbff0e956c, rel: contradicts}
+    deprecated: false
+
+  - number: DEPLOY-X-002
+    hash: "458559ea02e9"
+    name: process-babysitting
+    type: antipattern
+    description: >
+      Starting the application with bun run in a tmux pane and hoping it
+      does not crash. When it does, no one notices until a user reports
+      downtime. The container orchestrator eliminates this class of failure.
+    links:
+      - {target: 95e47760b8bd, rel: depends_on}
+      - {target: f4deae0ff5d3, rel: contradicts}
+      - {target: b9d1a6dddde4, rel: contradicts}
+    deprecated: false
+
+  - number: DEPLOY-X-003
+    hash: "e6680f845e61"
+    name: log-and-pray
+    type: antipattern
+    description: >
+      Writing logs to a file without configuring rotation, retention, or
+      aggregation. The volume fills up, the container crashes because it
+      cannot write. Rely on container stdout and cluster-level log
+      aggregation instead.
+    links:
+      - {target: 6e3e5055d803, rel: depends_on}
+      - {target: 1b33ad831887, rel: contradicts}
+    deprecated: false
+
+  - number: DEPLOY-X-004
+    hash: "b4adb303f4a9"
+    name: dashboard-only-observability
+    type: antipattern
+    description: >
+      Building a monitoring dashboard that a human must watch. An AI agent
+      cannot watch a dashboard. Observability for agent-operated systems
+      means structured logs and error summaries fetchable via CLI tools over
+      the cluster namespace.
+    links:
+      - {target: 41353c4858b0, rel: contradicts}
+      - {target: 330716dd7d97, rel: depends_on}
+    deprecated: false
+
+  - number: DEPLOY-X-005
+    hash: "f5ee26f6798a"
+    name: manual-deploy-rituals
+    type: antipattern
+    description: >
+      A deployment requiring a sequence of commands run from memory.
+      Scripted container builds and declarative Kubernetes applies are
+      repeatable, auditable, and agent-executable.
+    links:
+      - {target: 123eab1a292b, rel: contradicts}
+      - {target: 5a00e2a1d857, rel: depends_on}
+      - {target: bd28ad6f0308, rel: contradicts}
+    deprecated: false
+
+  - number: DEPLOY-X-006
+    hash: "09455ddf1dff"
+    name: silent-browser-errors
+    type: antipattern
+    description: >
+      Catching browser errors in console.error and assuming someone will see
+      them. No one sees browser console output in production. Errors not
+      forwarded to the server do not exist from the system's perspective.
+    links:
+      - {target: c4bfd726ae7b, rel: depends_on}
+      - {target: aef55d669b45, rel: contradicts}
+      - {target: 2a36bd9bbcb2, rel: contradicts}
+    deprecated: false

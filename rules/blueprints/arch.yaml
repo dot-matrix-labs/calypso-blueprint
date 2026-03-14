@@ -1,0 +1,582 @@
+meta:
+  domain: ARCH
+  title: Architecture Blueprint
+  version: 1
+  requires: []
+
+rules:
+  # ── Threats ──────────────────────────────────────────────────────────────────
+
+  - number: ARCH-T-001
+    hash: 8a4c23247926
+    name: server-code-in-browser-bundle
+    type: threat
+    description: >
+      Server-side code imported into the browser bundle exposes server secrets,
+      Node APIs, and database access to the client. Runtime separation must
+      prevent any server module from being reachable by client import paths.
+    links: []
+    deprecated: false
+
+  - number: ARCH-T-002
+    hash: 13b949d1669d
+    name: browser-code-on-server
+    type: threat
+    description: >
+      Browser-side code executed on the server violates the security boundary.
+      Untrusted client logic must not run in a trusted server context.
+    links: []
+    deprecated: false
+
+  - number: ARCH-T-003
+    hash: d49c89a98177
+    name: agent-places-code-wrong-directory
+    type: threat
+    description: >
+      An agent places new code in the wrong directory, breaking structural
+      consistency. The directory tree must unambiguously encode where each type
+      of code belongs.
+    links: []
+    deprecated: false
+
+  - number: ARCH-T-004
+    hash: 481ad83fd69d
+    name: shared-types-drift
+    type: threat
+    description: >
+      Shared types drift between client and server, breaking contract integrity.
+      A single source of truth for data shapes must exist and be enforced.
+    links: []
+    deprecated: false
+
+  - number: ARCH-T-005
+    hash: 587abbfe8e88
+    name: trivial-dependency-addition
+    type: threat
+    description: >
+      An agent adds a dependency for a trivial function. Each dependency is an
+      ongoing maintenance and security liability; dependency minimalism must be
+      enforced.
+    links: []
+    deprecated: false
+
+  - number: ARCH-T-006
+    hash: 4f302fe9927a
+    name: deep-transitive-dependency-tree
+    type: threat
+    description: >
+      A dependency has a deep transitive tree that introduces vulnerabilities.
+      The total dependency surface must be auditable and minimal to preserve
+      supply chain integrity.
+    links: []
+    deprecated: false
+
+  - number: ARCH-T-007
+    hash: 5c3cce139dcc
+    name: unbounded-package-creation
+    type: threat
+    description: >
+      An agent generates a new package or service without clear boundaries.
+      New packages must have explicit responsibilities that do not overlap with
+      existing ones.
+    links: []
+    deprecated: false
+
+  - number: ARCH-T-008
+    hash: e4fead4a4d1b
+    name: api-contract-change-without-consumer-update
+    type: threat
+    description: >
+      API contracts change without updating consumers. API inputs and outputs
+      must be validated against actual production schemas to maintain type safety.
+    links: []
+    deprecated: false
+
+  - number: ARCH-T-009
+    hash: f84854beddd9
+    name: unnavigable-monorepo-structure
+    type: threat
+    description: >
+      Monorepo structure becomes too deep or too flat to navigate. An agent must
+      be able to locate any component within seconds by reading the directory tree.
+    links: []
+    deprecated: false
+
+  # ── Principles ───────────────────────────────────────────────────────────────
+
+  - number: ARCH-P-001
+    hash: 0fa329015368
+    name: boundaries-are-physical-not-conceptual
+    type: principle
+    description: >
+      Code that runs in different runtimes lives in different directories with
+      different build pipelines. The separation is enforced by the build system,
+      not by developer discipline. A browser import that reaches for a server
+      module fails at build time, not at runtime in production.
+    links:
+      - {target: 8a4c23247926, rel: mitigates}
+      - {target: 13b949d1669d, rel: mitigates}
+    deprecated: false
+
+  - number: ARCH-P-002
+    hash: 5aa848649c8f
+    name: directory-tree-is-architecture-diagram
+    type: principle
+    description: >
+      An agent reading the top-level directory listing must be able to answer
+      what the deployable units are, where shared contracts live, where business
+      logic lives, and where tests live. If the tree does not answer these
+      questions at a glance, the architecture has failed its primary audience.
+    links:
+      - {target: d49c89a98177, rel: mitigates}
+      - {target: f84854beddd9, rel: mitigates}
+    deprecated: false
+
+  - number: ARCH-P-003
+    hash: 9be37f247b72
+    name: dependencies-are-liabilities
+    type: principle
+    description: >
+      Every external package is a commitment to track its releases, audit its
+      security, understand its behavior, and handle its deprecation. The
+      threshold for adding a dependency is not whether it saves time now but
+      whether the functionality is infeasible to build and maintain internally.
+      AI agents shift the buy-vs-build calculus heavily toward build.
+    links:
+      - {target: 587abbfe8e88, rel: mitigates}
+      - {target: 4f302fe9927a, rel: mitigates}
+    deprecated: false
+
+  - number: ARCH-P-004
+    hash: ccd33c7dd2c2
+    name: types-shared-logic-not
+    type: principle
+    description: >
+      Data shapes that cross boundaries (API request/response types, domain
+      types, shared enums) live in a single canonical location imported by both
+      sides. Business logic, rendering logic, and data access logic are never
+      shared across the client-server boundary. Sharing logic creates coupling;
+      sharing types creates contracts.
+    links:
+      - {target: 481ad83fd69d, rel: mitigates}
+    deprecated: false
+
+  - number: ARCH-P-005
+    hash: c4b55c6bb7a0
+    name: simplicity-scales-cleverness-does-not
+    type: principle
+    description: >
+      A monorepo with five top-level directories and obvious naming survives
+      scale. A monorepo with clever abstractions, auto-generated barrels, and
+      dynamic module resolution breaks the moment an agent tries to understand
+      it. Choose boring, obvious structure over sophisticated, implicit structure
+      every time.
+    links:
+      - {target: f84854beddd9, rel: mitigates}
+    deprecated: false
+
+  # ── Design Patterns ─────────────────────────────────────────────────────────
+
+  - number: ARCH-D-001
+    hash: 39e42948f441
+    name: strict-runtime-separation
+    type: design_pattern
+    description: >
+      Server code and client code live in separate top-level directories with
+      separate entry points and separate build configurations. No import path
+      from the client directory can resolve to a file in the server directory.
+      Shared types are extracted into a third location containing only type
+      definitions with no runtime code. Accept duplication of utility functions
+      across boundaries rather than creating a shared runtime utils package that
+      becomes a coupling magnet.
+    links:
+      - {target: 8a4c23247926, rel: mitigates}
+      - {target: 13b949d1669d, rel: mitigates}
+      - {target: 0fa329015368, rel: refines}
+    deprecated: false
+
+  - number: ARCH-D-002
+    hash: 19ba825434e1
+    name: buy-vs-diy-decision-framework
+    type: design_pattern
+    description: >
+      Before adding any dependency, apply a two-question test. (1) Is this
+      functionality infeasible to build internally within reasonable effort?
+      (2) Is the package mature, minimal in footprint, and well-maintained?
+      Both must be yes. Utility functions, simple data transformations, and thin
+      wrappers are built internally with tests. Cryptographic primitives,
+      payment gateway SDKs, and browser automation engines are bought. The
+      decision must be documented and revisitable.
+    links:
+      - {target: 587abbfe8e88, rel: mitigates}
+      - {target: 4f302fe9927a, rel: mitigates}
+      - {target: 9be37f247b72, rel: refines}
+    deprecated: false
+
+  - number: ARCH-D-003
+    hash: b5c27e8e1ed7
+    name: monorepo-explicit-package-boundaries
+    type: design_pattern
+    description: >
+      The repository has a fixed set of top-level directories, each with a clear
+      responsibility. Applications (deployable units) live in one area, packages
+      (shared libraries) in another, tests in a third. New packages are added
+      only when their responsibility does not overlap with any existing package.
+      The package list is documented and enforced. Expand the structure
+      deliberately rather than bending existing packages to hold unrelated code.
+    links:
+      - {target: 5c3cce139dcc, rel: mitigates}
+      - {target: d49c89a98177, rel: mitigates}
+      - {target: 5aa848649c8f, rel: refines}
+    deprecated: false
+
+  - number: ARCH-D-004
+    hash: 4211a13461f0
+    name: type-safe-api-contracts
+    type: design_pattern
+    description: >
+      API contracts are defined as TypeScript types in the shared types package.
+      Both client and server import from this canonical source. Integration tests
+      validate that actual API responses match these types. The types are
+      versioned alongside the API so that a breaking change requires a type
+      change, which forces a type error in all consumers. Requires discipline to
+      update types before or simultaneously with API changes.
+    links:
+      - {target: e4fead4a4d1b, rel: mitigates}
+      - {target: 481ad83fd69d, rel: mitigates}
+      - {target: ccd33c7dd2c2, rel: refines}
+    deprecated: false
+
+  # ── Architectures ────────────────────────────────────────────────────────────
+
+  - number: ARCH-A-001
+    hash: ebad74d6a752
+    name: monorepo-collocated-packages
+    type: architecture
+    description: >
+      Monorepo with collocated packages for a single product with one to three
+      agents. Structure includes /apps/web (browser bundle), /apps/server (API
+      server), /packages/core (business logic and domain types), /packages/ui
+      (shared UI components), /packages/services (API clients and external
+      adapters), /packages/integrations (third-party SDK wrappers), /tests
+      (unit, integration, e2e), and /docs. All code shares a single version
+      with no independent package versioning. Simpler to navigate but harder to
+      extract a package for reuse later.
+    links:
+      - {target: 5aa848649c8f, rel: refines}
+      - {target: 0fa329015368, rel: refines}
+    deprecated: false
+
+  - number: ARCH-A-002
+    hash: 85f102d48938
+    name: multi-app-monorepo
+    type: architecture
+    description: >
+      Multi-app monorepo for multiple products sharing a common backend and type
+      system. Suitable for three or more agents, mid-stage through production.
+      Structure includes multiple apps (web-admin, web-public, server-api,
+      server-jobs) and shared packages (shared-types, ui-kit, core, db). Each
+      app can be built and deployed independently. More directories to navigate
+      and package boundaries must be carefully maintained, but shared packages
+      prevent drift between apps.
+    links:
+      - {target: 5aa848649c8f, rel: refines}
+      - {target: b5c27e8e1ed7, rel: refines}
+    deprecated: false
+
+  - number: ARCH-A-003
+    hash: aee6949d8880
+    name: polyrepo-shared-types
+    type: architecture
+    description: >
+      Polyrepo with a shared types package for independent teams requiring
+      strict boundaries. Separate repositories for Web, API, and Types with the
+      types package as the only coupling point. Provides maximum isolation but
+      maximum coordination cost. Type changes require publishing, versioning,
+      and updating in all consuming repos. Agent context is limited to one repo
+      at a time, making cross-repo reasoning expensive.
+    links:
+      - {target: ccd33c7dd2c2, rel: refines}
+    deprecated: false
+
+  # ── Checklist ────────────────────────────────────────────────────────────────
+
+  - number: ARCH-C-001
+    hash: 58725d4652cf
+    name: repo-structure-initialized
+    type: checklist
+    description: >
+      Repository initialized with /apps/web, /apps/server, /packages/core,
+      /packages/ui, /tests structure.
+    links:
+      - {target: 5aa848649c8f, rel: verifies}
+      - {target: ebad74d6a752, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-002
+    hash: 8d18897f8122
+    name: web-no-server-imports
+    type: checklist
+    description: >
+      /apps/web builds a browser bundle with no server imports resolving at
+      build time.
+    links:
+      - {target: 0fa329015368, rel: verifies}
+      - {target: 39e42948f441, rel: verifies}
+      - {target: 8a4c23247926, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-003
+    hash: 1cdb71e31e9a
+    name: server-no-browser-imports
+    type: checklist
+    description: >
+      /apps/server builds and starts a Bun server with no browser or DOM
+      imports resolving.
+    links:
+      - {target: 0fa329015368, rel: verifies}
+      - {target: 39e42948f441, rel: verifies}
+      - {target: 13b949d1669d, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-004
+    hash: f48df2f913de
+    name: shared-types-in-packages-core
+    type: checklist
+    description: >
+      Shared TypeScript types defined in /packages/core and imported by both
+      apps.
+    links:
+      - {target: ccd33c7dd2c2, rel: verifies}
+      - {target: 4211a13461f0, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-005
+    hash: 501ae96cc4e8
+    name: dependency-justification-documented
+    type: checklist
+    description: >
+      docs/dependencies.md created with every external dependency listed
+      alongside a Buy/DIY justification.
+    links:
+      - {target: 9be37f247b72, rel: verifies}
+      - {target: 19ba825434e1, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-006
+    hash: 2dd37c9fba71
+    name: ci-separate-build-steps
+    type: checklist
+    description: >
+      CI runs separate build steps for web and server.
+    links:
+      - {target: 0fa329015368, rel: verifies}
+      - {target: 39e42948f441, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-007
+    hash: 5ec68c5406d8
+    name: typed-rest-endpoint
+    type: checklist
+    description: >
+      At least one REST endpoint defined with typed request/response matching
+      /packages/core types.
+    links:
+      - {target: 4211a13461f0, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-008
+    hash: 572528a673b8
+    name: vitest-configured
+    type: checklist
+    description: >
+      Vitest configured and running for unit tests.
+    links: []
+    deprecated: false
+
+  - number: ARCH-C-009
+    hash: 8eb5a9613a18
+    name: playwright-configured
+    type: checklist
+    description: >
+      Playwright configured and running for browser tests in headless mode.
+    links: []
+    deprecated: false
+
+  - number: ARCH-C-010
+    hash: 331caa521583
+    name: all-endpoints-typed
+    type: checklist
+    description: >
+      All API endpoints have corresponding TypeScript types in /packages/core.
+    links:
+      - {target: 4211a13461f0, rel: verifies}
+      - {target: ccd33c7dd2c2, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-011
+    hash: 7b451943ac8b
+    name: integration-tests-validate-types
+    type: checklist
+    description: >
+      Integration tests validate that API responses match shared types.
+    links:
+      - {target: 4211a13461f0, rel: verifies}
+      - {target: e4fead4a4d1b, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-012
+    hash: 9a1f10130d10
+    name: no-any-in-api-contracts
+    type: checklist
+    description: >
+      No any types in API contracts; strict TypeScript enforced.
+    links:
+      - {target: 4211a13461f0, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-013
+    hash: d399f03c5890
+    name: dependency-tree-audited
+    type: checklist
+    description: >
+      Dependency tree audited with no unnecessary transitive dependencies.
+    links:
+      - {target: 9be37f247b72, rel: verifies}
+      - {target: 4f302fe9927a, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-014
+    hash: f45a8f67907d
+    name: new-package-requires-justification
+    type: checklist
+    description: >
+      New package addition requires documented justification in
+      docs/dependencies.md.
+    links:
+      - {target: 9be37f247b72, rel: verifies}
+      - {target: 19ba825434e1, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-015
+    hash: 67d85f32d0db
+    name: build-times-under-thirty-seconds
+    type: checklist
+    description: >
+      Build times measured; no single build step exceeds 30 seconds.
+    links: []
+    deprecated: false
+
+  - number: ARCH-C-016
+    hash: 63daab32362c
+    name: decoupling-test-passed
+    type: checklist
+    description: >
+      Decoupling test passed: removing all Bun/React/Tailwind references from
+      Principles and Patterns sections leaves them intact.
+    links:
+      - {target: c4b55c6bb7a0, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-017
+    hash: 81c88052bc06
+    name: packages-have-documented-responsibilities
+    type: checklist
+    description: >
+      All packages have explicit, documented responsibilities with no overlap.
+    links:
+      - {target: b5c27e8e1ed7, rel: verifies}
+      - {target: 5c3cce139dcc, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-018
+    hash: 4938d7d9ae1a
+    name: zero-unused-dependencies
+    type: checklist
+    description: >
+      Zero unused dependencies in package.json / bun.lockb.
+    links:
+      - {target: 9be37f247b72, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-019
+    hash: d0faeb455f4e
+    name: api-contract-versioning
+    type: checklist
+    description: >
+      API contract versioning in place; breaking changes require type updates
+      and consumer fixes.
+    links:
+      - {target: 4211a13461f0, rel: verifies}
+      - {target: e4fead4a4d1b, rel: verifies}
+    deprecated: false
+
+  - number: ARCH-C-020
+    hash: 606403ab9c33
+    name: repo-structure-documented
+    type: checklist
+    description: >
+      Repository structure documented in docs/architecture.md and matches
+      actual directory tree.
+    links:
+      - {target: 5aa848649c8f, rel: verifies}
+    deprecated: false
+
+  # ── Antipatterns ─────────────────────────────────────────────────────────────
+
+  - number: ARCH-X-001
+    hash: 1f938a5d6f34
+    name: shared-utils-junk-drawer
+    type: antipattern
+    description: >
+      A /packages/utils or /lib/helpers directory with no cohesive
+      responsibility. It starts with one date formatter, accumulates string
+      helpers, grows a random API wrapper, and eventually contains code that
+      belongs in five different packages. Every agent adds to it because it is
+      the path of least resistance.
+    links:
+      - {target: b5c27e8e1ed7, rel: contradicts}
+      - {target: c4b55c6bb7a0, rel: contradicts}
+    deprecated: false
+
+  - number: ARCH-X-002
+    hash: ef44000ddb60
+    name: import-path-acrobatics
+    type: antipattern
+    description: >
+      Using ../../../packages/core/types instead of workspace aliases or clean
+      import maps. Deep relative paths obscure where code actually lives and
+      make refactoring a find-and-replace nightmare. If the import path requires
+      counting dots, the project structure is not serving its purpose.
+    links:
+      - {target: 5aa848649c8f, rel: contradicts}
+      - {target: c4b55c6bb7a0, rel: contradicts}
+    deprecated: false
+
+  - number: ARCH-X-003
+    hash: 064517c12389
+    name: server-code-in-browser-bundle
+    type: antipattern
+    description: >
+      Importing a server utility "just for one function" into the client. The
+      bundler pulls in the entire module and its dependencies. At best the
+      bundle bloats; at worst server secrets or Node-only APIs are shipped to
+      the browser.
+    links:
+      - {target: 0fa329015368, rel: contradicts}
+      - {target: 39e42948f441, rel: contradicts}
+      - {target: 8a4c23247926, rel: contradicts}
+    deprecated: false
+
+  - number: ARCH-X-004
+    hash: 475e5e614e4c
+    name: premature-microservices
+    type: antipattern
+    description: >
+      Splitting a monorepo into separate services before the product has proven
+      its domain boundaries. Each service needs its own deployment, monitoring,
+      and contract management. For an agent-built early-stage product, this is
+      overhead with no benefit because the boundaries are not yet known.
+    links:
+      - {target: c4b55c6bb7a0, rel: contradicts}
+    deprecated: false

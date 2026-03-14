@@ -1,0 +1,1106 @@
+meta:
+  domain: DATA
+  title: Data Blueprint
+  version: 1
+  requires:
+    - AUTH
+
+rules:
+  # ── Threats ──────────────────────────────────────────────────────────────
+
+  - number: DATA-T-001
+    hash: 2dc96e2c134e
+    name: backup-exfiltration
+    type: threat
+    description: >
+      Database backup exfiltrated from storage. Customer PII (names, emails,
+      addresses, payment tokens) must be protected. Backups must contain
+      ciphertext, not plaintext.
+    links:
+      - {target: 3be027de3daf, rel: depends_on}
+      - {target: 8b531a730c7d, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-T-002
+    hash: 69dc1d627be5
+    name: compromised-db-credentials
+    type: threat
+    description: >
+      Compromised database user account. Sensitive fields (PII, financial data)
+      must be protected by application-layer encryption so DB credentials alone
+      do not yield readable data.
+    links:
+      - {target: 3be027de3daf, rel: depends_on}
+      - {target: 8b531a730c7d, rel: depends_on}
+      - {target: 60ed722d31f6, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-T-003
+    hash: 8bf9d7f0acd0
+    name: server-root-access-key-exposure
+    type: threat
+    description: >
+      Server root access obtained by attacker. Encryption keys must not reside
+      in environment variables or on the same host as the encrypted data.
+    links:
+      - {target: ed6163ae0eaf, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-T-004
+    hash: e35f0e3a69ab
+    name: rogue-admin-raw-access
+    type: threat
+    description: >
+      Rogue administrator queries raw customer records. Access to the
+      transactional store must be audit-logged, and agents must be restricted
+      to aggregated views.
+    links:
+      - {target: c9d640683d0c, rel: depends_on}
+      - {target: 20f68dd7d339, rel: depends_on}
+      - {target: 44465342d178, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-T-005
+    hash: e929ac34c20d
+    name: analytics-reidentification
+    type: threat
+    description: >
+      Analytics query re-identifies individuals from pseudonymized data.
+      Session-based pseudonyms must rotate, and aggregation must apply
+      differential privacy before export.
+    links:
+      - {target: 41bebcc94544, rel: depends_on}
+      - {target: eb6fb098108a, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-T-006
+    hash: 7bf0c58e9812
+    name: agent-raw-data-access
+    type: threat
+    description: >
+      Agent process accesses raw transactional data. Agents operate on the
+      analytics tier only; no code path connects an agent to the transactional
+      store.
+    links:
+      - {target: 20f68dd7d339, rel: depends_on}
+      - {target: f8dc70f7a4ff, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-T-007
+    hash: 79671d91bc6e
+    name: single-key-compromise-blast-radius
+    type: threat
+    description: >
+      Single encryption key compromised. Per-table or per-domain key separation
+      limits exposure to one data category, not the entire database.
+    links:
+      - {target: 60ed722d31f6, rel: depends_on}
+      - {target: 3b4888fcb503, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-T-008
+    hash: 943721d22c4f
+    name: key-compromise-no-rotation
+    type: threat
+    description: >
+      Key compromise with no rotation capability. Key rotation must be a
+      tested, automated procedure, not a theoretical plan.
+    links:
+      - {target: 6539ad97bbcb, rel: depends_on}
+      - {target: d27ba8a19e8a, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-T-009
+    hash: 1d7c346efcf4
+    name: ransomware-backup-recovery
+    type: threat
+    description: >
+      Ransomware encrypts production database. Encrypted, immutable backups
+      stored off-host enable recovery without paying ransom.
+    links:
+      - {target: 37bcb53d30b5, rel: depends_on}
+      - {target: 90a125682538, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-T-010
+    hash: 80a03d11a7eb
+    name: pii-in-application-logs
+    type: threat
+    description: >
+      Application logs contain decrypted PII as a secondary data leak. Log
+      pipelines must strip or redact sensitive fields before persistence.
+    links:
+      - {target: ca5f8232e396, rel: depends_on}
+      - {target: 845a26aaeb89, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-T-011
+    hash: 5841f3d1f349
+    name: schema-migration-data-loss
+    type: threat
+    description: >
+      Schema migration drops or corrupts existing data. Migrations must be
+      tested for rollback, and destructive operations must require explicit
+      confirmation.
+    links:
+      - {target: 3b73081ac738, rel: depends_on}
+    deprecated: false
+
+  # ── Principles ───────────────────────────────────────────────────────────
+
+  - number: DATA-P-001
+    hash: d7eca61da7e1
+    name: separate-analytics-from-transactional
+    type: principle
+    description: >
+      The analytics tier and the transactional tier are distinct stores with
+      distinct access controls, encryption keys, and data models. Analytics
+      operates on pseudonymous, aggregated events, never on raw customer
+      records. This separation is structural, enforced at the infrastructure
+      level, not by application-layer access checks.
+    links:
+      - {target: f8dc70f7a4ff, rel: depends_on}
+      - {target: 41bebcc94544, rel: depends_on}
+      - {target: 7bf0c58e9812, rel: mitigates}
+      - {target: f2c4aa2f6dee, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-P-002
+    hash: 3be027de3daf
+    name: layered-encryption
+    type: principle
+    description: >
+      Four layers protect data at rest: disk encryption, database-level
+      encryption, application-layer field encryption, and user-held keys. Each
+      layer has a different threat model and a different key. Compromise of any
+      single layer must not yield plaintext at any other layer.
+    links:
+      - {target: 8b531a730c7d, rel: depends_on}
+      - {target: 60ed722d31f6, rel: depends_on}
+      - {target: 2dc96e2c134e, rel: mitigates}
+      - {target: 69dc1d627be5, rel: mitigates}
+      - {target: a2708f81463a, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-P-003
+    hash: c1a58c5b6248
+    name: schema-as-data
+    type: principle
+    description: >
+      The domain model uses a Property Graph on PostgreSQL: a fixed three-table
+      schema that treats the data model itself as data. Adding a new entity type
+      or property is an INSERT or UPDATE to the type registry, not a structural
+      DDL alteration. Type schema versioning replaces migrations. Dedicated
+      relational tables are permitted for integrity-critical infrastructure
+      (ledgers, replay checkpoints, nonce stores).
+    links:
+      - {target: ad20dbdec789, rel: depends_on}
+      - {target: 522c78fa3ceb, rel: depends_on}
+      - {target: 0d599f9046de, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-P-004
+    hash: 2148c73bfc28
+    name: postgresql-with-graph-patterns
+    type: principle
+    description: >
+      PostgreSQL is the database across all stores. The system implements
+      property graph patterns (entities, relations, type registries) directly
+      on PostgreSQL using JSONB for flexible properties and recursive CTEs for
+      traversal, combining graph flexibility with relational reliability.
+    links:
+      - {target: ad20dbdec789, rel: depends_on}
+      - {target: e58dde384025, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-P-005
+    hash: 24b0de7f78fe
+    name: data-minimization
+    type: principle
+    description: >
+      Every field persisted requires justification: what product function
+      depends on it, how long it must be retained, and what the deletion plan
+      is. Fields collected for future use are liabilities with no offsetting
+      value. Retention policies are enforced by automated deletion, not by
+      human discipline.
+    links:
+      - {target: 338f28f21935, rel: depends_on}
+      - {target: 4ebd50e170cb, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-P-006
+    hash: 20f68dd7d339
+    name: agents-on-bounded-data
+    type: principle
+    description: >
+      No agent process has arbitrary read access to the transactional customer
+      store. The default path is the analytics tier with pseudonymous,
+      aggregated, differentially private data. Narrow exceptions exist for
+      worker task queues, task-scoped operational context, and sandboxed
+      digital twins, structurally constrained by role, scope, and environment
+      isolation.
+    links:
+      - {target: 7bf0c58e9812, rel: mitigates}
+      - {target: f8dc70f7a4ff, rel: depends_on}
+      - {target: 2c8d69220e89, rel: depends_on}
+      - {target: aaeb7ed6a065, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-P-007
+    hash: ed6163ae0eaf
+    name: keys-separate-from-data
+    type: principle
+    description: >
+      Encryption keys are managed by a dedicated key management service, not
+      stored in environment variables, configuration files, or the same host
+      as the encrypted data. The KMS is a hard dependency; if unavailable, the
+      application cannot serve requests requiring sensitive data. A short-lived
+      in-memory DEK cache (TTL <=5 min, never persisted) is acceptable for
+      high-throughput paths. KEKs are never cached in the application.
+    links:
+      - {target: 8bf9d7f0acd0, rel: mitigates}
+      - {target: 3f2840ae0508, rel: depends_on}
+      - {target: e1be2f2f1847, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-P-008
+    hash: c9d640683d0c
+    name: audit-precedes-access
+    type: principle
+    description: >
+      Every read of sensitive data is logged before the read is executed. The
+      audit log uses a separate encryption key and storage path. If the audit
+      write fails, the data read is denied. This ordering guarantee transforms
+      the audit log from a forensic afterthought into an active control.
+    links:
+      - {target: 44465342d178, rel: depends_on}
+      - {target: e35f0e3a69ab, rel: mitigates}
+      - {target: 601e0d14ee88, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-P-009
+    hash: d4f39216240f
+    name: journal-and-audit-are-distinct
+    type: principle
+    description: >
+      An append-only business journal answers "what accepted business facts
+      changed state." An audit log answers "who read, attempted, denied,
+      approved, failed, recovered, or administered the system." These are
+      different questions with different consumers and different retention and
+      access requirements. Neither substitutes for the other.
+    links:
+      - {target: 0d599f9046de, rel: depends_on}
+      - {target: 44465342d178, rel: depends_on}
+      - {target: 64cb90c4d154, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-P-010
+    hash: f37fd58f94b8
+    name: deterministic-gate-enforcement
+    type: principle
+    description: >
+      Data policy guarantees must be machine-checkable. The workflow defines
+      deterministic gates for journal append-only behavior, audit-before-access
+      enforcement, encryption boundary checks, analytics isolation, privacy
+      budget handling, and twin isolation. If the system cannot deterministically
+      prove a property, the blueprint is not met.
+    links:
+      - {target: c9d640683d0c, rel: depends_on}
+      - {target: d7eca61da7e1, rel: depends_on}
+      - {target: eb6fb098108a, rel: depends_on}
+      - {target: 2c8d69220e89, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-P-011
+    hash: 266d60e3f2a6
+    name: digital-twins-for-simulation
+    type: principle
+    description: >
+      Consequential workflow experiments must not happen on production databases.
+      Sandboxed digital twins provide isolated, short-lived clones of
+      production-relevant state for testing transaction sequences, previewing
+      downstream events, and inspecting rollback behavior. Twin creation and
+      teardown speed are product requirements.
+    links:
+      - {target: 2c8d69220e89, rel: depends_on}
+      - {target: d2ceda07176c, rel: depends_on}
+      - {target: 531c95e0ab34, rel: depends_on}
+    deprecated: false
+
+  # ── Design Patterns ─────────────────────────────────────────────────────
+
+  - number: DATA-D-001
+    hash: 8b531a730c7d
+    name: encrypt-before-insert
+    type: design_pattern
+    description: >
+      The application layer encrypts sensitive fields before passing them to
+      the database. The database stores ciphertext. Decryption occurs in the
+      application layer on read using keys from the KMS. Encrypted fields
+      cannot be indexed, searched, or sorted by the database engine; queries
+      on encrypted fields require application-layer decryption or a separate
+      non-sensitive derived index.
+    links:
+      - {target: 3be027de3daf, rel: refines}
+      - {target: ed6163ae0eaf, rel: refines}
+      - {target: 2dc96e2c134e, rel: mitigates}
+      - {target: 69dc1d627be5, rel: mitigates}
+    deprecated: false
+
+  - number: DATA-D-002
+    hash: ad20dbdec789
+    name: property-graph-on-postgresql
+    type: design_pattern
+    description: >
+      Store all domain data in three tables: entities (nodes with type and
+      JSONB properties), relations (typed edges between entities with JSONB
+      properties), and entity_types (schema registry with JSON Schema,
+      sensitivity metadata, and KMS key IDs). Native column constraints are
+      replaced by JSON Schema validation and partial unique indexes on JSONB
+      fields. Recursive CTEs handle graph traversal.
+    links:
+      - {target: c1a58c5b6248, rel: refines}
+      - {target: 2148c73bfc28, rel: refines}
+      - {target: 522c78fa3ceb, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-D-003
+    hash: 522c78fa3ceb
+    name: type-registry-validation
+    type: design_pattern
+    description: >
+      The application layer validates every write against the schema defined in
+      entity_types. This registry is live metadata used by the validation layer
+      and the FieldEncryptor to decide how to handle each property. Validation
+      logic moves from the database engine to the application tier, enabling
+      more expressive validation and versioned schema evolution without DDL.
+    links:
+      - {target: ad20dbdec789, rel: depends_on}
+      - {target: 60ed722d31f6, rel: depends_on}
+      - {target: c1a58c5b6248, rel: refines}
+    deprecated: false
+
+  - number: DATA-D-004
+    hash: 0d599f9046de
+    name: append-only-business-journal
+    type: design_pattern
+    description: >
+      A dedicated append-only journal for consequential business operations.
+      Stores accepted transaction facts, links compensations to reversed
+      transactions, and supports deterministic reconstruction of materialized
+      state. The graph model remains the default for business-domain
+      flexibility; the journal is the integrity layer for operations requiring
+      attributability, replayability, and recoverability.
+    links:
+      - {target: c1a58c5b6248, rel: refines}
+      - {target: d4f39216240f, rel: refines}
+      - {target: 37502d8eb399, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-D-005
+    hash: 60ed722d31f6
+    name: key-per-type-encryption
+    type: design_pattern
+    description: >
+      The entity_types registry declares which properties are sensitive and
+      which kms_key_id protects them. The FieldEncryptor reads this registry
+      to encrypt specific keys within the JSONB blob before storage. One key
+      compromise exposes only one entity type. Rotation is handled per entity
+      type.
+    links:
+      - {target: 3be027de3daf, rel: refines}
+      - {target: 522c78fa3ceb, rel: depends_on}
+      - {target: 79671d91bc6e, rel: mitigates}
+      - {target: 3b4888fcb503, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-D-006
+    hash: f8dc70f7a4ff
+    name: aggregation-tier-separation
+    type: design_pattern
+    description: >
+      Analytics operates on a separate data store populated by pseudonymous,
+      aggregated events. The transactional store emits events stripped of direct
+      identifiers and attributed to rotating session pseudonyms. The analytics
+      store has no foreign keys to the transactional store and no mechanism to
+      reverse pseudonymization. The event pipeline must provide at-least-once
+      delivery with idempotent writes. Events failing pseudonymization are
+      dropped with a structured log entry, never written with raw identifiers.
+    links:
+      - {target: d7eca61da7e1, rel: refines}
+      - {target: 41bebcc94544, rel: depends_on}
+      - {target: 7bf0c58e9812, rel: mitigates}
+      - {target: f2c4aa2f6dee, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-D-007
+    hash: 41bebcc94544
+    name: session-pseudonymization
+    type: design_pattern
+    description: >
+      Analytics events are attributed to session-scoped pseudonyms that rotate
+      on a defined schedule. The mapping between permanent identifiers and
+      session pseudonyms is held only in the transactional tier and never
+      exported to the analytics store. Longitudinal analysis uses cohort-level
+      aggregation, not individual tracking across sessions.
+    links:
+      - {target: f8dc70f7a4ff, rel: depends_on}
+      - {target: e929ac34c20d, rel: mitigates}
+      - {target: eaf52669c958, rel: depends_on}
+      - {target: 0ee540d1f066, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-D-008
+    hash: eb6fb098108a
+    name: differential-privacy-on-export
+    type: design_pattern
+    description: >
+      Aggregated data exported from the analytics tier has calibrated noise
+      added via a differential privacy mechanism. The privacy budget (epsilon)
+      is configured per query class, tracked persistently per dataset, and
+      decremented atomically before query execution. Queries exceeding the
+      remaining budget are rejected with an explicit error. For agent-initiated
+      queries, budget exhaustion returns a structured error; agents must not
+      retry with broader queries to circumvent the limit.
+    links:
+      - {target: e929ac34c20d, rel: mitigates}
+      - {target: 20f68dd7d339, rel: refines}
+      - {target: b79051bf62a8, rel: depends_on}
+      - {target: 2c2d4f0598d6, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-D-009
+    hash: b6e2c422c2db
+    name: signed-analytics-at-edge
+    type: design_pattern
+    description: >
+      The client signs each analytics event with a session-scoped key before
+      transmission. The server validates the signature, checks for replay via
+      nonce or timestamp window, and rejects events failing validation. Signed
+      events are stored with their signatures for downstream audit. This
+      protects against network-level tampering, not against a malicious client.
+    links:
+      - {target: f8dc70f7a4ff, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-D-010
+    hash: 44465342d178
+    name: audit-log-first
+    type: design_pattern
+    description: >
+      The access path writes the audit entry to an append-only log before
+      executing the data read. If the audit write fails, the data read is
+      denied. The audit log uses a separate encryption key and storage backend.
+      Entries include accessor identity, timestamp, data accessed, and access
+      justification. Batching is not permitted because it breaks the
+      log-before-read guarantee.
+    links:
+      - {target: c9d640683d0c, rel: refines}
+      - {target: e35f0e3a69ab, rel: mitigates}
+      - {target: 601e0d14ee88, rel: depends_on}
+      - {target: 83c607c6aff9, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-D-011
+    hash: 2c8d69220e89
+    name: sandboxed-digital-twins
+    type: design_pattern
+    description: >
+      Sandboxed digital twins are isolated, short-lived clones of
+      production-relevant state. A twin runs the same validator, policy, and
+      event logic as production but with separate credentials, separate mutable
+      storage, and hard write isolation. All twin actions are audit-marked as
+      sandbox actions. Clone the smallest production-relevant state that yields
+      credible workflow simulation, not the entire database.
+    links:
+      - {target: 266d60e3f2a6, rel: refines}
+      - {target: d2ceda07176c, rel: depends_on}
+      - {target: 531c95e0ab34, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-D-012
+    hash: ca5f8232e396
+    name: pii-scrubbing-log-pipeline
+    type: design_pattern
+    description: >
+      All log output passes through a scrubbing layer before persistence. The
+      scrubber maintains a deny-list of field names and a pattern list for
+      sensitive data formats. Fields matching the deny-list are replaced with a
+      redaction marker. Error handlers log IDs and error codes only, never raw
+      objects or database rows. The scrubber is applied at the log sink. Before
+      each gate, the pipeline is verified under adversarial conditions with
+      automated tests asserting absence of PII patterns.
+    links:
+      - {target: 80a03d11a7eb, rel: mitigates}
+      - {target: 845a26aaeb89, rel: depends_on}
+      - {target: 056d2de15d37, rel: depends_on}
+      - {target: 8069bf079897, rel: depends_on}
+    deprecated: false
+
+  # ── Architectures ────────────────────────────────────────────────────────
+
+  - number: DATA-A-001
+    hash: e58dde384025
+    name: three-database-single-instance
+    type: architecture
+    description: >
+      Baseline architecture: a single PostgreSQL instance hosts three databases
+      (calypso_app, calypso_analytics, calypso_audit) with three separate
+      connection pools and roles (app_rw, analytics_w, audit_w). KMS runs as a
+      separate process. Analytics events flow through an in-process pipeline
+      that pseudonymizes before writing. Local development uses Kubernetes or
+      Docker Compose to deploy the application container alongside PostgreSQL
+      and Vault. Acceptable for pre-production; replaced by independent managed
+      databases when availability SLAs require it.
+    links:
+      - {target: d7eca61da7e1, rel: implements}
+      - {target: 2148c73bfc28, rel: implements}
+      - {target: 38d305fb7362, rel: depends_on}
+      - {target: 127078d82e9d, rel: depends_on}
+      - {target: 6452802894f9, rel: depends_on}
+      - {target: c9b045a4c37e, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-A-002
+    hash: c9b045a4c37e
+    name: multi-tenant-encrypted-platform
+    type: architecture
+    description: >
+      Production regulated-industry architecture: per-tenant key hierarchies
+      isolate encryption. KMS is HSM-backed. Analytics tier applies
+      differential privacy on all exports. Audit log is replicated to immutable
+      cold storage. Transition from Architecture A replaces the shared
+      PostgreSQL instance with independent managed databases, adds per-tenant
+      key hierarchies, moves the event pipeline to an async worker with durable
+      queue, and adds HSM backing. Schema and encryption envelope format are
+      unchanged.
+    links:
+      - {target: e58dde384025, rel: depends_on}
+      - {target: 60ed722d31f6, rel: implements}
+      - {target: eb6fb098108a, rel: implements}
+      - {target: 95ffe3fd6a11, rel: depends_on}
+      - {target: 022223e5985e, rel: depends_on}
+      - {target: 11386dd10236, rel: depends_on}
+    deprecated: false
+
+  # ── Checklist ────────────────────────────────────────────────────────────
+
+  - number: DATA-C-001
+    hash: 38d305fb7362
+    name: three-databases-provisioned
+    type: checklist
+    description: >
+      Three PostgreSQL databases provisioned: calypso_app, calypso_analytics,
+      calypso_audit.
+    links:
+      - {target: e58dde384025, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-002
+    hash: 127078d82e9d
+    name: three-roles-created
+    type: checklist
+    description: >
+      Three database roles created with correct privilege scope: app_rw
+      (read/write on calypso_app only), analytics_w (insert-only on
+      calypso_analytics only), audit_w (insert-only on calypso_audit, no
+      UPDATE/DELETE/TRUNCATE).
+    links:
+      - {target: e58dde384025, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-003
+    hash: 90cf3db02e62
+    name: property-graph-tables-initialized
+    type: checklist
+    description: >
+      Core property graph tables initialized: entities, relations, entity_types.
+    links:
+      - {target: ad20dbdec789, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-004
+    hash: 6452802894f9
+    name: local-dev-containerized
+    type: checklist
+    description: >
+      Local development environment deploys application containers, PostgreSQL,
+      and Vault uniformly via Kubernetes (kind) or Docker Compose. Application
+      does not run directly on the host.
+    links:
+      - {target: e58dde384025, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-005
+    hash: 03eb3c217c19
+    name: parameterized-queries-only
+    type: checklist
+    description: >
+      All database queries use parameterized statements; no string
+      concatenation.
+    links: []
+    deprecated: false
+
+  - number: DATA-C-006
+    hash: d3654bc07931
+    name: application-layer-encryption-active
+    type: checklist
+    description: >
+      Application-layer encryption active for sensitive properties in JSONB.
+    links:
+      - {target: 8b531a730c7d, rel: verifies}
+      - {target: 60ed722d31f6, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-007
+    hash: e1be2f2f1847
+    name: kms-integrated-no-config-keys
+    type: checklist
+    description: >
+      Key management service integrated; no encryption keys in config files or
+      environment variables.
+    links:
+      - {target: ed6163ae0eaf, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-008
+    hash: a49a8c360813
+    name: audit-logging-operational
+    type: checklist
+    description: >
+      Audit logging operational for all auth events and entity reads.
+    links:
+      - {target: c9d640683d0c, rel: verifies}
+      - {target: 44465342d178, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-009
+    hash: 601e0d14ee88
+    name: audit-log-first-ordering
+    type: checklist
+    description: >
+      Audit log entries written before data access is granted (log-first
+      ordering).
+    links:
+      - {target: c9d640683d0c, rel: verifies}
+      - {target: 44465342d178, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-010
+    hash: d00c753cbcec
+    name: analytics-store-separated
+    type: checklist
+    description: >
+      Separate analytics event store operational; analytics queries never touch
+      calypso_app.
+    links:
+      - {target: d7eca61da7e1, rel: verifies}
+      - {target: f8dc70f7a4ff, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-011
+    hash: 5e9dfa261da1
+    name: analytics-pseudonymized
+    type: checklist
+    description: >
+      Analytics events pseudonymized with session-scoped identifiers.
+    links:
+      - {target: 41bebcc94544, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-012
+    hash: 056d2de15d37
+    name: no-pii-in-logs
+    type: checklist
+    description: >
+      No plaintext PII present in application logs, verified by adversarial
+      test suite.
+    links:
+      - {target: ca5f8232e396, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-013
+    hash: f87c3c6aa92e
+    name: core-migration-applied
+    type: checklist
+    description: >
+      Single core migration applied to establish graph tables.
+    links:
+      - {target: ad20dbdec789, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-014
+    hash: 90a125682538
+    name: point-in-time-recovery-configured
+    type: checklist
+    description: >
+      Point-in-time recovery configured and tested.
+    links:
+      - {target: 1d7c346efcf4, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-015
+    hash: b79051bf62a8
+    name: differential-privacy-active
+    type: checklist
+    description: >
+      Differential privacy mechanism active on analytics exports; privacy
+      budget (epsilon) configured per query class; budget exhaustion rejects
+      queries, does not silently reduce noise.
+    links:
+      - {target: eb6fb098108a, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-016
+    hash: 6539ad97bbcb
+    name: key-rotation-tested
+    type: checklist
+    description: >
+      Key rotation procedure tested end-to-end: rotate a table key, verify old
+      rows remain readable via keyVersion lookup, verify new writes use the new
+      key.
+    links:
+      - {target: 943721d22c4f, rel: verifies}
+      - {target: 60ed722d31f6, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-017
+    hash: 95ffe3fd6a11
+    name: per-tenant-key-isolation
+    type: checklist
+    description: >
+      Per-tenant key isolation implemented (if multi-tenant); one tenant's key
+      compromise verified not to expose another's data.
+    links:
+      - {target: c9b045a4c37e, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-018
+    hash: 37bcb53d30b5
+    name: backup-restoration-tested
+    type: checklist
+    description: >
+      Backup restoration tested: restore from encrypted backup to a clean
+      environment, verify data integrity and that decryption succeeds.
+    links:
+      - {target: 1d7c346efcf4, rel: verifies}
+      - {target: 2dc96e2c134e, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-019
+    hash: 5530e7aa04c0
+    name: rate-limiting-on-data-endpoints
+    type: checklist
+    description: >
+      Rate limiting enforced on data-access endpoints.
+    links: []
+    deprecated: false
+
+  - number: DATA-C-020
+    hash: 3b73081ac738
+    name: migration-rollback-tested
+    type: checklist
+    description: >
+      Schema migration rollback tested: apply migration, roll back, verify no
+      data loss or corruption.
+    links:
+      - {target: 5841f3d1f349, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-021
+    hash: 0ee540d1f066
+    name: pseudonym-rotation-verified
+    type: checklist
+    description: >
+      Session pseudonym rotation verified: pseudonyms change per session or per
+      configured interval.
+    links:
+      - {target: 41bebcc94544, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-022
+    hash: 83c607c6aff9
+    name: audit-log-tamper-resistance
+    type: checklist
+    description: >
+      Audit log tamper resistance verified: audit_w role cannot modify existing
+      entries; confirmed by attempting UPDATE and DELETE with the audit role.
+    links:
+      - {target: 44465342d178, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-023
+    hash: 022223e5985e
+    name: kms-hsm-backed
+    type: checklist
+    description: >
+      KMS backed by hardware security module (HSM); no software-only key
+      storage in production.
+    links:
+      - {target: c9b045a4c37e, rel: verifies}
+      - {target: ed6163ae0eaf, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-024
+    hash: d27ba8a19e8a
+    name: automated-key-rotation
+    type: checklist
+    description: >
+      Automated key rotation operational on schedule; zero-downtime rekeying
+      verified under load.
+    links:
+      - {target: 943721d22c4f, rel: verifies}
+      - {target: 60ed722d31f6, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-025
+    hash: 11386dd10236
+    name: immutable-audit-cold-storage
+    type: checklist
+    description: >
+      Immutable audit log replicated to cold storage; retention policy enforced.
+    links:
+      - {target: c9b045a4c37e, rel: verifies}
+      - {target: 44465342d178, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-026
+    hash: 37502d8eb399
+    name: business-journal-operational
+    type: checklist
+    description: >
+      Consequential business journal operational for integrity-critical writes;
+      replay and compensation verified.
+    links:
+      - {target: 0d599f9046de, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-027
+    hash: 64cb90c4d154
+    name: journal-audit-independent
+    type: checklist
+    description: >
+      Journal and audit log are independently queryable and retained; one
+      cannot be mistaken for the other.
+    links:
+      - {target: d4f39216240f, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-028
+    hash: d2ceda07176c
+    name: digital-twin-creation-tested
+    type: checklist
+    description: >
+      Digital twin creation tested: production-relevant state cloned into an
+      isolated sandbox in seconds.
+    links:
+      - {target: 2c8d69220e89, rel: verifies}
+      - {target: 266d60e3f2a6, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-029
+    hash: 531c95e0ab34
+    name: digital-twin-isolation-verified
+    type: checklist
+    description: >
+      Digital twin isolation verified: sandbox writes cannot mutate
+      calypso_app, calypso_analytics, or calypso_audit.
+    links:
+      - {target: 2c8d69220e89, rel: verifies}
+      - {target: 266d60e3f2a6, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-030
+    hash: 2c2d4f0598d6
+    name: full-dp-pipeline-active
+    type: checklist
+    description: >
+      Full differential privacy pipeline active: noise calibration, budget
+      tracking, budget exhaustion rejection.
+    links:
+      - {target: eb6fb098108a, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-031
+    hash: aaeb7ed6a065
+    name: agent-access-restricted-to-analytics
+    type: checklist
+    description: >
+      Agent access restricted to analytics tier; no code path from agent
+      processes to calypso_app, verified by architecture review and integration
+      test.
+    links:
+      - {target: 20f68dd7d339, rel: verifies}
+      - {target: 7bf0c58e9812, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-032
+    hash: 8928a4e02a4f
+    name: penetration-test-completed
+    type: checklist
+    description: >
+      Penetration test completed against data layer; findings remediated.
+    links: []
+    deprecated: false
+
+  - number: DATA-C-033
+    hash: 4ebd50e170cb
+    name: data-retention-automation
+    type: checklist
+    description: >
+      Data retention automation operational: expired data deleted on schedule,
+      deletion verified.
+    links:
+      - {target: 24b0de7f78fe, rel: verifies}
+    deprecated: false
+
+  - number: DATA-C-034
+    hash: 8069bf079897
+    name: log-pipeline-pii-free-adversarial
+    type: checklist
+    description: >
+      Log pipeline verified PII-free under adversarial conditions (error paths,
+      stack traces, serialization edge cases).
+    links:
+      - {target: ca5f8232e396, rel: verifies}
+      - {target: 056d2de15d37, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-C-035
+    hash: c098605d9d53
+    name: cross-tenant-isolation-verified
+    type: checklist
+    description: >
+      Cross-tenant data isolation verified by automated test suite (if
+      multi-tenant).
+    links:
+      - {target: c9b045a4c37e, rel: verifies}
+      - {target: 95ffe3fd6a11, rel: depends_on}
+    deprecated: false
+
+  # ── Antipatterns ─────────────────────────────────────────────────────────
+
+  - number: DATA-X-001
+    hash: ab2f526af532
+    name: privacy-policy-as-technical-control
+    type: antipattern
+    description: >
+      Promising users their data is safe in a privacy policy while storing it
+      in plaintext behind a single firewall. A policy is a legal obligation,
+      not an enforcement mechanism. The gap between the promise and the
+      implementation is the breach surface.
+    links:
+      - {target: 3be027de3daf, rel: contradicts}
+    deprecated: false
+
+  - number: DATA-X-002
+    hash: a2708f81463a
+    name: disk-encryption-as-data-privacy
+    type: antipattern
+    description: >
+      Enabling transparent disk encryption and treating the data layer as
+      "encrypted." Disk encryption protects against physical theft only. It
+      does nothing against a compromised database user, leaked connection
+      string, or exfiltrated backup.
+    links:
+      - {target: 3be027de3daf, rel: contradicts}
+    deprecated: false
+
+  - number: DATA-X-003
+    hash: f2c4aa2f6dee
+    name: analytics-on-transactional-store
+    type: antipattern
+    description: >
+      Running analytics queries directly against the production customer
+      database. Every analytics query becomes a potential privacy violation,
+      and every analyst becomes a potential threat actor. Structural separation
+      makes this impossible, not merely forbidden.
+    links:
+      - {target: d7eca61da7e1, rel: contradicts}
+      - {target: f8dc70f7a4ff, rel: contradicts}
+    deprecated: false
+
+  - number: DATA-X-004
+    hash: 74b0d37b402a
+    name: frontier-crypto-as-default
+    type: antipattern
+    description: >
+      Reaching for fully homomorphic encryption, zero-knowledge proofs, or
+      secure multi-party computation before implementing aggregation-tier
+      separation, differential privacy, or basic field-level encryption.
+      Simpler, well-understood patterns solve the same problems with lower
+      operational risk. Adopt frontier techniques deliberately with a specific
+      threat model row they address.
+    links:
+      - {target: f8dc70f7a4ff, rel: contradicts}
+      - {target: eb6fb098108a, rel: contradicts}
+      - {target: 8b531a730c7d, rel: contradicts}
+    deprecated: false
+
+  - number: DATA-X-005
+    hash: 338f28f21935
+    name: collecting-data-just-in-case
+    type: antipattern
+    description: >
+      Storing fields that no current product function requires on the theory
+      they might be useful later. Every field increases breach exposure,
+      complicates compliance, and creates retention obligations. Collect what
+      you need, delete what you no longer need.
+    links:
+      - {target: 24b0de7f78fe, rel: contradicts}
+    deprecated: false
+
+  - number: DATA-X-006
+    hash: 3f2840ae0508
+    name: keys-alongside-data
+    type: antipattern
+    description: >
+      Storing encryption keys in environment variables on the database host, in
+      the application config file, or in the same backup archive as the
+      encrypted database. A single host compromise yields both ciphertext and
+      keys.
+    links:
+      - {target: ed6163ae0eaf, rel: contradicts}
+      - {target: 8bf9d7f0acd0, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-X-007
+    hash: 3b4888fcb503
+    name: single-flat-key-for-all-tables
+    type: antipattern
+    description: >
+      Using one encryption key for the entire database. One key compromise
+      exposes every table. Key-per-table limits the blast radius to one data
+      domain and enables independent rotation schedules.
+    links:
+      - {target: 60ed722d31f6, rel: contradicts}
+      - {target: 79671d91bc6e, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-X-008
+    hash: 845a26aaeb89
+    name: pii-in-error-logs
+    type: antipattern
+    description: >
+      Catching exceptions and logging the full request object, database row, or
+      decrypted field value in the error handler. Under error conditions logs
+      become a secondary copy of protected data. Log pipelines must redact
+      before writing.
+    links:
+      - {target: ca5f8232e396, rel: contradicts}
+      - {target: 80a03d11a7eb, rel: depends_on}
+    deprecated: false
+
+  - number: DATA-X-009
+    hash: eaf52669c958
+    name: pseudonymization-without-rotation
+    type: antipattern
+    description: >
+      Assigning each user a permanent pseudonym in the analytics store and
+      treating it as anonymization. A permanent pseudonym is a second
+      identifier that can be correlated across sessions and re-identified.
+      Session-scoped, rotating pseudonyms resist longitudinal re-identification.
+    links:
+      - {target: 41bebcc94544, rel: contradicts}
+      - {target: e929ac34c20d, rel: depends_on}
+    deprecated: false

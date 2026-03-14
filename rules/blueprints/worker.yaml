@@ -1,0 +1,812 @@
+meta:
+  domain: WORKER
+  title: Worker Blueprint
+  version: 1
+  requires:
+    - AUTH
+    - DATA
+    - ENV
+
+rules:
+  # ── Threats ──
+
+  - number: WORKER-T-001
+    hash: 6259fcb38e4b
+    name: direct-db-write-bypasses-validation
+    type: threat
+    description: >
+      Agent writes malformed or adversarially crafted data directly to the database, bypassing
+      API-layer validation and business logic. All writes must pass through the API layer.
+    links:
+      - {target: 828eead860c0, rel: depends_on}
+      - {target: 04607753d09a, rel: depends_on}
+      - {target: a76fb9bc6f9a, rel: depends_on}
+    deprecated: false
+
+  - number: WORKER-T-002
+    hash: dc243cc9fac7
+    name: compromised-credential-grants-db-write
+    type: threat
+    description: >
+      A compromised agent credential grants write access to the database. The agent DB role must
+      be read-only; write access is structurally impossible regardless of credential scope.
+    links:
+      - {target: 828eead860c0, rel: depends_on}
+      - {target: cebee7387f5b, rel: depends_on}
+    deprecated: false
+
+  - number: WORKER-T-003
+    hash: 6dbf9c26bf09
+    name: agent-reads-unauthorized-data
+    type: threat
+    description: >
+      Agent reads data outside its authorized scope such as another user's records. The agent DB
+      role must be restricted to task-queue views and anonymized or aggregated data, enforced by
+      row-level security.
+    links:
+      - {target: f84a99a27579, rel: depends_on}
+      - {target: cebee7387f5b, rel: depends_on}
+    deprecated: false
+
+  - number: WORKER-T-004
+    hash: 6f31a0c88cf2
+    name: stale-task-claim
+    type: threat
+    description: >
+      Agent acts on a task that has already been claimed or cancelled. The task queue must use
+      atomic claim operations; acting on a stale task must produce a rejected API response.
+    links:
+      - {target: fec546a4edeb, rel: depends_on}
+      - {target: ab32dbdcf326, rel: depends_on}
+    deprecated: false
+
+  - number: WORKER-T-005
+    hash: 87b56473f379
+    name: delegated-token-outlives-task
+    type: threat
+    description: >
+      A delegated user token used by the agent outlives the task it was issued for. Delegated
+      tokens must be single-use and task-scoped; a consumed token must not be reusable.
+    links:
+      - {target: 99b401f918f7, rel: depends_on}
+      - {target: 94e51d38d726, rel: depends_on}
+      - {target: 93c252df0ba7, rel: depends_on}
+    deprecated: false
+
+  - number: WORKER-T-006
+    hash: 7262b1c5db4f
+    name: agent-impersonates-different-user
+    type: threat
+    description: >
+      Agent submits a result that impersonates a different user. The API layer must verify that
+      the delegated token's user identity matches the task's owner.
+    links:
+      - {target: 94e51d38d726, rel: depends_on}
+      - {target: f594ba0a6011, rel: depends_on}
+    deprecated: false
+
+  - number: WORKER-T-007
+    hash: 5ae0f5e26e80
+    name: container-shell-access
+    type: threat
+    description: >
+      Agent container gains shell access or package management capability. Worker containers
+      must be distroless-style with no shell, no package manager, and no runtime binary
+      installation path.
+    links:
+      - {target: 04c8e0e0c08d, rel: depends_on}
+      - {target: 6cee5e4dbf44, rel: depends_on}
+      - {target: 445514ee90dd, rel: depends_on}
+    deprecated: false
+
+  - number: WORKER-T-008
+    hash: 7bd1b8579f60
+    name: cross-agent-type-access
+    type: threat
+    description: >
+      Agent type A accesses task types or data views belonging to agent type B. Each agent
+      type's DB role must grant access only to its own task queue view; type claims are
+      validated by the API.
+    links:
+      - {target: f84a99a27579, rel: depends_on}
+      - {target: cebee7387f5b, rel: depends_on}
+      - {target: f020f72a449a, rel: depends_on}
+    deprecated: false
+
+  - number: WORKER-T-009
+    hash: c445b05e81e2
+    name: vendor-api-key-leak
+    type: threat
+    description: >
+      AI vendor API key leaked from worker container environment. Vendor API keys must be scoped
+      to minimum permissions and rotated on schedule.
+    links:
+      - {target: 79fd515f9792, rel: depends_on}
+    deprecated: false
+
+  - number: WORKER-T-010
+    hash: 1192f1b1f366
+    name: vendor-cli-data-exfiltration
+    type: threat
+    description: >
+      Agent spawns a vendor CLI binary that exfiltrates data via network. Worker containers must
+      have narrowly scoped network egress; vendor CLI calls must be audited via structured
+      logging.
+    links:
+      - {target: a1524a8bda56, rel: depends_on}
+      - {target: 8979f3da3356, rel: depends_on}
+    deprecated: false
+
+  # ── Principles ──
+
+  - number: WORKER-P-001
+    hash: 828eead860c0
+    name: read-only-database-access
+    type: principle
+    description: >
+      Agents are read-authorized, write-prohibited at the database layer. The agent's PostgreSQL
+      role grants read access to curated views only and no write permissions to any table. An
+      agent that attempts a direct write receives a permission error from the database before
+      any application logic runs.
+    links:
+      - {target: 6259fcb38e4b, rel: mitigates}
+      - {target: dc243cc9fac7, rel: mitigates}
+      - {target: cebee7387f5b, rel: refines}
+    deprecated: false
+
+  - number: WORKER-P-002
+    hash: 04607753d09a
+    name: writes-through-authenticated-api
+    type: principle
+    description: >
+      All agent writes are user-authenticated API transactions. Every live state change an agent
+      produces is submitted as an authenticated request to the application API using a delegated
+      credential. The API validates input, checks authorization, enforces business rules, and
+      writes through the standard data layer. For consequential operations the worker may submit
+      a signed transaction intent. The database is not reachable; the API is the only production
+      write surface.
+    links:
+      - {target: 6259fcb38e4b, rel: mitigates}
+      - {target: 94e51d38d726, rel: refines}
+      - {target: cbc1e836c877, rel: refines}
+    deprecated: false
+
+  - number: WORKER-P-003
+    hash: 01372075c497
+    name: deployment-time-capability-declaration
+    type: principle
+    description: >
+      Agent capability is declared at deployment, not at runtime. Task type subscription,
+      database role, vendor API access, and network egress rules are declared in the deployment
+      manifest and enforced by infrastructure. The agent does not self-select capabilities at
+      runtime.
+    links:
+      - {target: cf2b1cacf907, rel: refines}
+      - {target: f84a99a27579, rel: refines}
+    deprecated: false
+
+  - number: WORKER-P-004
+    hash: 04c8e0e0c08d
+    name: distroless-with-explicit-allowances
+    type: principle
+    description: >
+      Distroless-style workers still need explicit runtime allowances. A practical worker may
+      require a writable temp directory, mounted CA bundles, vendor credential files, and a
+      controlled config home. Those allowances must be explicit, minimal, and predeclared.
+      Distroless means no shell, no package manager, no ad hoc debugging tools, and no
+      self-mutation at runtime.
+    links:
+      - {target: 5ae0f5e26e80, rel: mitigates}
+      - {target: 6cee5e4dbf44, rel: refines}
+    deprecated: false
+
+  - number: WORKER-P-005
+    hash: 3b08589dd247
+    name: deterministic-policy-gates
+    type: principle
+    description: >
+      Worker policy is enforced through deterministic gates. The Calypso workflow defines
+      machine-checkable gates for write prohibition, image composition, allowed writable paths,
+      vendor binary provenance, network egress constraints, and digital-twin isolation. If
+      checks cannot be evaluated deterministically, the worker path relies on convention rather
+      than policy.
+    links:
+      - {target: cbc1e836c877, rel: refines}
+    deprecated: false
+
+  - number: WORKER-P-006
+    hash: 99b401f918f7
+    name: single-use-task-scoped-tokens
+    type: principle
+    description: >
+      Delegated tokens are single-use and task-scoped. The API issues a short-lived, task-scoped
+      token at task creation. The agent uses it to submit the result and the token is
+      invalidated on first use. If the agent fails, the token expires by TTL. A delegated token
+      cannot be used for a different task, to read out-of-scope data, or to initiate a new task.
+    links:
+      - {target: 87b56473f379, rel: mitigates}
+      - {target: 94e51d38d726, rel: refines}
+      - {target: dc26e8d71101, rel: refines}
+      - {target: 93c252df0ba7, rel: refines}
+    deprecated: false
+
+  - number: WORKER-P-007
+    hash: 6e0a5f6d7052
+    name: simulation-in-digital-twins
+    type: principle
+    description: >
+      Simulation happens in digital twins, not on production. When a task requires trying
+      transaction sequences or simulating downstream effects, the worker executes inside a
+      sandboxed digital twin. Twin execution may produce proposals, diffs, and predicted events
+      but does not mutate production state. Promotion from simulation to live submission is a
+      separate, explicitly authorized step.
+    links:
+      - {target: f97902bbcca1, rel: refines}
+      - {target: 7affec197709, rel: refines}
+      - {target: 26d63fdd6ec7, rel: refines}
+    deprecated: false
+
+  - number: WORKER-P-008
+    hash: f84a99a27579
+    name: agent-type-isolation
+    type: principle
+    description: >
+      Agent types are isolated from each other. Different agent types are deployed with
+      different database roles, different task queue views, and different vendor API
+      credentials. An agent of type A cannot read type B's tasks, use type B's API keys, or
+      submit results using type B's identity. Isolation is enforced at network policy, database
+      role, and API validation layers.
+    links:
+      - {target: 7bd1b8579f60, rel: mitigates}
+      - {target: cebee7387f5b, rel: refines}
+      - {target: f020f72a449a, rel: refines}
+    deprecated: false
+
+  # ── Design Patterns ──
+
+  - number: WORKER-D-001
+    hash: fec546a4edeb
+    name: task-queue-read-only-view
+    type: design_pattern
+    description: >
+      The database exposes a per-agent-type view over the task queue table filtered by task type
+      and status. An agent claims a task by calling the API which executes an atomic UPDATE
+      WHERE status='pending' RETURNING. The agent's DB role can read the view but cannot execute
+      the claim write. This eliminates race conditions and enforces type isolation.
+    links:
+      - {target: 828eead860c0, rel: refines}
+      - {target: 6f31a0c88cf2, rel: mitigates}
+      - {target: cebee7387f5b, rel: refines}
+    deprecated: false
+
+  - number: WORKER-D-002
+    hash: 94e51d38d726
+    name: delegated-user-token
+    type: design_pattern
+    description: >
+      At task creation the API generates a single-use, task-scoped capability token derived from
+      the creating user's identity. The token encodes task ID, user ID, allowed API endpoints,
+      and expiry. The agent presents the token when submitting results; the API verifies scope,
+      executes the write on behalf of the encoded user, records the worker as executor, and
+      invalidates the token.
+    links:
+      - {target: 99b401f918f7, rel: refines}
+      - {target: 87b56473f379, rel: mitigates}
+      - {target: 7262b1c5db4f, rel: mitigates}
+    deprecated: false
+
+  - number: WORKER-D-003
+    hash: cbc1e836c877
+    name: signed-transaction-intent
+    type: design_pattern
+    description: >
+      For consequential business actions the worker submits a signed transaction intent to the
+      API instead of writing state directly. The API authenticates delegated authority, verifies
+      worker identity, and hands the intent to the validator. The validator checks policy,
+      business rules, and current state, then appends the accepted transaction through the
+      standard write path. The committed record preserves both principal authority and execution
+      provenance.
+    links:
+      - {target: 04607753d09a, rel: refines}
+      - {target: 3b08589dd247, rel: refines}
+      - {target: 24b901f01525, rel: refines}
+      - {target: a83da95e0890, rel: refines}
+    deprecated: false
+
+  - number: WORKER-D-004
+    hash: 6a55cc478eca
+    name: vendor-binary-process-spawn
+    type: design_pattern
+    description: >
+      Vendor CLI binaries are copied into the worker image at build time. The agent invokes them
+      using direct process spawn (array form), not via a shell interpreter. Input is passed as
+      arguments or via stdin; output is captured on stdout/stderr. No shell interpolation
+      occurs. Vendor CLI updates require rebuilding and redeploying the worker image.
+    links:
+      - {target: 5ae0f5e26e80, rel: mitigates}
+      - {target: 50e243fb9728, rel: refines}
+      - {target: 445514ee90dd, rel: refines}
+      - {target: fb9c8615723a, rel: refines}
+    deprecated: false
+
+  - number: WORKER-D-005
+    hash: 8979f3da3356
+    name: structured-execution-audit-log
+    type: design_pattern
+    description: >
+      Every agent execution (task claim, vendor API call, CLI invocation, result submission) is
+      logged to a structured audit table via the API. Log entries include task ID, agent type,
+      operation type, input hash, output hash, token used, timestamp, and result status. Actual
+      prompt and response content is stored in the task record under the data blueprint's
+      encryption and retention policies, never written directly by the agent.
+    links:
+      - {target: 1192f1b1f366, rel: mitigates}
+      - {target: 69e1235be7de, rel: refines}
+      - {target: 1d4f90a4eaed, rel: refines}
+      - {target: 092c015ce976, rel: refines}
+    deprecated: false
+
+  - number: WORKER-D-006
+    hash: f97902bbcca1
+    name: sandboxed-digital-twin-execution
+    type: design_pattern
+    description: >
+      The worker requests or is assigned a sandboxed digital twin containing only the
+      production-relevant state slice needed for the task. The twin runs with isolated
+      credentials and is torn down after execution. The worker uses it to simulate transactions,
+      observe downstream events, and produce a structured artifact of proposed changes. Only a
+      later authorized submission may affect production.
+    links:
+      - {target: 6e0a5f6d7052, rel: refines}
+      - {target: 7affec197709, rel: refines}
+      - {target: 26d63fdd6ec7, rel: refines}
+    deprecated: false
+
+  - number: WORKER-D-007
+    hash: cebee7387f5b
+    name: per-agent-type-database-role
+    type: design_pattern
+    description: >
+      Each agent type is assigned a dedicated PostgreSQL role at database initialization with
+      SELECT on type-specific views only. Row-level security on the task queue table ensures a
+      role only sees rows matching its task type. The agent's database credential corresponds to
+      its type-specific role injected via a Kubernetes Secret. Adding a new agent type requires
+      a database init script update and explicit review.
+    links:
+      - {target: 828eead860c0, rel: refines}
+      - {target: f84a99a27579, rel: refines}
+      - {target: 6dbf9c26bf09, rel: mitigates}
+      - {target: 7bd1b8579f60, rel: mitigates}
+    deprecated: false
+
+  # ── Architectures ──
+
+  - number: WORKER-A-001
+    hash: 293e98fe383a
+    name: single-agent-single-replica
+    type: architecture
+    description: >
+      Single agent type, single replica. Worker container communicates with the API for task
+      claim and result submission. Agent has SELECT-only access to its task queue view; all
+      writes go through the API. Network policy blocks direct DB writes. Appropriate for
+      early-stage projects with low task volume where the task queue provides natural buffering.
+      No redundancy; tasks queue up if the worker dies.
+    links:
+      - {target: 828eead860c0, rel: refines}
+      - {target: 04607753d09a, rel: refines}
+      - {target: fec546a4edeb, rel: refines}
+    deprecated: false
+
+  - number: WORKER-A-002
+    hash: fee38de47d57
+    name: multi-agent-concurrent-replicas
+    type: architecture
+    description: >
+      Multiple agent types running concurrently with per-type replicas scaling independently.
+      Each type has its own Kubernetes deployment, database role, and vendor API credentials. A
+      single API layer serves as the write surface. Requires per-type deployments, roles, and
+      credentials. Isolation guarantees make this necessary at any scale where multiple agent
+      types operate on shared infrastructure.
+    links:
+      - {target: f84a99a27579, rel: refines}
+      - {target: cebee7387f5b, rel: refines}
+      - {target: 293e98fe383a, rel: refines}
+    deprecated: false
+
+  # ── Checklist ──
+
+  - number: WORKER-C-001
+    hash: 6cee5e4dbf44
+    name: no-shell-binary-in-image
+    type: checklist
+    description: >
+      Agent container image builds with no shell binary. /bin/sh must be absent, verified via
+      docker run which sh returning non-zero.
+    links:
+      - {target: 04c8e0e0c08d, rel: verifies}
+      - {target: 5ae0f5e26e80, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-002
+    hash: ba3b855fc0a5
+    name: select-only-db-role
+    type: checklist
+    description: >
+      Agent DB role created with SELECT-only grants on the task queue view. INSERT, UPDATE, and
+      DELETE produce permission errors. Must be tested.
+    links:
+      - {target: 828eead860c0, rel: verifies}
+      - {target: cebee7387f5b, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-003
+    hash: ab32dbdcf326
+    name: atomic-task-claim
+    type: checklist
+    description: >
+      Task claim endpoint performs an atomic update. Concurrent claim of the same task by two
+      agents results in exactly one success. Must be load-tested with two replicas.
+    links:
+      - {target: 6f31a0c88cf2, rel: verifies}
+      - {target: fec546a4edeb, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-004
+    hash: f594ba0a6011
+    name: delegated-token-wrong-task-rejected
+    type: checklist
+    description: >
+      Delegated token validated on result submission. A token presented with the wrong task ID
+      returns 403.
+    links:
+      - {target: 99b401f918f7, rel: verifies}
+      - {target: 7262b1c5db4f, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-005
+    hash: 52b3c6dd312d
+    name: delegated-token-single-use-enforced
+    type: checklist
+    description: >
+      Delegated token invalidated after first use. A second submission with the same token
+      returns 403.
+    links:
+      - {target: 99b401f918f7, rel: verifies}
+      - {target: 87b56473f379, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-006
+    hash: bf7fc36b1d50
+    name: network-policy-blocks-direct-db
+    type: checklist
+    description: >
+      Agent network policy verified: worker container cannot reach the database port directly.
+      Tested via kubectl exec attempt.
+    links:
+      - {target: 04607753d09a, rel: verifies}
+      - {target: 6259fcb38e4b, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-007
+    hash: fb9c8615723a
+    name: vendor-cli-array-form-spawn
+    type: checklist
+    description: >
+      Vendor CLI binary invoked without shell. Bun.spawn call uses array form, not
+      string-with-shell.
+    links:
+      - {target: 6a55cc478eca, rel: verifies}
+      - {target: 50e243fb9728, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-008
+    hash: 69e1235be7de
+    name: audit-log-on-vendor-invocation
+    type: checklist
+    description: >
+      Structured execution log entries written to audit table via API on every vendor
+      invocation.
+    links:
+      - {target: 8979f3da3356, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-009
+    hash: 24b901f01525
+    name: signed-intent-through-validator
+    type: checklist
+    description: >
+      Signed transaction intent path tested: worker proposal accepted only through validator,
+      never by direct mutation.
+    links:
+      - {target: cbc1e836c877, rel: verifies}
+      - {target: 3b08589dd247, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-010
+    hash: a83da95e0890
+    name: dual-attribution-on-writes
+    type: checklist
+    description: >
+      Dual attribution verified on consequential writes: principal authority and executing
+      worker both present in resulting records.
+    links:
+      - {target: cbc1e836c877, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-011
+    hash: 7affec197709
+    name: digital-twin-sandbox-tested
+    type: checklist
+    description: >
+      Digital twin mode tested: worker receives sandbox credentials, executes simulation, and
+      returns structured diff artifact.
+    links:
+      - {target: 6e0a5f6d7052, rel: verifies}
+      - {target: f97902bbcca1, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-012
+    hash: 26d63fdd6ec7
+    name: twin-promotion-boundary
+    type: checklist
+    description: >
+      Twin promotion boundary tested: sandbox execution alone cannot commit production state
+      without separate authorization.
+    links:
+      - {target: 6e0a5f6d7052, rel: verifies}
+      - {target: f97902bbcca1, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-013
+    hash: ea60e28aaddd
+    name: agent-service-token-isolation
+    type: checklist
+    description: >
+      Agent service token is distinct from user tokens and frontend tokens. Each has
+      non-overlapping scope claims.
+    links:
+      - {target: 2e7a7257dbee, rel: verifies}
+      - {target: f84a99a27579, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-014
+    hash: f020f72a449a
+    name: per-type-db-role-isolation
+    type: checklist
+    description: >
+      Per-agent-type database roles verified to be isolated: agent_coding cannot SELECT from
+      task_queue_view_analysis. Must be tested.
+    links:
+      - {target: f84a99a27579, rel: verifies}
+      - {target: cebee7387f5b, rel: verifies}
+      - {target: 7bd1b8579f60, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-015
+    hash: fa8aa9357401
+    name: delegated-token-ttl-enforced
+    type: checklist
+    description: >
+      Delegated token TTL enforced: token presented after expiry returns 401 regardless of use
+      count.
+    links:
+      - {target: 99b401f918f7, rel: verifies}
+      - {target: 93c252df0ba7, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-016
+    hash: 56ad6f7154f6
+    name: task-retry-after-crash
+    type: checklist
+    description: >
+      Task retry semantics tested: agent crashes after claim, task re-enters queue after
+      timeout, new claim succeeds.
+    links:
+      - {target: fec546a4edeb, rel: verifies}
+      - {target: 94e51d38d726, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-017
+    hash: 79fd515f9792
+    name: vendor-api-key-rotation
+    type: checklist
+    description: >
+      Vendor API key rotation tested: new key injected via K8s Secret update, agent picks up new
+      key on restart without image rebuild.
+    links:
+      - {target: c445b05e81e2, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-018
+    hash: 1d4f90a4eaed
+    name: audit-log-hashes-not-plaintext
+    type: checklist
+    description: >
+      Audit log entries verified to contain input and output hashes, not plaintext content.
+    links:
+      - {target: 8979f3da3356, rel: verifies}
+      - {target: 092c015ce976, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-019
+    hash: 5931495979c4
+    name: ci-rebuilds-agent-image
+    type: checklist
+    description: >
+      Agent container image rebuilt and redeployed via CI on changes to containers/agent. No
+      manual steps required.
+    links:
+      - {target: 6a55cc478eca, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-020
+    hash: 21a4ba78c3c5
+    name: agent-type-penetration-tested
+    type: checklist
+    description: >
+      Agent type isolation penetration tested: agent_coding credential used to attempt direct DB
+      write confirms permission denied at DB layer.
+    links:
+      - {target: 828eead860c0, rel: verifies}
+      - {target: f84a99a27579, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-021
+    hash: 6c7fc9318906
+    name: delegated-token-replay-tested
+    type: checklist
+    description: >
+      Delegated token replay attack tested: token intercepted and replayed confirms 403 on
+      second use.
+    links:
+      - {target: 52b3c6dd312d, rel: verifies}
+      - {target: 87b56473f379, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-022
+    hash: 3706f476ff5d
+    name: horizontal-scaling-no-duplicates
+    type: checklist
+    description: >
+      Agent horizontal scaling tested: N replicas claiming from the same queue with zero
+      duplicate task execution under sustained load.
+    links:
+      - {target: ab32dbdcf326, rel: verifies}
+      - {target: fee38de47d57, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-023
+    hash: 7fc3eae9c037
+    name: vendor-cli-version-pinned
+    type: checklist
+    description: >
+      Vendor CLI version pinned in Dockerfile. Version mismatch between dev and worker
+      containers produces a build-time warning.
+    links:
+      - {target: 6a55cc478eca, rel: verifies}
+    deprecated: false
+
+  - number: WORKER-C-024
+    hash: a1524a8bda56
+    name: egress-restricted-to-vendor-hosts
+    type: checklist
+    description: >
+      Agent egress network policy restricts outbound connections to declared vendor API
+      hostnames only. All other egress is blocked and logged.
+    links:
+      - {target: 1192f1b1f366, rel: verifies}
+      - {target: 01372075c497, rel: verifies}
+    deprecated: false
+
+  # ── Antipatterns ──
+
+  - number: WORKER-X-001
+    hash: a76fb9bc6f9a
+    name: direct-database-writes
+    type: antipattern
+    description: >
+      An agent with write access to the database bypasses schema validation, business logic,
+      access control, and audit logging simultaneously. Even if writes are correct today they
+      are unreviewed, unvalidated, and unauditable. The write-through-API pattern exists to
+      prevent this. There are no exceptions.
+    links:
+      - {target: 828eead860c0, rel: contradicts}
+      - {target: 04607753d09a, rel: contradicts}
+      - {target: 6259fcb38e4b, rel: contradicts}
+    deprecated: false
+
+  - number: WORKER-X-002
+    hash: 2e7a7257dbee
+    name: shared-service-token
+    type: antipattern
+    description: >
+      A single agent service token shared by all agent types makes it impossible to revoke one
+      type's access without revoking all, and makes audit logs unintelligible. Each agent type
+      must have its own service identity and token.
+    links:
+      - {target: f84a99a27579, rel: contradicts}
+      - {target: ea60e28aaddd, rel: contradicts}
+    deprecated: false
+
+  - number: WORKER-X-003
+    hash: dc26e8d71101
+    name: broad-scope-delegated-token
+    type: antipattern
+    description: >
+      A delegated token granting general write access on behalf of the user rather than access
+      to a specific task result endpoint is a user session token in disguise. Scope must be as
+      narrow as the operation requires: submit a result for this task, nothing else.
+    links:
+      - {target: 99b401f918f7, rel: contradicts}
+      - {target: 94e51d38d726, rel: contradicts}
+    deprecated: false
+
+  - number: WORKER-X-004
+    hash: 93c252df0ba7
+    name: long-lived-delegated-tokens
+    type: antipattern
+    description: >
+      A delegated token that lives for hours or days outlives the agent session it was created
+      for and becomes a credential that can be intercepted, cached, or leaked. TTL must be short
+      enough that expiry before use is the expected outcome of a crashed agent.
+    links:
+      - {target: 99b401f918f7, rel: contradicts}
+      - {target: 87b56473f379, rel: contradicts}
+      - {target: fa8aa9357401, rel: contradicts}
+    deprecated: false
+
+  - number: WORKER-X-005
+    hash: cf2b1cacf907
+    name: runtime-capability-selection
+    type: antipattern
+    description: >
+      An agent that reads configuration at runtime to decide which task types, database views,
+      or vendor APIs it can access has moved the capability boundary from infrastructure to
+      application layer. Infrastructure-layer enforcement (database roles, network policy, K8s
+      manifest) is the only enforcement that cannot be overridden by buggy or adversarial code.
+    links:
+      - {target: 01372075c497, rel: contradicts}
+    deprecated: false
+
+  - number: WORKER-X-006
+    hash: 50e243fb9728
+    name: shell-form-cli-invocation
+    type: antipattern
+    description: >
+      Invoking a vendor CLI via a shell string (sh -c "claude --print ...") exposes the agent to
+      shell injection if any part of the prompt is interpolated. Vendor CLIs must be invoked
+      using array-form process spawn with input via stdin. This applies even to trusted input
+      since AI-generated content may contain adversarial payloads.
+    links:
+      - {target: 6a55cc478eca, rel: contradicts}
+      - {target: fb9c8615723a, rel: contradicts}
+    deprecated: false
+
+  - number: WORKER-X-007
+    hash: 445514ee90dd
+    name: runtime-vendor-cli-update
+    type: antipattern
+    description: >
+      Any mechanism allowing the worker container to download and execute a new vendor CLI
+      version at runtime (npm install, pip install, curl-pipe-bash) is a remote code execution
+      vulnerability. Vendor CLI versions are fixed at image build time; updates require a new
+      image build and rolling deployment.
+    links:
+      - {target: 6a55cc478eca, rel: contradicts}
+      - {target: 5ae0f5e26e80, rel: contradicts}
+      - {target: 5931495979c4, rel: contradicts}
+    deprecated: false
+
+  - number: WORKER-X-008
+    hash: 092c015ce976
+    name: prompt-content-in-audit-log
+    type: antipattern
+    description: >
+      An audit log storing full prompt text and AI responses contains user data, potentially
+      sensitive context, and possibly regulated content. Logs are often less protected than
+      application data. The audit log stores hashes and metadata; content lives in the task
+      record under the application's standard encryption and access control.
+    links:
+      - {target: 8979f3da3356, rel: contradicts}
+      - {target: 1d4f90a4eaed, rel: contradicts}
+    deprecated: false

@@ -1,0 +1,202 @@
+meta:
+  domain: IMPL-UX
+  title: UX - TypeScript Implementation
+  implements: UX
+  version: 1
+
+rules:
+  # ── Package Structure ──────────────────────────────────────────────────────────
+
+  - number: IMPL-UX-001
+    hash: c9183c1222df
+    name: monorepo-surface-layout
+    type: implementation
+    description: >
+      Monorepo organized into packages/ui (design-system, end-user, admin),
+      packages/services (capability-api), and apps (web, admin, agent-sdk,
+      server with api and agent-router). Each actor type maps to a distinct
+      app consuming shared packages.
+    links:
+      - {target: 67863239eb85, rel: implements}  # UX-A-001 unified-service-layer-multiple-surfaces
+      - {target: 60c41e0c35c7, rel: implements}  # UX-D-004 unified-design-system-across-user-types
+    deprecated: false
+
+  # ── Core Interfaces ────────────────────────────────────────────────────────────
+
+  - number: IMPL-UX-002
+    hash: e403416186fd
+    name: capability-interface
+    type: implementation
+    description: >
+      TypeScript Capability interface with id, allowedActors (ActorType[]),
+      and requiredScopes (string[]). Serves as the atomic unit of UX design
+      and access control across all surfaces.
+    links:
+      - {target: 8de237165c47, rel: implements}  # UX-D-003 agent-native-interface
+      - {target: 300c0e349c72, rel: implements}  # UX-A-002 api-first-client-agnostic
+    deprecated: false
+
+  - number: IMPL-UX-003
+    hash: 45c3e9f3959c
+    name: actor-type-enum
+    type: implementation
+    description: >
+      ActorType union type ('end-user' | 'admin' | 'agent') determines which
+      interface surface is appropriate for each actor. Used by Capability to
+      gate access per surface.
+    links:
+      - {target: e43e9ff85857, rel: implements}  # UX-P-003 medium-appropriate-interface-per-user-type
+    deprecated: false
+
+  - number: IMPL-UX-004
+    hash: 89d1ed6147ee
+    name: agent-presence-interface
+    type: implementation
+    description: >
+      AgentPresence interface declares agent identity, account binding,
+      authorized scopes, grant and last-active timestamps. The
+      visibleToAccountHolder field is an invariant (always true), ensuring
+      the account holder can always see the agent.
+    links:
+      - {target: b6f0649c24cf, rel: implements}  # UX-P-005 agent-presence-explicit-and-bounded
+    deprecated: false
+
+  - number: IMPL-UX-005
+    hash: a3434ed492e8
+    name: agent-action-record-interface
+    type: implementation
+    description: >
+      AgentActionRecord interface logs every agent operation with agentId,
+      accountId, capabilityId, human-readable inputSummary, outcome
+      (success | rejected | failed), and timestamp.
+    links:
+      - {target: b6f0649c24cf, rel: implements}  # UX-P-005 agent-presence-explicit-and-bounded
+    deprecated: false
+
+  - number: IMPL-UX-006
+    hash: 4d981fb18e23
+    name: service-flow-state-interface
+    type: implementation
+    description: >
+      ServiceFlowState interface models a state in the service flow state
+      machine with id, label, and availableTransitions. This is the
+      authoritative UX specification unit from which interfaces are derived.
+    links:
+      - {target: 173636ad122f, rel: implements}  # UX-D-001 service-flow-mapping
+      - {target: d7f85752c1b1, rel: implements}  # UX-P-001 service-delivery-precedes-surface-design
+    deprecated: false
+
+  - number: IMPL-UX-007
+    hash: c5bf9dc442c8
+    name: service-flow-transition-interface
+    type: implementation
+    description: >
+      ServiceFlowTransition interface models a transition between states with
+      id, trigger (user-action | system-event | agent-action), targetStateId,
+      and requiredCapability mapping to Capability.id.
+    links:
+      - {target: 173636ad122f, rel: implements}  # UX-D-001 service-flow-mapping
+    deprecated: false
+
+  # ── Dependency Decisions ───────────────────────────────────────────────────────
+
+  - number: IMPL-UX-008
+    hash: e47230dc6081
+    name: react-buy-decision
+    type: implementation
+    description: >
+      React is a buy decision for the UI component model. No viable DIY
+      alternative exists for the browser rendering layer. Used by apps/web
+      and apps/admin.
+    links:
+      - {target: 95f2b6bff569, rel: implements}  # UX-P-004 beauty-is-functional-requirement
+    deprecated: false
+
+  - number: IMPL-UX-009
+    hash: 98d7226de402
+    name: tailwind-buy-decision
+    type: implementation
+    description: >
+      Tailwind CSS is a buy decision for design tokens and utility classes.
+      DIY CSS at scale is unmaintainable without a preprocessor or framework.
+      Provides the token system for the shared design system.
+    links:
+      - {target: 95f2b6bff569, rel: implements}  # UX-P-004 beauty-is-functional-requirement
+      - {target: 60c41e0c35c7, rel: implements}  # UX-D-004 unified-design-system-across-user-types
+    deprecated: false
+
+  - number: IMPL-UX-010
+    hash: cfc8c6e2114d
+    name: design-token-generator-diy
+    type: implementation
+    description: >
+      Design token generator is DIY. Token definitions are a JSON file; no
+      external package is needed to produce or consume them.
+    links:
+      - {target: 60c41e0c35c7, rel: implements}  # UX-D-004 unified-design-system-across-user-types
+    deprecated: false
+
+  - number: IMPL-UX-011
+    hash: 3631e7b6a114
+    name: agent-sdk-http-client-diy
+    type: implementation
+    description: >
+      Agent SDK HTTP client is DIY. fetch is native to Bun; a thin typed
+      wrapper over fetch is under 50 lines. No HTTP client library needed.
+    links:
+      - {target: 8de237165c47, rel: implements}  # UX-D-003 agent-native-interface
+    deprecated: false
+
+  - number: IMPL-UX-012
+    hash: d86c976bee04
+    name: component-docs-static-build
+    type: implementation
+    description: >
+      Component documentation is a DIY static markdown or auto-generated HTML
+      artifact produced by the build pipeline. No runtime dev server tool
+      (e.g. Storybook) is warranted or permitted.
+    links:
+      - {target: 60c41e0c35c7, rel: implements}  # UX-D-004 unified-design-system-across-user-types
+    deprecated: false
+
+  - number: IMPL-UX-013
+    hash: dadf0ad4deb6
+    name: form-state-react-native
+    type: implementation
+    description: >
+      Form state management is DIY using React useState and controlled
+      inputs. No external form library is needed at Calypso scale.
+    links:
+      - {target: e49ebcb9644c, rel: implements}  # UX-P-006 designers-specify-needs-not-implementations
+    deprecated: false
+
+  # ── Antipatterns (TypeScript/Calypso-Specific) ─────────────────────────────────
+
+  - number: IMPL-UX-014
+    hash: a8d946b7440e
+    name: no-technology-specific-specs
+    type: implementation
+    description: >
+      Design documents must not specify implementation details such as
+      "use a React modal" or "apply a Tailwind flex container."
+      Specifications describe user states and transitions; implementations
+      satisfy them independently.
+    links:
+      - {target: e49ebcb9644c, rel: implements}  # UX-P-006 designers-specify-needs-not-implementations
+      - {target: 099bffc7e55a, rel: implements}  # UX-T-007 design-coupled-to-framework
+    deprecated: false
+
+  - number: IMPL-UX-015
+    hash: 8c5904835856
+    name: no-gui-dependent-tooling
+    type: implementation
+    description: >
+      Calypso runs on hosted Linux with no display server. Any tool requiring
+      a live browser window, native GUI, or local dev server (e.g. Storybook,
+      Figma desktop agents, visual diff tools) is prohibited. Visual output
+      is evaluated via headless Playwright screenshots. If a tool cannot run
+      headlessly and produce output to stdout or a file, it does not belong
+      in the toolchain.
+    links:
+      - {target: 95f2b6bff569, rel: implements}  # UX-P-004 beauty-is-functional-requirement
+    deprecated: false
