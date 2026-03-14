@@ -317,9 +317,9 @@ rules:
     name: main-is-always-deployable
     type: principle
     description: >
-      Every commit on main has passed all eight required CI checks: build,
+      Every commit on main has passed all nine required CI checks: build,
       clippy, format, unit, integration, e2e, coverage (≥99% line threshold),
-      and checklist. No bypass actors are permitted — not even admins. The
+      checklist, and depends-on. No bypass actors are permitted — not even admins. The
       branch protection ruleset is applied to the repository immediately after
       first push and is never relaxed. Violations are not corrected after the
       fact; they are prevented at the gate.
@@ -603,6 +603,41 @@ rules:
       - {target: a9a86673862d, rel: mitigates}
     deprecated: false
 
+  - number: PROCESS-D-011
+    hash: "4a9c2e7d1b83"
+    name: pr-depends-on-enforcement
+    type: design_pattern
+    description: >
+      Declare explicit merge-order dependencies between PRs using a
+      `Depends-on: #N` line in the PR body, enforced by a GitHub Actions
+      workflow that fails until PR #N is merged.
+    problem: |
+      When multiple PRs must land in a specific order (e.g. foundational
+      infrastructure before features, schema migrations before application
+      code), the dependency is tacit. Without machine enforcement, a PR can
+      be merged out of order by a reviewer who is unaware of the constraint,
+      or by an agent that lacks session context about which PR was opened
+      first. The result is a broken main branch or a revert.
+    solution: |
+      Add `.github/workflows/pr-depends-on.yml` (see examples/). When a PR
+      body contains the line `Depends-on: #N` (case-insensitive, leading
+      whitespace tolerant), the workflow fetches PR #N and fails the
+      `depends-on` status check until that PR is merged. The PR template
+      (`.github/PULL_REQUEST_TEMPLATE.md`) includes a reminder comment
+      showing the syntax. Pair with branch protection to make `depends-on`
+      a required status check so merge is physically blocked, not merely
+      advisory.
+    tradeoffs: |
+      Only one dependency level is enforced per PR. Chains require each PR
+      in the chain to declare its immediate predecessor. The check re-runs
+      on every push, so a dependency that becomes satisfied unblocks the PR
+      automatically without human action.
+    links:
+      - {target: 8f6e7b3a1ff9, rel: mitigates}
+      - {target: f67b4697ac23, rel: refines}
+      - {target: 3d643a9a5413, rel: refines}
+    deprecated: false
+
   - number: PROCESS-D-010
     hash: "b4e71d903a28"
     name: github-branch-protection-ruleset
@@ -610,13 +645,14 @@ rules:
     description: >
       Apply a GitHub repository ruleset immediately after the first push.
       The ruleset targets ~DEFAULT_BRANCH, sets bypass_actors to [], and
-      requires eight named status checks before merge: build, clippy, format,
-      unit, integration, e2e, coverage, and checklist. A pr-checklist.yml
-      GitHub Actions workflow enforces that all PR description task items are
-      checked before the checklist status check goes green. Because the
-      checklist check only appears as a required check after the first PR that
-      triggers it, a dummy PR or workflow_dispatch run must be used to
-      pre-register the check name immediately after setup.
+      requires nine named status checks before merge: build, clippy, format,
+      unit, integration, e2e, coverage, checklist, and depends-on. A
+      pr-checklist.yml workflow enforces all PR task items are checked; a
+      pr-depends-on.yml workflow blocks merge until any declared `Depends-on:
+      #N` predecessor PR is merged. Because these checks only appear as known
+      check names after the first PR that triggers them, a dummy PR or
+      workflow_dispatch run must be used to pre-register each check name
+      immediately after setup.
     problem: |
       Without enforced branch protection, any actor — including admins — can
       merge a PR with failing tests, incomplete checklist items, or no CI run
@@ -624,7 +660,7 @@ rules:
       process guarantee the project depends on.
     solution: |
       Use the GitHub Rulesets API to create a ruleset with enforcement: active,
-      bypass_actors: [], and a required_status_checks rule listing all eight
+      bypass_actors: [], and a required_status_checks rule listing all nine
       check names. Store the ruleset JSON template in
       examples/github-workflows/ruleset.json and apply it with:
 
@@ -1008,8 +1044,8 @@ rules:
     type: checklist
     description: >
       GitHub repository ruleset applied targeting ~DEFAULT_BRANCH with all
-      eight required status checks (build, clippy, format, unit, integration,
-      e2e, coverage, checklist) and bypass_actors set to [].
+      nine required status checks (build, clippy, format, unit, integration,
+      e2e, coverage, checklist, depends-on) and bypass_actors set to [].
     links:
       - {target: 7d2a9f1e50c3, rel: verifies}
       - {target: b4e71d903a28, rel: verifies}
@@ -1037,6 +1073,20 @@ rules:
       known check) via a dummy PR or workflow_dispatch run, so the branch
       protection ruleset can validate it on future PRs.
     links:
+      - {target: b4e71d903a28, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-023
+    hash: "7f3b1d9e2c56"
+    name: pr-depends-on-workflow-deployed
+    type: checklist
+    description: >
+      `.github/workflows/pr-depends-on.yml` is present in the repository,
+      the `depends-on` check name is registered as a required status check
+      in the branch protection ruleset, and `.github/PULL_REQUEST_TEMPLATE.md`
+      includes the `Depends-on` usage comment.
+    links:
+      - {target: 4a9c2e7d1b83, rel: verifies}
       - {target: b4e71d903a28, rel: verifies}
     deprecated: false
 
@@ -1162,4 +1212,18 @@ rules:
     links:
       - {target: 7d2a9f1e50c3, rel: contradicts}
       - {target: b4e71d903a28, rel: contradicts}
+    deprecated: false
+
+  - number: PROCESS-X-010
+    hash: "c1e5f8a03d72"
+    name: implicit-merge-order
+    type: antipattern
+    description: >
+      Relying on PR creation order, review timing, or verbal coordination to
+      enforce merge sequencing instead of declaring dependencies explicitly
+      in the PR body. Any reviewer or agent with merge permissions can land
+      a PR out of order, silently breaking the branch.
+    links:
+      - {target: 4a9c2e7d1b83, rel: contradicts}
+      - {target: 8f6e7b3a1ff9, rel: contradicts}
     deprecated: false
