@@ -7,15 +7,31 @@ meta:
 rules:
   - number: IMPL-PROCESS-RS-001
     hash: 0b37f5dc2592
-    name: planning-document-locations
+    name: github-issues-based-planning
     type: implementation
     description: >
-      Three planning documents at fixed paths: docs/prd.md (product
-      requirements, human-owned), docs/plans/implementation-plan.md (all tasks
-      with completion state, agent-owned), docs/plans/next-prompt.md (single
-      next action, agent-owned).
+      Planning state lives in GitHub Issues, not repository files. The
+      Implementation Plan issue is a global tracking issue containing phases and
+      feature issue links. Feature issues have structured sections: Motivation,
+      Features (checkboxes), Test Plan (checkboxes), and Stage. The Implementation
+      Plan issue is created during requirements gathering and never closes; feature
+      issues are created per feature and closed when implemented and tested.
     links:
-      - {target: ce4b1e4f537f, rel: implements}  # PROCESS-D-001 three-document-planning-loop
+      - {target: ce4b1e4f537f, rel: implements}  # PROCESS-D-001 issue-based-planning-loop
+    deprecated: false
+
+  - number: IMPL-PROCESS-RS-001-A
+    hash: c8d2f1a5e9b3
+    name: prd-userflow-state-machines
+    type: implementation
+    description: >
+      The PRD includes a state machine specification for every user goal
+      extracted from the product owner interview. Each state machine defines
+      entry conditions, exit conditions, all intermediate states, transitions,
+      feedback, and edge case recovery paths. State machines are formalized
+      before implementation begins per UX Pattern 1: Service Flow Mapping.
+    links:
+      - {target: 60c41e0c35c7, rel: implements}  # UX-D-005 service-flow-precedes-interface
     deprecated: false
 
   - number: IMPL-PROCESS-RS-002
@@ -119,20 +135,26 @@ rules:
     name: implementation-plan-format
     type: implementation
     description: >
-      Implementation plan uses markdown checkboxes grouped by phase headings.
-      Updated at every commit.
+      Implementation Plan GitHub Issue uses phase headings with feature issue
+      links in checkbox format: "- [ ] #<issue-number> Feature Name". Updated at
+      every commit with both discovery (new feature issues created and linked) and
+      completion (checkboxes checked as features are closed). The issue body
+      encodes the current plan state and guides agent priorities.
     links:
       - {target: 22de09615f92, rel: implements}  # PROCESS-P-002 plans-are-living-documents
-      - {target: ce4b1e4f537f, rel: implements}  # PROCESS-D-001 three-document-planning-loop
+      - {target: ce4b1e4f537f, rel: implements}  # PROCESS-D-001 issue-based-planning-loop
     deprecated: false
 
   - number: IMPL-PROCESS-RS-011
     hash: 86fe132c09c1
-    name: next-prompt-format
+    name: feature-issue-next-action-encoding
     type: implementation
     description: >
-      Next prompt written in second person, self-contained, includes context
-      about what was just completed and what comes next.
+      Feature issue descriptions encode the next action for the agent. The
+      description includes the Stage field and explicit next steps. As the agent
+      updates the issue (checking features, updating stage, adding test results),
+      it narrates the completion and implicitly encodes what to do next. Reading
+      the current stage and description replaces reading a next-prompt file.
     links:
       - {target: c93476ff124b, rel: implements}  # PROCESS-P-004 next-action-always-explicit
       - {target: 7adecf113ceb, rel: implements}  # PROCESS-D-002 self-advancing-state-machine
@@ -143,11 +165,12 @@ rules:
     name: pre-commit-hook-plan-enforcement
     type: implementation
     description: >
-      Git pre-commit hook verifies that both docs/plans/implementation-plan.md
-      and docs/plans/next-prompt.md are included in the commit's staged files.
+      DEPRECATED. Git pre-commit hook no longer enforces planning file
+      requirements since planning state moved to GitHub Issues. Pre-commit hook
+      focuses on code quality gates (lint, format, tests).
     links:
       - {target: 888ece3bbd9f, rel: implements}  # PROCESS-C-005 pre-commit-hook
-    deprecated: false
+    deprecated: true
 
   - number: IMPL-PROCESS-RS-013
     hash: 88719a70ecb5

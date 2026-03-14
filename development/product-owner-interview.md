@@ -15,7 +15,7 @@ this ◀──referenced by──── init/scaffold-task.md §Step 10
 ```
 PRECONDITIONS:
 - [ ] The human Product Owner is available and has provided a high-level description of the application
-- [ ] No `docs/prd.md` exists, or the human has explicitly requested a requirements revision
+- [ ] No Implementation Plan GitHub Issue exists, or the human has explicitly requested a requirements revision
 - [ ] Agent has read `agent-communication.md §Workflow: Product Requirements Collection` before this document
 
 If no high-level description has been provided: ask the Product Owner for a 2–3 sentence description of the application before generating questions.
@@ -33,7 +33,7 @@ The full Product Requirements Collection workflow is defined in `agent-communica
 4. If you cannot confidently infer an answer, provide multiple-choice options (including "Other — please specify").
 5. Present the pre-filled questionnaire to the Product Owner in a single message. Do not ask one question at a time.
 6. Wait for the Product Owner to confirm, correct, or expand on the pre-filled answers.
-7. Synthesize confirmed answers into `docs/prd.md` per `agent-communication.md §Workflow: Product Requirements Collection` step 4.
+7. Synthesize confirmed answers into GitHub Issues: create an Implementation Plan issue with phases, and create feature issues per feature, per `agent-communication.md §Workflow: Product Requirements Collection` step 4.
 
 ---
 
@@ -42,8 +42,10 @@ The full Product Requirements Collection workflow is defined in `agent-communica
 ```
 OUTPUTS:
 - Pre-filled questionnaire presented to the Product Owner in a single message
-- `docs/prd.md` written after Product Owner confirms answers (see agent-communication.md for format)
+- Implementation Plan GitHub Issue created with title "Implementation Plan" and initial phase structure
+- Feature Issues created (one per feature) with Motivation, Features, Test Plan, and Stage sections
 - External API test credentials collected and stored in `.env.test` (not committed to version control)
+- README.md or equivalent documentation updated to link to the Implementation Plan issue
 ```
 
 ---
@@ -58,12 +60,12 @@ IF the Product Owner's description is too vague to infer answers:
 IF the Product Owner rejects the pre-filled answers extensively:
   1. Acknowledge the corrections, update the pre-filled answers in place.
   2. Re-present the revised questionnaire for final confirmation.
-  3. Do NOT write docs/prd.md until the Product Owner has confirmed.
+  3. Do NOT create issues until the Product Owner has confirmed.
 
 IF external API credentials are not provided at interview time:
-  1. Note the missing credentials in docs/prd.md under "Constraints".
-  2. Write a task in docs/plans/implementation-plan.md: "Collect test credentials for [service]".
-  3. Continue — do not block PRD creation on missing credentials.
+  1. Create a feature issue: "Collect test credentials for [service]" with appropriate stage.
+  2. Add the issue to the Implementation Plan and mark as a dependency for related features.
+  3. Continue — do not block Issue creation on missing credentials.
 ```
 
 ---
@@ -90,6 +92,8 @@ Generate and pre-fill high-impact questions under each of the following critical
 - What distinct types/roles of users exist in the system (e.g., Administrator, Free User, Premium Customer)?
 - What specific features and data can each role access? What are they restricted from seeing or doing?
 - Does authorization depend on complex conditions (e.g., "A manager can only approve requests from their own department")?
+- Is there a distinction between a **user** (the person using the app) and a **customer** (the entity/account being managed)? How does this affect schema and access control?
+- What CRUD (Create, Read, Update, Delete) views should different user roles have? Does a super user need bulk action capabilities (e.g., bulk edit, bulk delete)?
 
 ### 4. External Integrations (Business Context)
 

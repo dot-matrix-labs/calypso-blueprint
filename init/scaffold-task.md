@@ -185,7 +185,8 @@ Read `AGENT.md` and `agent-context/index.md`. These define the curriculum and do
 Conduct the product owner interview per `agent-context/development/product-owner-interview.md`. Do not skip or abbreviate it.
 
 - [ ] Interview completed.
-- [ ] Canonical PRD written to `docs/prd.md`.
+- [ ] Implementation Plan GitHub Issue created with phase structure.
+- [ ] Feature Issues created (one per feature) with Motivation, Features, Test Plan, and Stage.
 - [ ] External API test credentials collected and stored in `.env.test` (not committed).
 
 ---
@@ -205,7 +206,7 @@ Verify all foundational elements are present before moving to prototyping. Fix a
 
 #### Documentation
 
-- [ ] `docs/` directory exists at repo root. No docs outside it except per-directory `README.md` files.
+- [ ] `docs/` directory exists at repo root for code documentation and architecture guides (separate from planning, which lives in GitHub Issues).
 - [ ] Code comments on every source file: module purpose, key types, and function definitions.
 - [ ] `.git/hooks/pre-push` installed per `agent-context/development/documentation-standard.md`.
 

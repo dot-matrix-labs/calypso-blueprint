@@ -135,17 +135,16 @@ GIT_BRAIN_METADATA:
 | Stage              | Check                                                | Behaviour                                                              |
 | ------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------- |
 | prepare-commit-msg | —                                                    | Injects conformance checklist into every new commit message            |
-| pre-commit         | Planning docs not staged                             | **BLOCKS**                                                             |
-| pre-commit         | Commit touches > 10 files (excl. planning docs)      | **Warns** — appended to next-prompt.md                                 |
-| pre-commit         | Lint / format                                        | Auto-fixes applied; unfixable remainder **appended to next-prompt.md** |
+| pre-commit         | Commit touches > 10 files                            | **Warns** — consider splitting into smaller commits                    |
+| pre-commit         | Lint / format                                        | Auto-fixes applied; unfixable remainder **flagged for resolution**     |
 | commit-msg         | Conformance checklist has unchecked boxes            | **BLOCKS**                                                             |
 | commit-msg         | GIT_BRAIN_METADATA missing or invalid                | **BLOCKS**                                                             |
-| post-commit        | Branch has ≥ 10 files changed vs. main               | **Warns** — PR due; appended to next-prompt.md                         |
+| post-commit        | Branch has ≥ 10 files changed vs. main               | **Warns** — PR due; logged for awareness                               |
 | post-checkout      | Branch switch                                        | No-op (standards live in `agent-context/` in the repo)                 |
 | pre-push           | Blueprint violations (.js files, forbidden packages) | **BLOCKS**                                                             |
 | pre-push           | PR changes > 20 files vs. main                       | **BLOCKS** — split the PR                                              |
 | pre-push           | Lint / format / type failures                        | **BLOCKS**                                                             |
-| pre-push           | Test suite failures                                  | **Allows push** — appends failing tests to next-prompt.md              |
+| pre-push           | Test suite failures                                  | **Allows push** — must be addressed in next commit                     |
 
 ---
 
@@ -197,15 +196,6 @@ The checklist lives inside an HTML comment so it does not appear in `git log --o
 
 The pre-commit hook has one hard block and one advisory check.
 
-**BLOCKS — Planning documents not staged:**
-
-Every commit must stage both planning files. This is the only reason a commit is rejected.
-
-| File                                | What to update                                               |
-| ----------------------------------- | ------------------------------------------------------------ |
-| `docs/plans/implementation-plan.md` | Check off completed tasks; add or reorder discovered tasks   |
-| `docs/plans/next-prompt.md`         | Overwrite with the self-contained prompt for the next commit |
-
 **WARNS — Lint and format (auto-fix first, then flag remainder):**
 
 After the planning gate passes, the hook runs auto-fixers (`eslint --fix`, `prettier --write`). Most issues are corrected silently. Anything the auto-fixers could not resolve is captured and explicitly appended to `next-prompt.md` so the agent addresses it in the next commit. The commit is **not blocked**.
@@ -214,38 +204,12 @@ After the planning gate passes, the hook runs auto-fixers (`eslint --fix`, `pret
 
 ```bash
 #!/usr/bin/env bash
-# pre-commit: Planning documents gate (blocking) + lint/format advisory (non-blocking).
+# pre-commit: Lint/format advisory (non-blocking). Planning state lives in GitHub Issues.
 
 STAGED=$(git diff --cached --name-only)
-PLAN_ERRORS=()
-
-if ! echo "$STAGED" | grep -q "^docs/plans/implementation-plan\.md$"; then
-  PLAN_ERRORS+=("docs/plans/implementation-plan.md")
-fi
-
-if ! echo "$STAGED" | grep -q "^docs/plans/next-prompt\.md$"; then
-  PLAN_ERRORS+=("docs/plans/next-prompt.md")
-fi
-
-if [ ${#PLAN_ERRORS[@]} -gt 0 ]; then
-  echo "" >&2
-  echo "COMMIT BLOCKED: The following planning files were not staged:" >&2
-  for f in "${PLAN_ERRORS[@]}"; do
-    echo "  - $f" >&2
-  done
-  echo "" >&2
-  echo "At every commit:" >&2
-  echo "  implementation-plan.md — check off completed tasks; add or reorder discovered tasks." >&2
-  echo "  next-prompt.md         — overwrite with the complete prompt for the next commit." >&2
-  echo "                           A commit is the unit of work. This is how the agent" >&2
-  echo "                           advances from one task to the next." >&2
-  echo "" >&2
-  exit 1
-fi
 
 # Commit size advisory — warn if too many files changed in one commit
-PLANNING_DOCS="docs/plans/implementation-plan.md docs/plans/next-prompt.md"
-STAGED_COUNT=$(echo "$STAGED" | grep -v "^$" | grep -vF "$PLANNING_DOCS" | wc -l | tr -d ' ')
+STAGED_COUNT=$(echo "$STAGED" | grep -v "^$" | wc -l | tr -d ' ')
 COMMIT_FILE_LIMIT=10
 
 if [ "$STAGED_COUNT" -gt "$COMMIT_FILE_LIMIT" ]; then
@@ -253,19 +217,7 @@ if [ "$STAGED_COUNT" -gt "$COMMIT_FILE_LIMIT" ]; then
   echo "COMMIT SIZE WARNING: This commit touches ${STAGED_COUNT} files (limit: ${COMMIT_FILE_LIMIT})." >&2
   echo "Calypso commits should be small and focused — one logical change per commit." >&2
   echo "Consider splitting this work into multiple commits." >&2
-  echo "This warning has been appended to next-prompt.md." >&2
   echo "" >&2
-
-  cat >> docs/plans/next-prompt.md <<EOF
-
----
-
-## Commit Size Warning
-
-The previous commit touched ${STAGED_COUNT} files, exceeding the recommended limit of ${COMMIT_FILE_LIMIT}.
-Commits should be small and focused — one logical change, committed frequently.
-If the next task involves many files, split it into smaller commits before pushing.
-EOF
 fi
 
 # Lint and format: auto-fix first, then capture what could not be fixed
@@ -283,23 +235,8 @@ if [ $ESLINT_CLEAN -eq 0 ] || [ $PRETTIER_CLEAN -eq 0 ]; then
   [ $PRETTIER_CLEAN -eq 0 ] && echo "$UNFIXED_PRETTIER" >&2
   echo "" >&2
   echo "Commit is allowed. These issues WILL block your next push." >&2
-  echo "They have been appended to next-prompt.md." >&2
+  echo "Fix them before the next push." >&2
   echo "" >&2
-
-  cat >> docs/plans/next-prompt.md <<EOF
-
----
-
-## Unfixed Lint/Format Issues — Must resolve before next push
-
-The following issues were not auto-fixable at the last commit.
-They will block the next push if not resolved.
-
-$([ $ESLINT_CLEAN -eq 0 ] && echo "### ESLint\n\`\`\`\n${UNFIXED_ESLINT}\n\`\`\`")
-$([ $PRETTIER_CLEAN -eq 0 ] && echo "### Prettier\n\`\`\`\n${UNFIXED_PRETTIER}\n\`\`\`")
-
-Fix these manually, stage the changes, and include them in the next commit.
-EOF
 fi
 
 exit 0
@@ -433,23 +370,12 @@ if [ "$BRANCH_FILE_COUNT" -ge "$PR_REMINDER_THRESHOLD" ]; then
   echo "│  Open a pull request before this branch grows further.│" >&2
   echo "└─────────────────────────────────────────────────────┘" >&2
   echo "" >&2
-
-  cat >> docs/plans/next-prompt.md <<EOF
-
----
-
-## PR Due — Open Before Continuing
-
-This branch has changed ${BRANCH_FILE_COUNT} files since main. A pull request must be opened
-imminently. Do this before starting the next feature task:
-
-1. Ensure all tests pass and lint is clean.
-2. Push the branch: \`git push\`
-3. Open a PR: \`gh pr create\`
-4. After merge, pull main and continue on a fresh or rebased branch.
-
-Do not accumulate further unreviewed changes on this branch.
-EOF
+  echo "Action required:" >&2
+  echo "1. Ensure all tests pass and lint is clean." >&2
+  echo "2. Push the branch: \`git push\`" >&2
+  echo "3. Open a PR: \`gh pr create\`" >&2
+  echo "4. After merge, pull main and continue on a fresh or rebased branch." >&2
+  echo "" >&2
 fi
 
 exit 0
@@ -541,29 +467,14 @@ TEST_OUTPUT=$(bun test 2>&1) && TEST_EXIT=0 || TEST_EXIT=$?
 if [ $TEST_EXIT -ne 0 ]; then
   FAILING=$(echo "$TEST_OUTPUT" | grep -E "^\s*(FAIL|✗|×|●|not ok)" | head -30 || true)
 
-  cat >> docs/plans/next-prompt.md <<EOF
-
----
-
-## FAILING TESTS — Must be addressed before next push
-
-The following tests were failing at the time of the last push.
-They must be **checked, fixed, or rewritten. Never ignore or skip them.**
-
-\`\`\`
-${FAILING}
-\`\`\`
-
-For each failure: determine whether the test is wrong (fix the test to match
-correct behaviour) or the implementation is wrong (fix the code). Do not
-disable, comment out, or add skip/todo markers to avoid addressing failures.
-
-EOF
-
   echo "" >&2
-  echo "WARNING: ${TEST_EXIT} test failure(s) detected. Push is proceeding, but" >&2
-  echo "docs/plans/next-prompt.md has been updated with the failing tests." >&2
-  echo "They must be resolved — not ignored — in the next commit." >&2
+  echo "WARNING: ${TEST_EXIT} test failure(s) detected. Push is proceeding." >&2
+  echo "The following tests must be addressed in the next commit:" >&2
+  echo "$FAILING" >&2
+  echo "" >&2
+  echo "For each failure: determine whether the test is wrong (fix the test to match" >&2
+  echo "correct behaviour) or the implementation is wrong (fix the code). Do not" >&2
+  echo "disable, comment out, or add skip/todo markers to avoid addressing failures." >&2
   echo "" >&2
 fi
 

@@ -16,7 +16,7 @@ this ◀──referenced by──── index.md
 
 Software development is a state machine. Each unit of work transforms the project from one known state to a known next state. In human-driven development, the state machine runs on tribal knowledge, standup meetings, and ticket boards — none of which an AI agent can attend. When an agent starts a session, it has no memory of what happened yesterday, no sense of what is blocked, and no intuition about what matters most. Without an explicit, machine-readable process, the agent either waits for a human to tell it what to do next (defeating the purpose of autonomous development) or guesses (producing work that may be irrelevant, redundant, or out of order).
 
-A correct process for agent-driven development makes the state machine explicit. The product requirements describe _what_ to build. The implementation plan describes _how_ to build it and tracks completion. The next-prompt file tells the agent exactly what to do when it wakes up. Together, these three documents form a closed loop: every commit advances the plan and writes the instructions for the next commit. In Calypso, that loop is governed by Calypso itself: a YAML workflow definition declares states, transitions, roles, and gates, and the Calypso CLI orchestrates agents against that machine. The agent becomes self-advancing under policy control — a human can walk away for hours and return to find meaningful, ordered progress.
+A correct process for agent-driven development makes the state machine explicit. Product requirements and implementation plans live in GitHub Issues, not in repository files. The product owner maintains an Implementation Plan issue that links to feature issues. Each feature issue tracks motivation, acceptance criteria, test scenarios, and completion stage. Every commit moves work forward through the issue tracker, and the issue descriptions encode the instructions for the next action. In Calypso, that loop is governed by Calypso itself: a YAML workflow definition declares states, transitions, roles, and gates, and the Calypso CLI orchestrates agents against that machine. The agent becomes self-advancing under policy control — a human can walk away for hours and return to find meaningful, ordered progress.
 
 Calypso CLI is not the coding agent. It is the process authority. It owns state transitions, validates gates, schedules narrow role-specific agents, and records structured outcomes. Git and GitHub are part of the control surface, not incidental integrations. The primary interactive operator surface is the local CLI and TUI; a browser operator surface may exist, but the process model does not depend on one.
 
@@ -82,19 +82,19 @@ Every important transition in the workflow has explicit gates: tests pass, requi
 
 ## Design Patterns
 
-### Pattern 1: Three-Document Planning Loop
+### Pattern 1: Issue-Based Planning Loop
 
-**Problem:** An agent needs to know what the product should do, what work remains, and what to do right now. These are three different questions with different owners and different update frequencies.
+**Problem:** An agent needs to know what the product should do, what work remains, and what to do right now. These are three different questions with different owners and different update frequencies. Maintaining them as files in the repository creates merge conflicts, state drift, and requires manual synchronization.
 
-**Solution:** Maintain three documents with distinct scopes:
+**Solution:** Maintain planning state in GitHub Issues instead of repository files:
 
-- **Product Requirements Document** — what the product must do. Owned by the human. Updated when requirements change.
-- **Implementation Plan** — all tasks, ordered, with completion state. Owned by the agent. Updated at every commit.
-- **Next Prompt** — the single next action. Owned by the agent. Written at the end of each commit, read at the start of the next.
+- **Implementation Plan Issue** — a unique global tracking issue containing phase headings with checklists linking to feature issues. Owned by the agent, never closes. Created during requirements gathering, updated at every commit as phases complete.
+- **Feature Issues** — one per feature, with structured sections: Motivation (what problem this solves), Features (checkboxes for acceptance criteria), Test Plan (test scenarios), and Stage (documented | tests | stubs | implemented | testing). Owned by the agent. Created during requirements gathering, updated as implementation progresses, closed when fully implemented and tested.
+- **Issue Descriptions** — contain the next action for the agent. As the agent updates issue state and stage, the description field encodes what to do next. This replaces the file-based next-prompt concept.
 
-The three documents form a hierarchy: the PRD constrains the plan, and the plan generates the next prompt. Information flows down; overrides flow up (a human editing next-prompt overrides the agent's planned sequence).
+The issues form a hierarchy: requirements produce feature issues, feature issues are linked in the Implementation Plan issue. Information flows through the issue tracker; the agent reads issue state as the source of truth for what comes next.
 
-**Trade-offs:** Three files to maintain adds overhead to every commit. But the alternative — a single plan file that serves all three purposes — becomes unwieldy and ambiguous. The overhead is seconds per commit; the clarity is worth hours of avoided confusion.
+**Trade-offs:** Moving planning to GitHub Issues eliminates repository file synchronization overhead and eliminates pre-commit hook gates. The agent must use `gh` to create and update issues instead of editing files. In return, planning state lives where pull requests live, integrating naturally with code review and team visibility.
 
 ### Pattern 2: Self-Advancing State Machine
 
@@ -303,25 +303,25 @@ See [`agent-context/implementation-ts/process-implementation.md`](../implementat
 
 ## Implementation Checklist
 
-- [ ] `docs/prd.md` exists and contains testable acceptance criteria from a structured interview
-- [ ] `docs/plans/implementation-plan.md` exists and has been updated within the last commit
-- [ ] `docs/plans/next-prompt.md` exists and contains a valid, self-contained next action
+- [ ] Implementation Plan GitHub Issue exists with title "Implementation Plan" (unique, global per project)
+- [ ] Implementation Plan issue contains phases with feature issue links using `- [ ] #<issue-number> Feature Name` format
+- [ ] At least one Feature Issue exists with title, Motivation section, Features (checkboxes), Test Plan (checkboxes), and Stage field
+- [ ] Feature issues have appropriate Stage value: documented | tests | stubs | implemented | testing
+- [ ] Human has reviewed and approved the PRD via the Implementation Plan issue content
 - [ ] Calypso workflow YAML exists and defines states, transitions, roles, and gates
-- [ ] Pre-commit hook rejects commits that do not include plan and next-prompt updates
 - [ ] All scaffold tasks completed: repo, CI, test stubs verified before any feature work
-- [ ] At least one full loop demonstrated: commit → plan update → next-prompt → next commit resumes from prompt
-- [ ] Human has reviewed and approved the PRD
 - [ ] Agent has not built any features ahead of scaffold completion
-- [ ] Implementation plan accurately reflects all completed and remaining work (audited by human)
-- [ ] Next-prompt chain has been unbroken for at least 10 consecutive commits
-- [ ] Human override of next-prompt tested and agent respected the override
-- [ ] Multiple sessions demonstrated: agent resumes from next-prompt after session boundary
-- [ ] Plan includes discovered tasks (tasks added during implementation, not just initial planning)
+- [ ] Implementation Plan issue accurately reflects all completed and remaining work (audited by human)
+- [ ] Feature issues are updated as implementation progresses (checkboxes checked, stage field updated)
+- [ ] Multiple sessions demonstrated: agent reads issue state and resumes work from the last recorded stage
+- [ ] Feature issues include discovered tasks (tasks added during implementation, not just initial planning)
+- [ ] Issue descriptions contain clear next-action guidance for the agent (replacing next-prompt concept)
 - [ ] Process documentation in `docs/` reflects the actual process used (not aspirational)
-- [ ] Recovery procedure tested: agent resumes correctly after a crashed session with uncommitted work
-- [ ] Human can onboard a new agent to the project using only the three planning documents
+- [ ] Recovery procedure tested: agent resumes correctly after a crashed session by reading issue state
+- [ ] Human can onboard a new agent to the project using only the GitHub Issues and repository code
 - [ ] At least one producer-to-validator transition exercised through the Calypso CLI
 - [ ] At least one deterministic gate failure observed and handled without manual workflow improvisation
+- [ ] Commits reference issue numbers using `#<issue-number>` in commit messages for traceability
 
 ---
 
