@@ -1227,3 +1227,200 @@ rules:
       - {target: 4a9c2e7d1b83, rel: contradicts}
       - {target: 8f6e7b3a1ff9, rel: contradicts}
     deprecated: false
+
+  # ── Additional Checklist Items (repo bootstrap verification) ─────────────────
+
+  - number: PROCESS-C-024
+    hash: "a8f2b4c1e703"
+    name: all-check-names-pre-registered
+    type: checklist
+    description: >
+      All 8 required CI check names (build, clippy, format, unit, integration,
+      e2e, coverage, checklist) are pre-registered with GitHub by running each
+      workflow at least once before the branch protection ruleset is enabled.
+      GitHub only recognizes a required status check by name after the workflow
+      that produces it has run at least once.
+    links:
+      - {target: b4e71d903a28, rel: verifies}
+      - {target: 7d2a9f1e50c3, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-025
+    hash: "b9e3d5f2c814"
+    name: first-pr-all-checks-pass
+    type: checklist
+    description: >
+      The first PR through the gate demonstrates all required status checks
+      (build, clippy, format, unit, integration, e2e, coverage, checklist,
+      depends-on) as required and passing before merge is permitted.
+    links:
+      - {target: 7d2a9f1e50c3, rel: verifies}
+      - {target: b4e71d903a28, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-026
+    hash: "c0d4e6a3f925"
+    name: admin-bypass-verified-blocked
+    type: checklist
+    description: >
+      An admin account has been verified unable to bypass the gate: a PR with
+      a failing required check was confirmed unmergeable even by a repository
+      admin or owner.
+    links:
+      - {target: 7d2a9f1e50c3, rel: verifies}
+      - {target: e5c0a2d87f43, rel: contradicts}
+    deprecated: false
+
+  - number: PROCESS-C-027
+    hash: "d1e5f7b2a038"
+    name: coverage-gate-verified
+    type: checklist
+    description: >
+      Coverage threshold verified: a PR that drops below 99% line coverage is
+      blocked by the coverage required status check and cannot be merged.
+    links:
+      - {target: 7d2a9f1e50c3, rel: verifies}
+      - {target: b4e71d903a28, rel: verifies}
+    deprecated: false
+
+repo_standards:
+  description: >
+    Concrete repository configuration standards for all Calypso projects.
+    These are the machine-enforceable settings that back the principles and
+    design patterns declared in the rules above.
+
+  branch_protection:
+    target: "~DEFAULT_BRANCH"
+    enforcement: active
+    bypass_actors: []
+    required_pull_request_reviews:
+      required_approving_review_count: 1
+      dismiss_stale_reviews_on_push: true
+      require_last_push_approval: true
+    required_status_checks:
+      - name: build
+        source_workflow: rust-quality.yml
+        verifies: Project compiles without errors
+      - name: clippy
+        source_workflow: rust-quality.yml
+        verifies: No Clippy lints (deny warnings)
+      - name: format
+        source_workflow: rust-quality.yml
+        verifies: cargo fmt --check passes
+      - name: unit
+        source_workflow: rust-unit.yml
+        verifies: All unit tests pass
+      - name: integration
+        source_workflow: rust-integration.yml
+        verifies: Integration tests pass against real Postgres
+      - name: e2e
+        source_workflow: rust-e2e.yml
+        verifies: End-to-end tests pass
+      - name: coverage
+        source_workflow: rust-coverage.yml
+        verifies: "Line coverage >= 99%"
+      - name: checklist
+        source_workflow: pr-checklist.yml
+        verifies: All unchecked task items in PR body are checked before merge
+      - name: depends-on
+        source_workflow: pr-depends-on.yml
+        verifies: Any declared Depends-on predecessor PR is merged
+
+  pr_checklist_enforcement: >
+    The pr-checklist.yml workflow scans every PR body for unchecked - [ ]
+    markdown task items. If any are found, the checklist check fails and the
+    PR cannot merge. This enforces that agents and humans explicitly attest
+    to every item in the PR description before landing code.
+
+  check_name_registration: >
+    GitHub only recognizes a required status check by name after the workflow
+    that produces it has run at least once. The scaffold procedure (see
+    init/scaffold-task.md) includes a step to pre-register all check names by
+    triggering each workflow manually before enabling the ruleset. For the
+    checklist check specifically, push a dummy PR or trigger via
+    workflow_dispatch before configuring the ruleset.
+
+  ruleset_template: "examples/github-workflows/ruleset.json"
+
+  implementation_checklist:
+    - "GitHub ruleset created via `gh api` using the template in examples/github-workflows/ruleset.json"
+    - "bypass_actors confirmed empty in the ruleset (verified via `gh api repos/{owner}/{repo}/rulesets`)"
+    - "All 9 required check names pre-registered by running each workflow at least once"
+    - ".github/workflows/pr-checklist.yml present and triggering on PR open/edit/sync/reopen"
+    - "First PR through the gate demonstrates all 9 checks required and passing before merge"
+    - "Admin account verified unable to bypass the gate (test with a PR that has a failing check)"
+    - "Coverage threshold verified: a PR that drops below 99% line coverage is blocked"
+
+development_state_machine:
+  description: >
+    The top-level lifecycle machine for a Calypso-managed repository. Tracks
+    which phase of the development process is active and delegates setup work
+    to sub-state-machines. Implemented as the DevelopmentPhase enum in
+    cli/src/state.rs. See also: issues #95, #96.
+
+  phases:
+    - slug: init
+      name: Init
+      description: >
+        Repository setup. Delegates entirely to the init state machine
+        (InitStep). Entering this phase triggers `calypso init`. This is
+        the default entry point for a new repository. Completion of the init
+        state machine (InitStep::Complete) automatically transitions the
+        development state machine to Development.
+    - slug: development
+      name: Development
+      description: >
+        Active feature development. The repository is fully set up and agents
+        are running feature work.
+    - slug: testing
+      name: Testing
+      description: >
+        Testing and QA. Features are under validation before release.
+
+  transitions:
+    - from: Init
+      to: Development
+      trigger: InitStep reaches Complete
+    - from: Development
+      to: Testing
+      trigger: feature work ready for validation
+    - from: Development
+      to: Init
+      trigger: re-init requested (calypso-cli init --reinit)
+    - from: Testing
+      to: Development
+      trigger: validation complete or correction needed
+    - from: Testing
+      to: Init
+      trigger: re-init requested (calypso-cli init --reinit)
+
+  nested_state_machine_pattern: >
+    The Init phase demonstrates the canonical nested state machine pattern
+    used throughout Calypso:
+    1. The outer machine (DevelopmentPhase) enters Init.
+    2. Control is delegated entirely to the inner machine (InitStep).
+    3. When InitStep reaches Complete, the outer machine transitions from
+       Init to Development.
+    4. The outer machine can re-enter Init at any time (e.g. to update
+       workflows or re-run doctor checks).
+    Future phases (Deployment, Operations) follow the same structure.
+
+  reinit: >
+    The Init phase can be re-entered at any time from Development or Testing
+    using `calypso-cli init --reinit`. This re-runs all init steps, refreshing
+    GitHub Actions workflows and re-verifying setup. It does not destroy
+    existing .calypso/ state.
+
+  implementation_references:
+    - "cli/src/state.rs — DevelopmentPhase enum"
+    - "cli/src/init.rs — InitStep, InitProgress, run_init_interactive"
+    - "cli/tests/state.rs — development_phase_* test suite"
+    - "issues: #95, #96"
+
+  future_phases:
+    - slug: deployment
+      name: Deployment
+      description: CI/CD pipeline management and environment targeting
+    - slug: operations
+      name: Operations
+      description: Post-release monitoring and incident response
