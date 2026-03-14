@@ -4,6 +4,41 @@ meta:
   version: 1
   requires:
     - DATA
+  vision: |
+    Every application that handles user data faces an authentication problem, and most solve it by
+    inheriting someone else's: a managed identity provider, a password-plus-MFA flow copied from a
+    tutorial, or an OAuth integration treated as a black box. These approaches share a structural
+    flaw — they place the most security-critical surface of the application outside the team's
+    understanding and control. When the provider has an outage, logins stop. When the provider
+    changes its token format, sessions break. When a vulnerability is disclosed, the team waits for
+    a patch it cannot inspect.
+
+    Calypso treats authentication as owned infrastructure. Identity verification, token issuance,
+    and session lifecycle are first-class components of the application, not rented services. The
+    default authentication mechanism is passkey-based (FIDO2 WebAuthn), which eliminates the
+    largest class of credential attacks — phishing, credential stuffing, and password reuse — at
+    the protocol level rather than through policy enforcement. There are no passwords to rotate, no
+    password hashes to exfiltrate, and no reset flows that reduce security to the strength of an
+    email inbox.
+
+    Agents — AI systems that act on behalf of the platform — are first-class participants in the
+    authorization model, but they are not peers of human users. An agent receives scoped,
+    short-lived credentials that grant access only to the specific resources its task requires. No
+    agent holds a master key, and no agent credential outlives a single working day without explicit
+    renewal. This constraint is not a limitation to be relaxed as the system matures; it is a
+    permanent architectural boundary.
+
+    The cost of ignoring this blueprint is familiar and predictable: a single compromised credential
+    grants unlimited lateral movement, a token algorithm mismatch enables forgery, a long-lived API
+    key leaks into a log file and is not rotated for months, and an external provider outage locks
+    every user out of a system that is otherwise fully operational. These are not exotic failure
+    modes. They are the default outcome of treating authentication as a peripheral concern.
+
+    Scope note: this blueprint is intentionally broader than user login. It defines four credential
+    domains that must remain distinct: end-user authentication, worker or service identity,
+    delegated authority for consequential actions, and sandbox-only credentials for digital twins.
+    Treating these as one undifferentiated auth system is the design error this blueprint is
+    intended to eliminate.
 
 rules:
   # ── Threats ──────────────────────────────────────────────────────────────────
@@ -234,6 +269,23 @@ rules:
       login the server issues a random challenge, the device signs it, and the
       server verifies against the stored public key. No shared secret crosses the
       network. Replay is prevented by unique, time-bound challenges.
+    problem: |
+      Password-based authentication is vulnerable to phishing, credential stuffing, replay attacks,
+      and server-side credential theft (hash exfiltration).
+    solution: |
+      Use the WebAuthn protocol for all user authentication. During registration, the user's device
+      generates an asymmetric key pair; the private key remains on the device (protected by
+      biometrics or a hardware token), and the server stores only the public key and a credential
+      identifier. During login, the server issues a random challenge; the device signs it with the
+      private key; the server verifies the signature against the stored public key. No shared secret
+      ever crosses the network. Replay is prevented because each challenge is unique and time-bound.
+    tradeoffs: |
+      Passkey support depends on the user's device and platform. Older browsers and operating
+      systems may not support WebAuthn, which limits the addressable user base. Key recovery is more
+      complex than password reset — there is no "forgot password" flow, only a key recovery
+      operation (see Pattern 5). For platforms that must support legacy devices, a fallback
+      mechanism (hardware security keys, for example) is necessary, and that fallback becomes the
+      weakest link.
     links:
       - rel: mitigates
         target: 8122afb85345
@@ -252,6 +304,22 @@ rules:
       deployment time. During verification the server ignores the alg field in
       the token header and uses only its configured algorithm. Tokens bearing any
       other algorithm are rejected without further inspection.
+    problem: |
+      Token verification that reads the signing algorithm from the token header is vulnerable to
+      algorithm confusion attacks — an attacker can force the server to verify a token using an
+      unintended algorithm (e.g., switching from asymmetric to symmetric verification using the
+      public key as the HMAC secret).
+    solution: |
+      The server is configured with exactly one acceptable signing algorithm at deployment time.
+      During verification, the server ignores the `alg` field in the token header and uses only its
+      configured algorithm. Tokens bearing any other algorithm are rejected without further
+      inspection. The signing key type and the verification algorithm are a matched pair; they are
+      never derived from the token itself.
+    tradeoffs: |
+      Pinning a single algorithm means algorithm migration requires a coordinated deployment — both
+      the issuer and all verifiers must be updated together, with a brief window where both old and
+      new algorithms are accepted. This is operationally more complex than free negotiation, but the
+      security benefit is categorical: an entire class of forgery attacks becomes impossible.
     links:
       - rel: mitigates
         target: f6770a061f91
@@ -267,6 +335,24 @@ rules:
       TTL is 24 hours. Scope claims are validated on every request by middleware.
       Agent registration is a human-operator action; agents cannot self-register
       or request scope escalation.
+    problem: |
+      AI agents need programmatic access to platform resources, but granting them the same
+      credentials as human users creates an unacceptable blast radius — a compromised agent
+      credential would have the same access as a compromised user account, without the behavioral
+      signals that help detect human account compromise.
+    solution: |
+      Agents authenticate through a dedicated issuance path that produces tokens with explicit scope
+      claims. Each scope claim names a resource and an operation (e.g., `analytics:read`,
+      `transformations:write`, `twin:execute`). The token has a maximum TTL of 24 hours.
+      Server-side middleware validates scope claims on every request, not just at issuance. An agent
+      requesting access outside its declared scope receives a 403 regardless of token validity.
+      Agent registration is a human-operator action; agents cannot self-register or request scope
+      escalation.
+    tradeoffs: |
+      Short-lived, narrowly scoped tokens require agents to re-authenticate frequently and may need
+      multiple tokens for multi-resource workflows. This adds latency and operational complexity to
+      agent orchestration. For workflows that span many resources, the temptation is to issue a
+      broader token — but that temptation is precisely what this pattern exists to resist.
     links:
       - rel: mitigates
         target: ba558b0ef32a
@@ -284,6 +370,21 @@ rules:
       principal. The request or ledger entry separately records the executing
       agent or worker identity. Validation checks both: the principal must have
       authority, and the executing agent must be registered, scoped, and permitted.
+    problem: |
+      An agent may be permitted to assemble and submit a consequential business transaction, but
+      attributing the resulting action solely to the user or solely to the agent is dishonest and
+      weakens both authorization clarity and forensic accountability.
+    solution: |
+      Use delegated authority plus dual attribution. A delegated credential binds the action to the
+      principal on whose behalf it is allowed. The request or ledger entry separately records the
+      executing agent or worker identity. Validation checks both: the principal must have authority
+      for the action, and the executing agent must be registered, scoped, and currently permitted to
+      act in that mode. The accepted transaction records both identities and any relevant policy or
+      delegation reference.
+    tradeoffs: |
+      Dual attribution adds schema and logging complexity because more than one actor identity must
+      be carried through the request path. That cost is worth paying: an enterprise system must be
+      able to answer both "who had authority?" and "which automation executed it?"
     links:
       - rel: mitigates
         target: ba558b0ef32a
@@ -298,6 +399,17 @@ rules:
       These carry explicit twin scope, are time-bounded, valid only against
       isolated twin resources, cannot be exchanged for production write authority,
       and are revoked automatically when the twin expires or is destroyed.
+    problem: |
+      A digital twin used for simulation needs real authentication and authorization boundaries, but
+      those credentials must not be reusable against production.
+    solution: |
+      Issue sandbox-only credentials for twin creation and execution. These credentials carry
+      explicit twin scope, are time-bounded, and are valid only against isolated twin resources.
+      They cannot be exchanged for production write authority, cannot target production endpoints,
+      and are revoked automatically when the twin expires or is destroyed.
+    tradeoffs: |
+      Sandbox credentials add a second class of short-lived token to the auth system. This is an
+      acceptable cost because production and simulation must never share interchangeable authority.
     links:
       - rel: mitigates
         target: ba558b0ef32a
@@ -314,6 +426,22 @@ rules:
       out-of-band notifications, and is time-bounded. Assembled keys are valid
       for a single operation. Recommended starting values: 3-of-5; minimum
       acceptable: 2-of-3.
+    problem: |
+      Privileged operations — root key access, bulk data exports, authentication configuration
+      changes — are catastrophic if performed by a single compromised or malicious actor.
+    solution: |
+      The key or credential required to perform a privileged operation is split into N shards using
+      a secret sharing scheme (e.g., Shamir's Secret Sharing). M of N shards are required to
+      reconstruct the key, where M > 1 and the shards are held by distinct human operators on
+      separate devices. Shard assembly is logged, triggers out-of-band notifications to all shard
+      holders, and is time-bounded — an assembled key is valid for a single operation and is
+      discarded immediately after use.
+    tradeoffs: |
+      M-of-N introduces coordination overhead. Privileged operations cannot be performed by a
+      single person, even in emergencies. This is by design, but it means the organization must
+      maintain a sufficient pool of shard holders and have a process for shard holder
+      unavailability. If M shard holders are not reachable, the operation cannot proceed. The
+      values of M and N must balance security against operational availability.
     links:
       - rel: mitigates
         target: 6209f9dcbb96
@@ -332,6 +460,23 @@ rules:
       Recovery events are logged and trigger notifications to all enrolled devices.
       Recovery is self-initiated only; support-assisted recovery requires M-of-N
       operator approval.
+    problem: |
+      In a passkey-only system, losing access to all registered devices means losing access to the
+      account. There is no password to fall back on, and email-based reset flows reintroduce the
+      credential weakness that passkeys eliminate.
+    solution: |
+      At enrollment, the user generates a recovery passphrase (a high-entropy mnemonic, for
+      example). This passphrase encrypts a recovery shard that is stored server-side — the server
+      holds the encrypted shard but cannot decrypt it. Recovery requires the passphrase plus a
+      second factor (a backup device, a printed recovery code, or a hardware key). The recovery
+      flow re-enrolls a new passkey rather than restoring the old one. Recovery events are logged
+      and trigger notifications to all previously enrolled devices.
+    tradeoffs: |
+      Recovery passphrases can be lost or forgotten, and unlike passwords, there is no fallback
+      behind the fallback. Users must be clearly informed that the recovery passphrase is a key, not
+      a convenience — losing it and all registered devices means permanent account loss. This is the
+      honest trade-off of eliminating passwords: recovery becomes harder, but the day-to-day attack
+      surface shrinks dramatically.
     links:
       - rel: mitigates
         target: 8122afb85345
@@ -347,6 +492,21 @@ rules:
       a response body, URL parameter, or any location accessible to client-side
       scripts. For cross-subdomain deployments, configure cookies with the shared
       registrable domain; for cross-domain, use a same-origin token relay.
+    problem: |
+      Session tokens stored in browser-accessible locations (localStorage, sessionStorage,
+      JavaScript variables) can be exfiltrated by cross-site scripting attacks.
+    solution: |
+      After successful authentication, the server issues the session token as an HTTP-only cookie
+      with the Secure flag (HTTPS only) and SameSite=Strict (no cross-origin transmission). The
+      token never appears in a response body, URL parameter, or any location accessible to
+      client-side scripts. The browser sends the cookie automatically with same-origin requests;
+      the application JavaScript never handles the token directly.
+    tradeoffs: |
+      HTTP-only cookies require the authentication server and the resource server to share an origin
+      (or a carefully configured domain hierarchy). Cross-origin API architectures — where the
+      frontend and backend are on different domains — must use a same-origin proxy or a token relay,
+      adding deployment complexity. SameSite=Strict also prevents the cookie from being sent on
+      cross-site navigation, which can break flows that start from external links.
     links:
       - rel: mitigates
         target: 5a23762c9b47
@@ -362,6 +522,26 @@ rules:
       of signature and expiry. Revocation entries expire after the token's own
       exp. The store must be shared and durable across all instances. If the store
       is unreachable, auth middleware fails closed (denies requests).
+    problem: |
+      JWTs are stateless by design — a token that has been issued is valid until expiry regardless
+      of what happens after issuance. A user who logs out, changes their passkey, or whose account
+      is suspended cannot have their existing tokens invalidated without a server-side revocation
+      mechanism.
+    solution: |
+      Every issued token carries a `jti` (JWT ID) claim — a unique identifier generated at
+      issuance. The server maintains a revocation store keyed on `jti`. Auth middleware checks the
+      revocation store on every request before accepting a token as valid. A revoked `jti` returns
+      401 regardless of token signature and expiry. Revocation entries expire from the store after
+      the token's own `exp` timestamp passes — there is no value in retaining a revocation entry
+      for a token that would be expired anyway.
+    tradeoffs: |
+      A synchronous revocation check on every request adds a database round-trip to every
+      authenticated call. For high-throughput services, a short-lived local cache (TTL ≤ 60
+      seconds) with a cache-miss fallback to the store is acceptable, with the understanding that a
+      revoked token may remain valid for up to one cache TTL. This window must be weighed against
+      the threat model — for most session revocations (logout) a 60-second window is acceptable;
+      for security-critical revocations (account compromise, passkey change) the cache should be
+      bypassed or the TTL set to zero.
     links:
       - rel: mitigates
         target: 6db7c60cbba6
@@ -379,6 +559,42 @@ rules:
       registered public keys as entities in the property graph. Token Issuer uses
       a signing key in an external HSM-backed key store. Simplest to deploy; does
       not support federated identity without rework.
+    diagram: |
+      ┌──────────────────────────────────────────────────┐
+      │                  Application Server               │
+      │                                                    │
+      │  ┌──────────┐  ┌──────────────┐  ┌─────────────┐ │
+      │  │ Passkey   │  │ Token        │  │ Auth        │ │
+      │  │ Store     │  │ Issuer       │  │ Middleware   │ │
+      │  │ (typed    │  │ (pinned alg, │  │ (validates  │ │
+      │  │  entities)│  │  scoped      │  │  token +    │ │
+      │  └─────┬─────┘  │  claims)     │  │  scope on   │ │
+      │        │        └──────┬───────┘  │  every req) │ │
+      │        │               │          └──────┬──────┘ │
+      │        └───────┬───────┘                 │        │
+      │                │                         │        │
+      │         ┌──────▼──────┐          ┌───────▼──────┐ │
+      │         │ Property    │          │ Resource     │ │
+      │         │ Graph (PG)  │          │ Handlers     │ │
+      │         └─────────────┘          └──────────────┘ │
+      └──────────────────────────────────────────────────┘
+                 │
+          ┌──────▼──────┐
+          │ Key Store   │
+          │ (signing    │
+          │  keys, HSM) │
+          └─────────────┘
+    when_appropriate: |
+      All authentication components — passkey verification, token issuance, session management —
+      run within the same application process. The Passkey Store holds registered public keys as
+      `passkey_credential` entities in the property graph. The Token Issuer creates tokens with a
+      signing key held in an external Key Store (hardware-backed in production). Auth Middleware
+      runs on every protected route.
+    tradeoffs: |
+      Simplest to deploy and reason about. No network boundary between auth and application logic,
+      which reduces latency but means a vulnerability in the application layer has direct access to
+      the auth components. Does not support federated identity or multi-product SSO without
+      significant rework.
     links: []
     deprecated: false
 
@@ -392,6 +608,41 @@ rules:
       internal token format. If the external provider is unavailable, users fall
       back to the self-hosted passkey path. The Resource Server sees only the
       internal token format.
+    diagram: |
+      ┌─────────────────────┐     ┌──────────────────────┐
+      │  External Identity  │     │  Self-Hosted Passkey  │
+      │  Provider           │     │  Auth Service         │
+      │  (enterprise SSO)   │     │  (fallback path)      │
+      └────────┬────────────┘     └──────────┬────────────┘
+               │  identity assertion          │  passkey assertion
+               └──────────┬──────────────────┘
+                          ▼
+               ┌──────────────────┐
+               │  Token Gateway   │
+               │  (normalizes     │
+               │   assertions,    │
+               │   issues scoped  │
+               │   session tokens)│
+               └────────┬─────────┘
+                        │  uniform session token
+                        ▼
+               ┌──────────────────┐
+               │  Resource Server │
+               │  (Auth Middleware │
+               │   validates      │
+               │   token + scope) │
+               └──────────────────┘
+    when_appropriate: |
+      Enterprise tenants authenticate through their own identity provider (SAML, OIDC). The Token
+      Gateway normalizes the external assertion into the platform's internal token format. If the
+      external provider is unavailable, users fall back to the self-hosted passkey path — the same
+      passkey flow as Architecture A, running as an independent service. The Resource Server sees
+      only the platform's internal token and does not know or care which path produced it.
+    tradeoffs: |
+      Supports enterprise SSO requirements without surrendering control of the authentication
+      surface. More complex to operate: two authentication paths must be maintained, tested, and
+      monitored. The Token Gateway is a critical single point — it must be highly available and its
+      normalization logic must be rigorously tested to prevent assertion injection.
     links: []
     deprecated: false
 
@@ -406,6 +657,58 @@ rules:
       access to human operators with explicit agent-registry:write scope. Registry
       mutations are audit-logged and trigger immediate token revocation for
       affected agents.
+    diagram: |
+                        ┌──────────────────┐
+                        │   Auth Gateway   │
+                        │                  │
+             ┌─────────┤   Routes by      ├──────────┐
+             │         │   credential     │          │
+             │         │   type           │          │
+             │         └──────────────────┘          │
+             ▼                                       ▼
+      ┌─────────────────┐                  ┌────────────────────┐
+      │  Human Auth     │                  │  Agent Auth        │
+      │  Path           │                  │  Path              │
+      │                 │                  │                    │
+      │  Passkey Store  │                  │  Agent Registry    │
+      │  Token Issuer   │                  │  (public keys,     │
+      │  Session Mgmt   │                  │   declared scopes) │
+      │  (cookies,      │                  │  Scope Validator   │
+      │   refresh)      │                  │  Token Issuer      │
+      └────────┬────────┘                  │  (24h max TTL,     │
+               │                           │   explicit claims) │
+               │                           └─────────┬──────────┘
+               │                                     │
+               └──────────────┬──────────────────────┘
+                              ▼
+                    ┌──────────────────┐
+                    │  Resource Server │
+                    │  (Auth Middleware │
+                    │   validates      │
+                    │   token + scope  │
+                    │   uniformly)     │
+                    └────────┬─────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │  Key Store       │
+                    │  (signing keys,  │
+                    │   agent shards,  │
+                    │   M-of-N keys)   │
+                    └──────────────────┘
+    when_appropriate: |
+      The Auth Gateway is the single entry point for all authentication. It inspects the credential
+      type and routes to the appropriate path: human users go through the passkey flow; agents go
+      through the agent registry and scope validation. Both paths produce tokens in the same format
+      — the Resource Server does not distinguish between human and agent tokens except through scope
+      claims. The Agent Registry is a separate component where human operators register agents and
+      declare their allowed scopes. Use this architecture on platforms where AI agents are
+      first-class participants.
+    tradeoffs: |
+      Purpose-built for platforms where AI agents are first-class participants. The Auth Gateway
+      adds a network hop and a component to maintain, but it cleanly separates the human and agent
+      authentication concerns. The agent path can be scaled, rate-limited, and monitored
+      independently. Risk: if the gateway is compromised, both paths are affected — the gateway
+      must be hardened as a critical component.
     links: []
     deprecated: false
 
