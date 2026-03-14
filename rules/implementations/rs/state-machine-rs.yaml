@@ -113,30 +113,30 @@ startup:
     orchestrator-loop:
       kind: parallel_dispatch
       description: >
-        Main operational loop. Each cycle the orchestrator evaluates all six
-        branches and dispatches work for any whose trigger condition is met.
-        Branches are evaluated in priority order but execute in parallel when
-        independent. After all actionable branches complete their cycle work,
-        the loop restarts from doctor (lightweight re-check).
+        Main operational loop. Each cycle the orchestrator evaluates five
+        top-level branches and dispatches work for any whose trigger is met.
+        Branches are peers — merge, release, deploy, development, and planning
+        all run at the same level. Development is itself a parent that
+        dispatches to one of three sub-branches (feature-dev, r&d, hardening).
+        After all actionable branches complete their cycle work, the loop
+        restarts from doctor (lightweight re-check).
       priority_order:
         - merge        # keep main clean before starting new work
         - release      # cut release before starting next milestone
         - deploy       # ship before new development
-        - development  # primary work
-        - planning     # reassess after development — always last
-        - rnd          # background intake, lowest priority
+        - development  # parent of feature-dev, r&d, hardening
+        - planning     # peer: reassesses state and updates plan each cycle
       parallelism:
-        merge_and_rnd: parallel
-        merge_and_development: parallel  # if on different features
+        merge_and_development: parallel  # if working different features
+        merge_and_planning: parallel
         release_and_deploy: sequential   # deploy gates on release completing
-        planning: after_all             # closes the cycle
+        planning: parallel              # peer, not gated on development
       branches:
         - merge
         - release
         - deploy
         - development
         - planning
-        - rnd
       next:
         cycle_complete: doctor
         no_actionable_work: idle
@@ -171,7 +171,7 @@ branches:
   # ── Merge ─────────────────────────────────────────────────────────────────
   # Trigger: any PR has all CI checks green + human approval + checklist complete
   # Goal:    execute merge queue in correct order, keep main clean
-  # Parallel with: rnd, development (different features)
+  # Parallel with: development (different features), planning
 
   merge:
     trigger:
@@ -474,63 +474,87 @@ branches:
         kind: terminal
 
   # ── Development ───────────────────────────────────────────────────────────────
-  # Trigger: in-progress feature exists OR next unstarted feature exists
-  # Goal:    advance one feature through feature_workflow by one work unit
-  # Parallel with: merge (different features), rnd
+  # Parent branch. Dispatches to one of three sub-branches:
+  #   feature-dev — clear tasks: defined acceptance criteria, code + tests
+  #   r&d         — vague requests: need specification/thinking; output is a doc
+  #   hardening   — background quality work when nothing else is active
+  # Sub-branches are evaluated in that priority order each cycle.
+  # Parallel with: merge (different features), planning
 
   development:
-    trigger:
-      any_of:
-        in-progress-feature-exists: true
-        next-unstarted-feature-exists: true
+    trigger: always
     description: >
-      Primary work branch. Picks up the current in-progress feature (or the
-      next unstarted one) and runs one state transition of feature_workflow.
-    initial: read-development-context
+      Parent development branch. Each cycle, evaluates sub-branches in priority
+      order (feature-dev → r&d → hardening) and dispatches to the first one
+      whose trigger is met. Exactly one sub-branch runs per cycle.
+    initial: select-sub-branch
 
     states:
-      read-development-context:
+      select-sub-branch:
         kind: orchestrator
+        description: >
+          Evaluate sub-branch triggers in priority order. Dispatch to the
+          first one that is active. If none are active, branch-done.
         context:
           - source: file
             description: Session recovery (local, may not exist)
+            load: "cat next-prompt.md 2>/dev/null || echo 'no next-prompt'"
+          - source: github_issue_list
+            load: "gh issue list --label 'feature,research' --state open --json number,title,body,labels"
+        next:
+          feature_dev_active: sub-feature-dev
+          rnd_active: sub-rnd
+          hardening_active: sub-hardening
+          nothing_active: branch-done
+
+      # ── Sub: Feature Dev ───────────────────────────────────────────────────
+      # Trigger: in-progress feature issue OR next unstarted feature with
+      # clear acceptance criteria (no "needs-specification" label)
+      # Goal: advance one feature through feature_workflow
+      # next-prompt.md is written HERE at the end of each work session
+
+      sub-feature-dev:
+        kind: orchestrator
+        description: >
+          Picks up the current in-progress feature (or next unstarted one)
+          and runs one transition of feature_workflow. Writes next-prompt.md
+          at the end of each work session.
+        context:
+          - source: file
             load: "cat next-prompt.md 2>/dev/null || echo 'no next-prompt'"
           - source: github_issue
             load: "gh issue view <impl-plan-issue> --json body,comments"
           - source: github_issue_list
             load: "gh issue list --label feature --state open --json number,title,body,labels"
         prompt: |
-          Determine which feature and stage to work on this cycle.
+          Determine the correct feature and stage to work on.
 
-          Priority order:
+          Priority:
           1. next-prompt.md exists and references a valid open feature issue
              → use that feature and stage
-          2. A feature issue has Stage set to an in-progress state
+          2. A feature issue has Stage in an in-progress state
              (scaffold-tdd, architecture-review, implementation, qa-validation)
-             → resume that feature at its current stage
+             → resume at current stage
           3. All in-progress features are blocked or waiting-for-human
              → transition to branch-done; do not start new work
           4. No in-progress features exist
-             → pick the lowest-numbered unstarted feature from the
-               Implementation Plan issue
+             → pick the lowest-numbered unstarted feature from the plan
 
-          Identify: feature issue number + target stage.
-          Proceed to dispatch-feature-workflow.
+          After completing work for this session:
+            Write next-prompt.md locally (do not commit):
+              ## Context
+              <1-3 sentences: where we are in the project>
+              ## Last completed
+              <what was done this session>
+              ## Next action
+              <specific: feature issue #, stage, PR # if open>
+              ## Blockers
+              <any waiting-for-human or external blockers>
         gh_commands:
           - cmd: "cat next-prompt.md 2>/dev/null"
             purpose: Read session recovery context
           - cmd: "gh issue list --label feature --state open --json number,title,body"
             purpose: Find in-progress and unstarted features
-        next:
-          feature_found: dispatch-feature-workflow
-          all_blocked: branch-done
-
-      dispatch-feature-workflow:
-        kind: orchestrator
-        description: >
-          Delegate to feature_workflow sub-machine for the selected feature,
-          resuming at the identified stage (not at feature-definition unless
-          the feature is brand new).
         sub_machine: feature_workflow
         sub_machine_entry: resume_at_stage
         next:
@@ -538,20 +562,183 @@ branches:
           on_blocked: branch-done
           on_waiting_for_human: branch-done
 
+      # ── Sub: R&D ───────────────────────────────────────────────────────────
+      # Trigger: open issues with label "research" or "request" that have
+      # "needs-specification" label (or no acceptance criteria yet)
+      # Goal: turn a vague request into a specification document;
+      # output is a doc, NOT code. Only after spec is approved does the issue
+      # become a feature-dev task (label changes from "research" to "feature").
+
+      sub-rnd:
+        kind: agent
+        role: architect
+        description: >
+          Processes one vague feature request into a specification document.
+          The output is a written spec posted as a GitHub issue comment or
+          committed to docs/specs/. The issue is not turned into a feature-dev
+          task until the spec is approved by a human.
+        context:
+          - source: github_issue_list
+            load: "gh issue list --label research --state open --json number,title,body,comments,createdAt --order created"
+          - source: file
+            load: docs/prd.md
+          - source: github_issue
+            load: "gh issue view <impl-plan-issue> --json body"
+        prompt: |
+          Take the oldest open issue labeled "research". Produce a specification
+          document for it. One issue per cycle.
+
+          Step 1 — Scope and readiness check:
+          Read docs/prd.md. Is this request in scope?
+            Out of scope → comment why, add label "out-of-scope", close.
+            Transition to branch-done.
+
+          Does the request have enough information to specify?
+            No → post 3-5 targeted clarifying questions on the issue.
+            Add label "needs-clarification". Transition to branch-done.
+
+          Step 2 — Research and specify:
+          Investigate the request. Consider:
+            - What problem does this solve? For whom?
+            - What are the boundaries (what it is NOT)?
+            - What are the concrete acceptance criteria?
+            - What are the technical constraints or open questions?
+            - What is the simplest solution that satisfies the criteria?
+            - What are the alternatives considered and why rejected?
+
+          Step 3 — Write the specification:
+          Post the spec as a comment on the research issue using this format:
+
+            ## Specification: <feature name>
+            ### Problem
+            <what problem this solves and for whom>
+            ### Scope
+            <what is included / what is explicitly excluded>
+            ### Proposed solution
+            <description of the approach>
+            ### Acceptance criteria
+            - [ ] <testable criterion 1>
+            - [ ] <testable criterion 2>
+            ### Open questions
+            <any unresolved questions that need human input before this can
+             become an engineering task>
+            ### Out of scope
+            <explicitly excluded items to prevent scope creep>
+
+          If there are no open questions: add label "spec-ready" to the issue.
+          A human must review and approve the spec before it becomes a feature.
+          Do NOT create a feature issue or change the label to "feature" yet.
+
+          If there are open questions: add label "needs-clarification".
+          The issue stays as "research" until the human answers.
+        expected_response:
+          spec_written:
+            - Specification comment posted on research issue
+            - Label "spec-ready" added (if no open questions)
+            - No feature issue created yet (human must approve spec first)
+          needs_clarification:
+            - Questions posted on research issue
+            - Label "needs-clarification" added
+          out_of_scope:
+            - Issue commented, labeled, closed
+        gh_commands:
+          - cmd: "gh issue list --label research --state open --json number,title,body"
+            purpose: Find oldest research issue
+          - cmd: "gh issue comment <research-issue> --body '## Specification: <name>\n...'"
+            purpose: Post specification document
+          - cmd: "gh issue edit <research-issue> --add-label spec-ready"
+            purpose: Signal spec is ready for human review
+          - cmd: "gh issue edit <research-issue> --add-label needs-clarification"
+            purpose: Signal more information needed
+        next:
+          spec_written: branch-done
+          needs_clarification: branch-done
+          out_of_scope: branch-done
+
+      # ── Sub: Hardening ─────────────────────────────────────────────────────
+      # Trigger: no active feature-dev work, no r&d pending (idle)
+      # Goal: background quality improvement — no specific instructions;
+      # engineer uses judgment. Output is a small PR.
+
+      sub-hardening:
+        kind: agent
+        role: engineer
+        description: >
+          Background quality work when nothing else is active. No specific
+          instructions — the engineer identifies and fixes the most valuable
+          quality issue in the codebase. Output is always a small, focused PR.
+        context:
+          - source: command_output
+            description: Clippy output (warnings, even non-blocking ones)
+            load: "cargo clippy 2>&1"
+          - source: command_output
+            description: Coverage summary
+            load: "cargo llvm-cov --summary-only 2>&1 || echo 'coverage unavailable'"
+          - source: command_output
+            description: Recent commits (avoid duplicating recent work)
+            load: "git log origin/main --oneline -20"
+          - source: command_output
+            description: Open TODOs and FIXMEs in source
+            load: "grep -rn 'TODO\\|FIXME\\|HACK\\|unwrap()' src/ | head -30"
+        prompt: |
+          No active feature work or R&D is pending. Use this time for
+          background hardening. Choose the most valuable improvement from
+          this priority list:
+
+          1. Fix any clippy warnings not caught by -D warnings (style, pedantic)
+          2. Eliminate unwrap()/expect() calls in non-test code — replace with
+             proper error propagation using ?
+          3. Increase test coverage for any branch below 99% (run llvm-cov
+             to identify uncovered lines)
+          4. Resolve TODO/FIXME comments that have clear, small fixes
+          5. Improve error messages (make them actionable for end users)
+          6. Simplify overly complex functions (split, rename, clarify)
+          7. Update dependency versions in Cargo.toml (check for patch updates)
+          8. Add or improve documentation comments (///) on public API items
+
+          Rules:
+          - One concern per PR — do not mix multiple hardening types
+          - Do not refactor working code without a clear quality justification
+          - Do not add features
+          - Commit: "chore(<scope>): <what was improved>"
+          - Open a PR (not draft) with a brief Summary explaining what was
+            improved and why it matters
+
+          If the codebase is genuinely clean (no warnings, 99%+ coverage,
+          no TODOs, no unwraps): close this cycle with a comment on the
+          Implementation Plan issue noting the clean state.
+        expected_response:
+          improved:
+            - Small, focused commit on a new branch
+            - PR opened with Summary and brief rationale
+          already_clean:
+            - Comment on Implementation Plan issue: "Hardening: codebase clean"
+        gh_commands:
+          - cmd: "git checkout -b chore/<scope>-<date>"
+            purpose: Create hardening branch
+          - cmd: "gh pr create --title 'chore(<scope>): <what>' --body '<summary>'"
+            purpose: Open hardening PR
+          - cmd: "gh issue comment <impl-plan-issue> --body 'Hardening: codebase clean as of <date>'"
+            purpose: Record clean state if nothing to improve
+        next:
+          on_success: branch-done
+
       branch-done:
         kind: terminal
 
   # ── Planning ──────────────────────────────────────────────────────────────────
-  # Trigger: always (runs at end of every orchestrator cycle)
-  # Goal:    reassess state, write next-prompt.md, update implementation plan
-  # Runs after all other branches (closes the cycle)
+  # Trigger: always (peer branch, runs every cycle alongside others)
+  # Goal:    reassess project state, update Implementation Plan issue
+  # Note:    next-prompt.md is NOT written here — that is the development
+  #          branch's responsibility (session handoff artifact)
 
   planning:
     trigger: always
     description: >
-      Closes each orchestrator cycle. Reads current state of all features,
-      writes next-prompt.md for the next session, and updates the
-      Implementation Plan issue if task status changed this cycle.
+      Peer branch. Runs every cycle. Reads all open issues, PRs, and recent
+      commits. Updates the Implementation Plan issue if task status changed.
+      Does NOT write next-prompt.md — that is written by feature-dev at the
+      end of each work session.
     initial: assess-state
 
     states:
@@ -562,7 +749,7 @@ branches:
           - source: github_issue
             load: "gh issue view <impl-plan-issue> --json body,comments,updatedAt"
           - source: github_issue_list
-            load: "gh issue list --label feature --state open --json number,title,body,labels,updatedAt"
+            load: "gh issue list --label 'feature,research' --state open --json number,title,body,labels,updatedAt"
           - source: github_pr_list
             load: "gh pr list --state open --json number,title,labels,statusCheckRollup,reviews,headRefName"
           - source: file
@@ -570,128 +757,27 @@ branches:
           - source: command_output
             load: "git log origin/main --oneline -10"
         prompt: |
-          Assess the current development state and produce two outputs.
+          Assess the current project state. Produce one output only.
 
-          OUTPUT 1 — Implementation Plan issue update (only if something changed):
-          Update task completion status using checkboxes:
+          OUTPUT — Implementation Plan issue update (only if something changed):
+          Update task completion and status using checkboxes and stage annotations:
             - [x] Merged/done features
-            - [ ] In-progress features (with current Stage noted inline)
+            - [ ] In-progress features — Stage: <current stage> — PR #<n> if open
             - [ ] Unstarted features
-          Skip the edit entirely if nothing changed since last update.
+            - [ ] Research issues — "spec-ready" / "needs-clarification" / in progress
+          Skip the edit entirely if nothing changed since the last update.
 
-          OUTPUT 2 — next-prompt.md (write locally, do not commit):
-          A self-contained instruction for the next orchestrator session.
-          Required sections:
-            ## Context
-            <1-3 sentences: where we are in the project>
-            ## Last completed
-            <what was done this cycle>
-            ## Next action
-            <specific instruction: feature issue #, stage, PR # if open>
-            ## Blockers
-            <any open blockers (waiting-for-human, external, etc.)>
-
-          Quality bar for next-prompt.md:
-          - Readable in isolation with no other context
-          - Names a specific issue number and stage
-          - References the correct PR number if one is open
-          - Notes any waiting-for-human states needing resolution
+          Do NOT write next-prompt.md. That is written by the development
+          branch at the end of each feature-dev session.
         expected_response:
-          - Implementation Plan issue updated or confirmed current
-          - next-prompt.md written locally (not committed)
+          - Implementation Plan issue updated or confirmed current (no edit if unchanged)
         gh_commands:
           - cmd: "gh issue view <impl-plan-issue> --json body,updatedAt"
-            purpose: Check if plan needs updating
+            purpose: Read plan before deciding if update needed
           - cmd: "gh issue edit <impl-plan-issue> --body '<updated body>'"
-            purpose: Update plan if tasks changed state
+            purpose: Update only if tasks changed state
         next:
           on_success: branch-done
-
-      branch-done:
-        kind: terminal
-
-  # ── R&D ───────────────────────────────────────────────────────────────────────
-  # Trigger: open issues with label "request" exist
-  # Goal:    process feature requests → structured feature issues → plan
-  # One request processed per cycle. Parallel with merge and development.
-
-  rnd:
-    trigger:
-      open-feature-request-exists: true
-    description: >
-      Processes the oldest open feature request into a structured feature issue.
-      One request per cycle. Does not start development.
-    initial: find-next-request
-
-    states:
-      find-next-request:
-        kind: deterministic
-        context:
-          - source: github_issue_list
-            load: "gh issue list --label request --state open --json number,title,body,createdAt --order created"
-        next:
-          found: interview-and-scope
-          none: branch-done
-
-      interview-and-scope:
-        kind: agent
-        role: architect
-        context:
-          - source: github_issue
-            load: "gh issue view <request-issue> --json number,title,body,comments"
-          - source: file
-            load: docs/prd.md
-          - source: github_issue
-            load: "gh issue view <impl-plan-issue> --json body"
-        prompt: |
-          Process this feature request into a structured feature issue.
-
-          Step 1 — Scope check:
-          Read docs/prd.md. Is this request in scope?
-          Out of scope → comment why, add label "out-of-scope", close issue.
-          Transition to branch-done.
-
-          Step 2 — Clarification check:
-          Is the request specific enough to write acceptance criteria?
-          No → post 3-5 clarifying questions, add label "needs-clarification".
-          Transition to branch-done (wait for human answers).
-
-          Step 3 — Create feature issue (if in scope and specific enough):
-            gh issue create \
-              --title "feat: <name>" \
-              --label feature \
-              --body "## Motivation\n<why; ref #<request>>\n\n## Features\n- \n\n## Acceptance criteria\n- [ ] \n\n## Test plan\n- [ ] \n\n## Stage\nnew\n\nCloses #<request>"
-
-          Step 4 — Update Implementation Plan:
-          Add the new feature issue under the appropriate milestone.
-
-          Step 5 — Close the request issue:
-            gh issue close <request-issue> --comment "Tracked as #<feature-issue>"
-        expected_response:
-          in_scope_and_clear:
-            - Feature issue created with all sections
-            - Implementation Plan updated
-            - Request issue closed referencing feature issue
-          out_of_scope:
-            - Request issue commented, labeled, closed
-          needs_clarification:
-            - Request issue commented with questions
-            - Label "needs-clarification" added
-        gh_commands:
-          - cmd: "gh issue create --title 'feat: <name>' --label feature --body '<body>'"
-            purpose: Create structured feature issue
-          - cmd: "gh issue close <request-issue> --comment 'Tracked as #<feature-issue>'"
-            purpose: Close request, reference feature issue
-          - cmd: "gh issue edit <impl-plan-issue> --body '<updated plan>'"
-            purpose: Add feature to implementation plan
-          - cmd: "gh issue edit <request-issue> --add-label out-of-scope"
-            purpose: Label before closing if out of scope
-          - cmd: "gh issue edit <request-issue> --add-label needs-clarification"
-            purpose: Label if clarification needed
-        next:
-          feature_created: branch-done
-          out_of_scope: branch-done
-          needs_clarification: branch-done
 
       branch-done:
         kind: terminal
@@ -1188,15 +1274,26 @@ checks:
   new-release-tag-not-deployed:
     kind: deterministic
     description: Latest tag != last_deployed_version in repository-state.json
+
+  # Development sub-branch triggers
   in-progress-feature-exists:
     kind: deterministic
     description: At least one feature issue has Stage set to a non-terminal state
   next-unstarted-feature-exists:
     kind: deterministic
-    description: At least one feature issue has no Stage or Stage = "new"
-  open-feature-request-exists:
+    description: >
+      At least one feature issue has no Stage or Stage = "new" AND does not
+      have label "needs-specification"
+  open-research-issue-exists:
     kind: deterministic
-    description: At least one open issue with label "request"
+    description: >
+      At least one open issue with label "research" that does not have
+      label "spec-ready" (spec-ready issues await human approval, not agent work)
+  nothing-active-in-development:
+    kind: deterministic
+    description: >
+      No in-progress features, no unstarted features, no research issues
+      needing work — hardening trigger
 
   # Feature workflow — agent checks
   architecture-review-approved:
@@ -1307,9 +1404,10 @@ checks:
 
 agent_prompts:
   planner: |
-    You assess the current state of the project and write a precise
-    next-prompt.md for the next session. You update the Implementation Plan
-    issue if task status changed. You do not make implementation decisions.
+    You assess the current state of the project and update the Implementation
+    Plan issue if task status changed this cycle. You do not write
+    next-prompt.md — that is written by the engineer at the end of each
+    feature-dev session. You do not make implementation decisions.
 
   architect: |
     You produce plans and review scaffold against those plans. You do not
