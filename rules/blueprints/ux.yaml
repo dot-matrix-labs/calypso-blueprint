@@ -4,6 +4,33 @@ meta:
   version: 1
   requires:
     - AUTH
+  vision: |
+    Beauty is a gate condition, not a preference. A Calypso application that is not visually
+    polished and immediately comprehensible will not survive management review — regardless of its
+    technical correctness. The interface is the product to every non-technical stakeholder. UX
+    quality must be established from the first screen, the first prototype, and the first demo. An
+    ugly early version sets an anchor that is nearly impossible to reverse. Applications that are
+    not beautiful from the start do not ship.
+
+    Service delivery is designed before interfaces. The question "how do we deliver this capability
+    to a user?" precedes "what does the screen look like?" The channel — visual browser interface,
+    API, command-line, voice, structured text — is a consequence of the service design, not its
+    premise. A service designed around a visual browser interface produces a service that only works
+    in a visual browser. A service designed around the delivery of a capability to a user produces
+    something that can be expressed in any appropriate medium.
+
+    Every user type receives an interface appropriate to their medium. A human end-user navigates a
+    visual interface. An administrator manages operations through a purpose-built interface — never
+    through raw database tooling or developer consoles. An AI agent interacts through structured,
+    machine-readable interfaces — not through screen scraping, browser automation, or interfaces
+    designed for human perception. Designing only for the human end-user produces a system where
+    administration is painful and agent integration is fragile.
+
+    The AI agent is a first-class user with a defined presence on the end-user account. It is not a
+    background process operating invisibly. Its participation in the account is declared, visible to
+    the human account holder, and governed by a clearly specified scope. The end-user knows the
+    agent is there. The service is designed to make that shared-account relationship explicit and
+    auditable, not to obscure it.
 
 rules:
 
@@ -244,6 +271,19 @@ rules:
       in any medium are derived. Trade-off: adds time before design begins;
       wrong when the service is exploratory — prototype first, formalize once
       the happy path is stable.
+    problem: |
+      Teams design interfaces before understanding the sequence of states a user must traverse to
+      accomplish a goal, producing interfaces that cannot be consistently navigated.
+    solution: |
+      Before any visual design begins, map the service flow as a state machine. Define: the entry
+      state, the terminal state (goal achieved), every intermediate state, and every transition.
+      Annotate each transition with what triggers it (user action, system event, agent action) and
+      what feedback the system provides. The resulting map is the authoritative UX specification
+      from which interfaces in any medium are derived.
+    tradeoffs: |
+      Service flow mapping adds time before design begins. It is the wrong pattern when the service
+      is exploratory or rapidly evolving — in those cases, prototype first and formalize the flow
+      once the happy path is stable.
     links:
       - {target: d7f85752c1b1, rel: refines}
       - {target: 103dbdf604b7, rel: mitigates}
@@ -262,6 +302,19 @@ rules:
       interfaces, CLI, and API. Trade-off: creates friction for teams wanting
       multiple options; wrong when the user population is expert and expects
       direct access to multiple routes.
+    problem: |
+      Multiple routes to the same destination cause users to question whether they are in the right
+      place, whether the routes produce different outcomes, and which one to use next time.
+    solution: |
+      For every user goal, design exactly one primary path. If a secondary path exists for power
+      users or edge cases, it is explicitly labeled as an alternative and is not surfaced in the
+      default flow. Navigation is structured so that at every point, the next correct action is
+      either the only visible action or the most visually prominent one.
+    tradeoffs: |
+      Single-path navigation requires deliberate choices about what is primary. This creates
+      friction for teams that want to surface multiple options simultaneously. The pattern is wrong
+      when the user population is expert and expects direct access to multiple routes — in those
+      cases, expose alternatives explicitly rather than hiding them.
     links:
       - {target: 8d514b83d768, rel: refines}
       - {target: ed3622189556, rel: mitigates}
@@ -280,6 +333,21 @@ rules:
       on top of the same underlying capability. Trade-off: increases design and
       implementation scope; wrong when agent access is genuinely never
       required.
+    problem: |
+      AI agents are forced to interact with interfaces designed for human perception, producing
+      integrations that are fragile, opaque, and break silently when visual layouts change.
+    solution: |
+      Every capability that an agent must access is exposed through a structured, machine-readable
+      interface with a stable schema. This interface is a first-class product surface — versioned,
+      documented, and tested to the same standard as the human-facing interface. The agent's
+      interface is not a workaround for the absence of a visual interface; it is the canonical
+      interface for that user type. The human-facing interface is built on top of the same
+      underlying capability.
+    tradeoffs: |
+      Maintaining two interface surfaces (human and agent) increases design and implementation
+      scope. This cost is lower than the cost of maintaining fragile browser automation against a
+      changing visual interface. The pattern is wrong when agent access is genuinely never required
+      — do not pre-build an agent interface for capabilities that have no agent use case.
     links:
       - {target: e43e9ff85857, rel: refines}
       - {target: a2a41eddd7d4, rel: mitigates}
@@ -300,6 +368,21 @@ rules:
       Trade-off: requires more design investment upfront; allow layout and
       navigation to diverge when admin and end-user workflows are fundamentally
       different.
+    problem: |
+      Admin interfaces and end-user interfaces are designed independently, producing systems where
+      administrators are unable to form accurate mental models of what users experience, and where
+      users see inconsistency if they access admin-adjacent views.
+    solution: |
+      A single design system governs all visual interfaces in the application, including
+      administrative interfaces. Interaction patterns, information hierarchy, form behavior,
+      feedback, and error handling are specified once and applied everywhere. The admin interface
+      is not exempt from visual and UX standards. Role-specific elements are expressed within the
+      design system rather than outside it.
+    tradeoffs: |
+      Applying the design system to admin interfaces requires more design investment upfront. The
+      pattern is wrong when admin and end-user workflows are so different in nature that a shared
+      system produces confusing ambiguity — in those cases, maintain shared foundations (color,
+      typography, component library) while allowing layout and navigation to diverge.
     links:
       - {target: e43e9ff85857, rel: refines}
       - {target: 5f59ffbb3def, rel: mitigates}
@@ -319,6 +402,20 @@ rules:
       advanced state persists for the session or preference. Trade-off:
       deciding disclosure levels requires user research; audit levels regularly
       against actual usage.
+    problem: |
+      Full system complexity shown at first contact causes abandonment and slows onboarding; but
+      hiding capabilities from experienced users creates frustration.
+    solution: |
+      The default state of any view shows only what is needed for the primary task at that moment.
+      Secondary capabilities, advanced options, and edge-case controls are accessible but not
+      immediately visible. Disclosure is triggered by explicit user intent (a labeled "advanced"
+      toggle, a secondary navigation level) not by scrolling past primary content. Each disclosure
+      level is stable — once revealed, the advanced state persists for that user session or
+      preference.
+    tradeoffs: |
+      Deciding what belongs at each disclosure level is a judgment call that requires user research
+      or iteration. The pattern can be used to hide capabilities that should be primary; audit
+      disclosure levels regularly against actual usage patterns.
     links:
       - {target: 6c3fb70bfa32, rel: mitigates}
       - {target: 52bdae16f26b, rel: contradicts}
@@ -337,6 +434,25 @@ rules:
       rendering surfaces derived from the same service layer. Appropriate for
       products with heterogeneous user types. Trade-off: adds abstraction that
       teams unfamiliar with service-first design find counterintuitive.
+    diagram: |
+                        ┌───────────────────────────────────┐
+                        │           Service Layer            │
+                        │  (capabilities, state, business   │
+                        │         logic, access control)     │
+                        └──────┬───────────┬──────────┬─────┘
+                               │           │          │
+                   ┌───────────▼─┐  ┌──────▼───┐  ┌──▼──────────────┐
+                   │  End-User   │  │  Admin   │  │  Agent Interface │
+                   │  Web/Mobile │  │  Web UI  │  │  (Structured API │
+                   │  Interface  │  │          │  │   / CLI / SDK)   │
+                   └─────────────┘  └──────────┘  └─────────────────┘
+    when_appropriate: |
+      Products with heterogeneous user types (human end-users, human admins, AI agents) requiring
+      access to the same service capabilities. Small to mid-scale teams.
+    tradeoffs: |
+      The service layer is a single point of design governance — all surfaces inherit the same
+      capability definitions. Adds abstraction between service and surface that teams unfamiliar
+      with service-first design find counterintuitive.
     links:
       - {target: d7f85752c1b1, rel: refines}
       - {target: e43e9ff85857, rel: refines}
@@ -354,6 +470,31 @@ rules:
       the set of interface surfaces is unknown at design time or third-party
       clients are expected. Trade-off: requires disciplined API design;
       breaking changes affect all surfaces simultaneously.
+    diagram: |
+      ┌───────────────────────────────────────────────────────────┐
+      │                    Capability API                          │
+      │         (versioned, typed schema, access-scoped)          │
+      └──┬──────────────┬──────────────┬──────────────────────────┘
+         │              │              │
+      ┌──▼──────────┐  ┌▼──────────┐  ┌▼────────────────────────┐
+      │ First-Party │  │ First-Party│  │  Agent SDK / CLI Tool   │
+      │  Web Client │  │ Admin CLI  │  │  (machine-readable      │
+      │             │  │            │  │   output, typed schema) │
+      └─────────────┘  └───────────┘  └─────────────────────────┘
+                                                │
+                                     ┌──────────▼──────────┐
+                                     │  Third-Party Clients │
+                                     │  (partner apps,      │
+                                     │   integrations)      │
+                                     └──────────────────────┘
+    when_appropriate: |
+      Products where the set of interface surfaces is unknown at design time, or where third-party
+      clients are expected. Also appropriate when the agent interface is the primary interface and
+      the human interface is secondary.
+    tradeoffs: |
+      Maximum flexibility for surface diversity. Requires disciplined API design — the API is the
+      product, and breaking changes affect all surfaces simultaneously. Client teams must build
+      against a contract rather than a shared codebase.
     links:
       - {target: d7f85752c1b1, rel: refines}
       - {target: e43e9ff85857, rel: refines}
@@ -371,6 +512,36 @@ rules:
       capability API against the same service layer as human-facing interfaces.
       Trade-off: requires robust approval and audit surface; wrong when agents
       lack sufficient reliability to initiate actions.
+    diagram: |
+      Human Admin
+          │  (reviews, approves, or vetoes)
+          ▼
+      ┌───────────────────────────────┐
+      │   Approval Interface          │
+      │   (human-readable action log, │
+      │    approval/rejection UI)     │
+      └──────────────┬────────────────┘
+                     │ approved actions
+                     ▼
+      ┌───────────────────────────────┐
+      │   Agent Execution Layer       │
+      │   (agent operates via         │
+      │    structured capability API) │
+      └──────────────┬────────────────┘
+                     │
+                     ▼
+      ┌───────────────────────────────┐
+      │   Service Layer               │
+      │   (same capabilities as       │
+      │    human-facing interface)    │
+      └───────────────────────────────┘
+    when_appropriate: |
+      Products where administrative operations are predominantly performed by AI agents on behalf
+      of human principals, with humans approving rather than executing.
+    tradeoffs: |
+      Reduces human operational burden at the cost of requiring a robust approval and audit surface.
+      Wrong when agents do not yet have sufficient reliability to be trusted with initiating actions
+      — in those cases, agents should propose, and humans should execute.
     links:
       - {target: b6f0649c24cf, rel: refines}
       - {target: 8de237165c47, rel: refines}

@@ -4,6 +4,48 @@ meta:
   version: 1
   requires:
     - AUTH
+  vision: |
+    Every application that handles customer data faces a fundamental tension: the business needs
+    analytics to make decisions, and the customer needs assurance that their records are not
+    exposed, aggregated without consent, or weaponized by a breach. Most systems resolve this
+    tension with policy — a privacy notice, an internal access-control list, a promise. Policy is
+    necessary but insufficient. The resolution is architectural: separate the data the business
+    analyzes from the data the customer owns, and make the separation structural rather than
+    procedural.
+
+    A well-designed data layer treats encryption not as a checkbox but as a series of concentric
+    barriers. Disk encryption protects against physical theft. Database-level encryption protects
+    against file exfiltration. Field-level encryption protects against compromised database
+    credentials. User-held keys protect against compromised application servers. A breach at any
+    single layer yields ciphertext, not plaintext. The alternative — plaintext behind a perimeter
+    — means that a single misconfigured firewall rule or leaked credential exposes everything.
+
+    Data minimization is not a policy aspiration; it is a technical control. Every field collected
+    is a field that can be breached, subpoenaed, or misused. Data that does not exist cannot leak.
+    A system that collects "just in case" accumulates liability with no corresponding value. The
+    discipline of justifying every stored field — and deleting what is no longer needed — reduces
+    the blast radius of every other failure mode.
+
+    Agents — automated processes that act on behalf of the system — are constrained to aggregated,
+    anonymized views of data. An agent that can read individual customer records is an agent that
+    can exfiltrate individual customer records. The architectural boundary between raw transactional
+    data and the analytics tier is not a convenience; it is the enforcement mechanism for this
+    constraint.
+
+    Workers (AI task daemons, as defined in the Worker Blueprint) are a constrained exception to
+    this principle. A worker's database role grants SELECT on task queue views only — rows are
+    filtered to tasks assigned to that worker type. A worker does not have access to arbitrary
+    customer records, analytics tables, or any transactional table other than the task queue. This
+    exception is narrow, enforced at the PostgreSQL role layer, and not self-selected by the worker
+    at runtime.
+
+    The persistence layer is PostgreSQL from the first commit. Starting with an embedded database
+    and planning to migrate later is a false economy — the migration cost is paid in full in
+    downtime, schema rewrites, and bugs introduced during data transfer, and the security properties
+    of the early-stage architecture are weaker in ways that matter before any customer data arrives.
+    The three-database structure that the policy requires (transactional, analytics, audit) is
+    available locally via Docker Compose from day one and on any managed PostgreSQL service in
+    production. There is no architecture to migrate away from.
 
 rules:
   # ── Threats ──────────────────────────────────────────────────────────────
@@ -340,6 +382,19 @@ rules:
       cannot be indexed, searched, or sorted by the database engine; queries
       on encrypted fields require application-layer decryption or a separate
       non-sensitive derived index.
+    problem: |
+      Data written to the database in plaintext is exposed to anyone with database credentials,
+      backup access, or file-system access to the storage volume.
+    solution: |
+      The application layer encrypts sensitive fields before passing them to the database. The
+      database stores ciphertext. Decryption occurs in the application layer on read, using keys
+      retrieved from the key management service. The database engine never sees plaintext for
+      sensitive columns.
+    tradeoffs: |
+      Encrypted fields cannot be indexed, searched, or sorted by the database engine. Queries that
+      filter on encrypted fields require application-layer decryption of candidate rows or a
+      separate plaintext index of non-sensitive derived values (e.g., a hash for lookup). This
+      pattern adds latency to reads and writes proportional to the number of encrypted fields.
     links:
       - {target: 3be027de3daf, rel: refines}
       - {target: ed6163ae0eaf, rel: refines}
@@ -358,6 +413,18 @@ rules:
       sensitivity metadata, and KMS key IDs). Native column constraints are
       replaced by JSON Schema validation and partial unique indexes on JSONB
       fields. Recursive CTEs handle graph traversal.
+    problem: |
+      Static schemas (DDL) are rigid and make business velocity dependent on database migrations.
+    solution: |
+      Store all domain data in three tables: `entities` (nodes), `relations` (edges), and
+      `entity_types` (the registry). `entities` stores all objects with a `type` and a `properties`
+      JSONB column. `relations` stores typed edges between entities. `entity_types` stores the
+      schema (JSON Schema), sensitivity metadata, and KMS key IDs for each type.
+    tradeoffs: |
+      Losing some native column constraints (NOT NULL, CHECK). These are replaced by JSON Schema
+      validation and partial unique indexes on JSONB fields. Recursive CTEs for graph traversal can
+      be slower than simple JOINs at extreme depths, but more than sufficient for business data
+      graphs (org structures, task trees).
     links:
       - {target: c1a58c5b6248, rel: refines}
       - {target: 2148c73bfc28, rel: refines}
@@ -374,6 +441,16 @@ rules:
       and the FieldEncryptor to decide how to handle each property. Validation
       logic moves from the database engine to the application tier, enabling
       more expressive validation and versioned schema evolution without DDL.
+    problem: |
+      Moving to a schema-less JSONB model can lead to data corruption if not enforced.
+    solution: |
+      The application layer validates every write against the schema defined in `entity_types`.
+      This registry is live metadata that the validation layer and the `FieldEncryptor` use to
+      decide how to handle each property.
+    tradeoffs: |
+      Validation logic moves from the database engine to the application tier. This increases
+      application complexity but allows for more expressive validation and versioned schema
+      evolution without DDL.
     links:
       - {target: ad20dbdec789, rel: depends_on}
       - {target: 60ed722d31f6, rel: depends_on}
@@ -391,6 +468,21 @@ rules:
       state. The graph model remains the default for business-domain
       flexibility; the journal is the integrity layer for operations requiring
       attributability, replayability, and recoverability.
+    problem: |
+      Flexible graph storage is well-suited to evolving business entities, but it is not sufficient
+      on its own for consequential state transitions that require total order, compensating rollback,
+      deterministic replay, and cryptographic verification.
+    solution: |
+      Use a dedicated append-only journal for consequential business operations. The journal stores
+      accepted transaction facts, links compensations to the transactions they reverse, and supports
+      deterministic reconstruction of materialized state. The graph model remains the default for
+      business-domain flexibility; the journal is the integrity layer for operations that must be
+      attributable, replayable, and recoverable.
+    tradeoffs: |
+      This introduces a second modeling style inside the transactional tier. The cost is justified
+      because the journal is not modeling arbitrary business entities — it is modeling
+      integrity-critical state transitions. The system gains replay, compensation, and provable
+      ordering at the cost of some additional schema and validator complexity.
     links:
       - {target: c1a58c5b6248, rel: refines}
       - {target: d4f39216240f, rel: refines}
@@ -407,6 +499,15 @@ rules:
       to encrypt specific keys within the JSONB blob before storage. One key
       compromise exposes only one entity type. Rotation is handled per entity
       type.
+    problem: |
+      A single encryption key for all data means that compromise of one key exposes everything.
+    solution: |
+      The `entity_types` registry declares which properties are `sensitive` and which `kms_key_id`
+      protects them. The `FieldEncryptor` reads this registry to encrypt specific keys within the
+      JSONB blob before storage.
+    tradeoffs: |
+      Requires the registry to be consistent across all application instances. Rotation is handled
+      per entity type.
     links:
       - {target: 3be027de3daf, rel: refines}
       - {target: 522c78fa3ceb, rel: depends_on}
@@ -426,6 +527,20 @@ rules:
       reverse pseudonymization. The event pipeline must provide at-least-once
       delivery with idempotent writes. Events failing pseudonymization are
       dropped with a structured log entry, never written with raw identifiers.
+    problem: |
+      Running analytics queries against the transactional customer database creates a direct path
+      from the analytics layer to raw customer records. A single query mistake, a permissive access
+      grant, or a compromised analytics tool exposes individual customer data.
+    solution: |
+      Analytics operates on a separate data store populated by pseudonymous, aggregated events. The
+      transactional store emits events (not row copies) that are stripped of direct identifiers and
+      attributed to rotating session pseudonyms. The analytics store has no foreign keys to the
+      transactional store and no mechanism to reverse the pseudonymization.
+    tradeoffs: |
+      Two stores means two schemas, two backup strategies, and an event pipeline that must be
+      monitored for lag and data loss. Debugging analytics anomalies is harder when you cannot
+      trace an event back to a specific customer record — this is the intended behavior, but it
+      frustrates ad-hoc investigation.
     links:
       - {target: d7eca61da7e1, rel: refines}
       - {target: 41bebcc94544, rel: depends_on}
@@ -443,6 +558,20 @@ rules:
       session pseudonyms is held only in the transactional tier and never
       exported to the analytics store. Longitudinal analysis uses cohort-level
       aggregation, not individual tracking across sessions.
+    problem: |
+      Attributing analytics events to permanent user identifiers (user IDs, emails) enables
+      re-identification even when events are stored in a separate analytics tier.
+    solution: |
+      Analytics events are attributed to session-scoped pseudonyms that rotate on a defined
+      schedule (e.g., per session, per day). The mapping between permanent identifiers and session
+      pseudonyms is held only in the transactional tier and is never exported to the analytics
+      store. Longitudinal analysis uses cohort-level aggregation, not individual tracking across
+      sessions.
+    tradeoffs: |
+      Rotating pseudonyms make it impossible to build per-user behavioral timelines in the analytics
+      tier — this limits certain product analytics use cases (e.g., funnel analysis per user).
+      Teams that need user-level analytics must access the transactional tier through the
+      audit-controlled, access-restricted path, not the analytics tier.
     links:
       - {target: f8dc70f7a4ff, rel: depends_on}
       - {target: e929ac34c20d, rel: mitigates}
@@ -462,6 +591,21 @@ rules:
       remaining budget are rejected with an explicit error. For agent-initiated
       queries, budget exhaustion returns a structured error; agents must not
       retry with broader queries to circumvent the limit.
+    problem: |
+      Aggregated query results can leak information about individuals, especially in small groups.
+      A query that returns "average salary for the 3-person engineering team" reveals meaningful
+      information about each individual.
+    solution: |
+      Aggregated data exported from the analytics tier has calibrated noise added according to a
+      differential privacy mechanism. The privacy budget (epsilon) is configured per query class and
+      enforced by the analytics export layer. Queries that would exceed the privacy budget for a
+      given dataset are rejected.
+    tradeoffs: |
+      Noise reduces the precision of analytics results. Low-cardinality groups (small teams, rare
+      events) produce noisy results that may not be actionable. The privacy budget must be managed
+      — too generous and privacy degrades; too restrictive and analytics becomes useless.
+      Differential privacy is a mathematical guarantee, not an approximation, but it requires
+      careful calibration.
     links:
       - {target: e929ac34c20d, rel: mitigates}
       - {target: 20f68dd7d339, rel: refines}
@@ -479,6 +623,19 @@ rules:
       nonce or timestamp window, and rejects events failing validation. Signed
       events are stored with their signatures for downstream audit. This
       protects against network-level tampering, not against a malicious client.
+    problem: |
+      Analytics events generated client-side can be tampered with in transit — injecting false
+      events, modifying values, or replaying old events to skew analytics.
+    solution: |
+      The client signs each analytics event with a session-scoped key before transmission. The
+      server validates the signature, checks for replay (via nonce or timestamp window), and rejects
+      events that fail validation. Signed events are stored with their signatures for downstream
+      audit.
+    tradeoffs: |
+      Client-side signing requires key distribution and increases event payload size. A compromised
+      client can still generate valid but misleading events (the signature proves origin, not
+      truthfulness). This pattern protects against network-level tampering, not against a malicious
+      client.
     links:
       - {target: f8dc70f7a4ff, rel: depends_on}
     deprecated: false
@@ -494,6 +651,22 @@ rules:
       Entries include accessor identity, timestamp, data accessed, and access
       justification. Batching is not permitted because it breaks the
       log-before-read guarantee.
+    problem: |
+      Audit logs written after data access are vulnerable to suppression — an attacker who can read
+      data can also prevent the log entry from being written. Asynchronous logging has the same
+      failure mode under load shedding or crash.
+    solution: |
+      The access path writes the audit entry to an append-only log before executing the data read.
+      If the audit write fails, the data read is denied. The audit log uses a separate encryption
+      key and a separate storage backend from the data it covers. Log entries include the identity
+      of the accessor, the timestamp, the data accessed, and the access justification (where
+      applicable).
+    tradeoffs: |
+      Synchronous audit logging adds latency to every sensitive read — typically one additional
+      write operation. The append-only log grows without bound and requires a retention and archival
+      strategy. The separate storage backend is an additional infrastructure dependency. For
+      high-throughput systems, the audit write can become a bottleneck; batching is not permitted
+      because it breaks the "log before read" guarantee.
     links:
       - {target: c9d640683d0c, rel: refines}
       - {target: e35f0e3a69ab, rel: mitigates}
@@ -512,6 +685,21 @@ rules:
       storage, and hard write isolation. All twin actions are audit-marked as
       sandbox actions. Clone the smallest production-relevant state that yields
       credible workflow simulation, not the entire database.
+    problem: |
+      Humans and agents need to test consequential transaction sequences, workflow transitions, and
+      downstream effects against realistic state. Running these experiments against production is
+      unsafe; reasoning about them without realistic state is unreliable.
+    solution: |
+      Create sandboxed digital twins of production-relevant state. A twin is an isolated,
+      short-lived clone produced from a recent snapshot, a replay checkpoint, or a minimal domain
+      slice with referential integrity preserved. The twin runs the same validator, policy, and
+      event logic as production but with separate credentials, separate mutable storage, and hard
+      write isolation. All twin actions are audit-marked as sandbox actions.
+    tradeoffs: |
+      Twin creation requires snapshot management, state slicing, and teardown logic. Full-fidelity
+      clones are more expensive than narrow domain slices. The correct trade is to clone the
+      smallest production-relevant state that still yields credible workflow simulation, not to copy
+      the entire database by default.
     links:
       - {target: 266d60e3f2a6, rel: refines}
       - {target: d2ceda07176c, rel: depends_on}
@@ -530,6 +718,23 @@ rules:
       objects or database rows. The scrubber is applied at the log sink. Before
       each gate, the pipeline is verified under adversarial conditions with
       automated tests asserting absence of PII patterns.
+    problem: |
+      Application logs record errors, request traces, and system events. Under error conditions —
+      exceptions, serialization failures, validation errors — the full object that caused the error
+      is frequently logged, and that object may contain decrypted PII, database rows, or request
+      payloads with sensitive fields.
+    solution: |
+      All log output passes through a scrubbing layer before persistence. The scrubber maintains a
+      deny-list of field names (e.g., `email`, `name`, `address`, `token`, `password`) and a
+      pattern list (e.g., email address regex, credit card number pattern). Fields matching the
+      deny-list are replaced with a fixed redaction marker. Error handlers are explicitly prohibited
+      from logging raw objects, database rows, or request bodies — they log IDs and error codes
+      only. The scrubber is applied at the log sink, not at each call site.
+    tradeoffs: |
+      A deny-list scrubber is not a perfect control — novel field names and deeply nested structures
+      can escape it. It is a defense-in-depth measure that catches the most common accidental leaks.
+      The definitive control is the discipline of never logging structured objects in error paths,
+      which the scrubber reinforces but does not replace.
     links:
       - {target: 80a03d11a7eb, rel: mitigates}
       - {target: 845a26aaeb89, rel: depends_on}
@@ -552,6 +757,51 @@ rules:
       Docker Compose to deploy the application container alongside PostgreSQL
       and Vault. Acceptable for pre-production; replaced by independent managed
       databases when availability SLAs require it.
+    diagram: |
+      ┌──────────────────────────────────────────────────┐
+      │                Application Server                │
+      │                                                  │
+      │  ┌─────────────┐   ┌──────────────────────────┐  │
+      │  │  Business   │   │    Encryption Layer       │  │
+      │  │  Logic      │──►│ (per-type, registry-sync)  │  │
+      │  └──────┬──────┘   └────────────┬─────────────┘  │
+      │         │                       │                │
+      │  ┌──────▼──────┐   ┌────────────▼─────────────┐  │
+      │  │  Event      │   │    KMS Client             │  │
+      │  │  Pipeline   │   │    (Vault / AWS / GCP)    │  │
+      │  │  (pseudonym)│   └──────────────────────────┘  │
+      │  └──────┬──────┘                                 │
+      └─────────┼────────────────────────────────────────┘
+                │
+                │  app_rw          analytics_w     audit_w
+                ▼                  ▼               ▼
+      ┌──────────────────┐  ┌──────────────┐  ┌──────────────┐
+      │  calypso_app     │  │calypso_      │  │calypso_audit │
+      │ (entities,       │  │analytics     │  │(INSERT-only  │
+      │  relations,      │  │(pseudonymous │  │ role,        │
+      │  entity_types)   │  │ events,      │  │ append-only  │
+      └──────────────────┘  │ DP export)   │  │ table)       │
+                │           └──────────────┘  └──────────────┘
+                ▼
+      ┌──────────────────┐
+      │  KMS             │
+      │  (Vault local /  │
+      │   cloud KMS)     │
+      └──────────────────┘
+    when_appropriate: |
+      The baseline architecture from the first commit. A single PostgreSQL instance hosts three
+      databases: calypso_app (transactional), calypso_analytics (analytics events), calypso_audit
+      (audit log). The application server holds three separate connection pools with three separate
+      database roles. The KMS runs as a separate process (local Vault in development via Docker
+      Compose, cloud KMS in production). Analytics events flow from the application through an
+      in-process event pipeline that pseudonymizes before writing to calypso_analytics.
+    tradeoffs: |
+      All three databases share one PostgreSQL instance — an instance-level failure takes down all
+      three simultaneously. This is acceptable for pre-production and early production; the single
+      instance is replaced by independent managed databases when availability SLAs require it. The
+      event pipeline is in-process, so analytics event delivery is synchronous with request
+      handling — lag is zero but pipeline failures surface as request errors. An async pipeline
+      (separate worker, queue) is a production upgrade, not a day-one requirement.
     links:
       - {target: d7eca61da7e1, rel: implements}
       - {target: 2148c73bfc28, rel: implements}
@@ -574,6 +824,54 @@ rules:
       key hierarchies, moves the event pipeline to an async worker with durable
       queue, and adds HSM backing. Schema and encryption envelope format are
       unchanged.
+    diagram: |
+      ┌─────────────────────────────────────────────────────┐
+      │                  Application Tier                   │
+      │  ┌─────────┐  ┌─────────┐  ┌─────────────────────┐ │
+      │  │Tenant A │  │Tenant B │  │  Encryption Layer    │ │
+      │  │ Context │  │ Context │  │  (per-tenant keys)   │ │
+      │  └────┬────┘  └────┬────┘  └──────────┬──────────┘ │
+      │       └─────┬──────┘               │               │
+      └─────────────┼──────────────────────┼───────────────┘
+                    │                      │
+                    ▼                      ▼
+      ┌──────────────────┐    ┌──────────────────────────┐
+      │   Relational     │    │   Key Management Service │
+      │   Database       │    │   (HSM-backed)           │
+      │   (row-level     │    │                          │
+      │    security,     │    │   ┌────────┐ ┌────────┐  │
+      │    encrypted     │    │   │Tenant A│ │Tenant B│  │
+      │    fields)       │    │   │ Keys   │ │ Keys   │  │
+      │                  │    │   └────────┘ └────────┘  │
+      └──────────────────┘    └──────────────────────────┘
+                    │
+                    ▼
+      ┌──────────────────┐    ┌──────────────────────────┐
+      │  Event Pipeline  │───►│  Analytics Event Store    │
+      │  (pseudonymize,  │    │  (tenant-partitioned,     │
+      │   strip PII)     │    │   DP on export)           │
+      └──────────────────┘    └──────────┬───────────────┘
+                                         │
+                    ┌────────────────────┼──────────────┐
+                    ▼                    ▼              ▼
+      ┌──────────────────┐  ┌────────────────┐  ┌────────────┐
+      │  Agent Consumer  │  │  Admin Report  │  │  Audit Log │
+      │  (aggregated,    │  │  Dashboard     │  │  (immutable│
+      │   DP-filtered)   │  │  (DP-filtered) │  │   cold     │
+      └──────────────────┘  └────────────────┘  │   storage) │
+                                                └────────────┘
+    when_appropriate: |
+      Per-tenant key hierarchies isolate encryption so that compromise of one tenant's keys does
+      not expose another tenant's data. The key management service is backed by a hardware security
+      module. The analytics tier applies differential privacy on all exports. The audit log is
+      replicated to immutable cold storage. Use this architecture when regulatory requirements
+      (SOC 2, GDPR, HIPAA) demand provable tenant isolation and mathematical privacy guarantees.
+    tradeoffs: |
+      Significant operational complexity. Per-tenant key hierarchies require tenant lifecycle
+      management (onboarding creates keys, offboarding destroys them). HSM-backed key management
+      adds latency and cost. Differential privacy on every export requires privacy budget tracking
+      and may render small-tenant analytics unusable. Row-level security adds query planning
+      overhead.
     links:
       - {target: e58dde384025, rel: depends_on}
       - {target: 60ed722d31f6, rel: implements}

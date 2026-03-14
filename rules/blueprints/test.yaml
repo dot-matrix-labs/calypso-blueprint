@@ -3,7 +3,27 @@ meta:
   title: Testing Blueprint
   version: 1
   requires:
-    - blueprints/environment-blueprint.md
+    - ENV
+  vision: |
+    Tests are the only proof that software works. Code reviews catch style issues and obvious
+    logic errors; type systems catch shape mismatches; linters catch formatting. But only a test
+    that executes the code on the target platform, with real inputs, and asserts real outputs can
+    demonstrate that the software does what it claims to do. Everything else is inference.
+
+    In agent-built software, testing carries an additional burden: the agent that wrote the code is
+    not the agent that will maintain it. A future agent — or the same agent in a new session — has
+    no memory of the original intent. The test suite is the executable specification. It encodes
+    what the code must do, under what conditions, and with what results. Without it, every future
+    agent must reverse-engineer intent from implementation, which is how bugs become features and
+    regressions become permanent.
+
+    The testing strategy for agent-built software rejects hand-wavy substitutes for production
+    behavior. A hand-authored mock replaces a real dependency with a controlled fiction and usually
+    confirms the author's assumptions rather than reality. The preferred order is real dependency
+    first, recorded fixture from a real dependency second, and a narrowly-scoped fake only when the
+    boundary cannot be exercised credibly in automated tests. The cost of ignoring this blueprint is
+    a test suite that provides false confidence: green checkmarks that correspond to nothing in
+    production.
 
 rules:
 
@@ -271,6 +291,20 @@ rules:
       Fixtures are periodically refreshed by re-running the recorder against
       the live API. Stale fixtures are mitigated by scheduled refresh runs and
       schema drift alerts.
+    problem: |
+      Integration tests need realistic API responses, but calling live external APIs on every test
+      run is slow, flaky, rate-limited, and may have side effects. Mocking the responses by hand
+      produces fixtures that reflect the developer's imagination, not reality.
+    solution: |
+      Build a fixture recording tool that makes real HTTP requests to external APIs and serializes
+      the full request/response pairs to disk. These "golden" fixtures are committed to the
+      repository and replayed during tests. The fixtures are periodically refreshed by re-running
+      the recorder against the live API. Tests that use golden fixtures compare actual behavior
+      against known-real behavior.
+    tradeoffs: |
+      Fixtures become stale if the external API changes and the recorder is not re-run. Stale
+      fixtures cause tests to pass while production fails. Mitigation: schedule periodic fixture
+      refresh runs in CI and alert on schema drift.
     links:
       - {target: 1b3bbdf1be70, rel: refines}
       - {target: 65d4d742b6e6, rel: refines}
@@ -290,6 +324,19 @@ rules:
       workflows to pass. A red check immediately identifies the broken suite.
       Setup duplication across workflows is acceptable to guarantee
       independence.
+    problem: |
+      A monolithic CI workflow that runs all tests in sequence provides a single pass/fail signal.
+      When it fails, the developer must read logs to determine which suite broke. Parallelism within
+      the workflow is complex and fragile.
+    solution: |
+      Create one CI workflow file per test suite. Each workflow is self-contained: it installs
+      dependencies, sets up the environment, runs its suite, and reports results. The merge gate
+      requires all workflows to pass. A red check on "Component Tests" immediately tells the
+      developer where to look.
+    tradeoffs: |
+      More workflow files to maintain. Shared setup steps are duplicated across workflows. The
+      duplication is acceptable because it guarantees independence — a change to component test
+      setup cannot break the unit test workflow.
     links:
       - {target: 217845b40c8f, rel: refines}
       - {target: 37d0664a0b4b, rel: refines}
@@ -307,6 +354,17 @@ rules:
       local development and CI. CI runs each suite's canonical command in its
       own workflow. Local development can run any single suite command or an
       aggregate command that invokes all canonical suite commands unchanged.
+    problem: |
+      Tests pass locally but fail in CI because local and CI use different commands, runners, or
+      environment setup.
+    solution: |
+      Define canonical per-suite commands and run those exact commands in both places. CI runs all
+      suites by executing each suite's canonical command in its own workflow. Local development can
+      run any single suite command or an aggregate command that invokes all canonical suite commands
+      unchanged.
+    tradeoffs: |
+      Slight duplication between local scripts and CI workflow steps. The duplication is intentional
+      because parity is the correctness guarantee.
     links:
       - {target: 9f579d269f3e, rel: refines}
       - {target: 75558009a61e, rel: refines}
@@ -323,6 +381,18 @@ rules:
       JavaScript execution, and network behavior identical to a visible
       browser. Visual output is captured as screenshots for inspection by
       humans or vision-capable models.
+    problem: |
+      Browser code must be tested in a browser, but development environments for AI agents have no
+      display server, no GUI, and no way to open a visible browser window.
+    solution: |
+      All browser tests run in headless mode using a browser automation framework. The framework
+      launches a real browser engine (not a DOM simulation) with rendering, layout, JavaScript
+      execution, and network behavior identical to a visible browser — but without a display. Visual
+      output is captured as screenshots for inspection by humans or vision-capable models.
+    tradeoffs: |
+      Headless mode cannot test certain display-dependent behaviors (scroll position on physical
+      monitors, GPU-accelerated animations). These edge cases are rare and acceptable to exclude
+      from automated testing.
     links:
       - {target: db116b037c86, rel: refines}
       - {target: 4276faad79f4, rel: mitigates}
@@ -338,6 +408,16 @@ rules:
       build verification. Keep test workflows focused on executing test suite
       commands only. Merge gating requires both the quality-gate workflow and
       all test-suite workflows to pass.
+    problem: |
+      Mixing code-quality checks with every test workflow duplicates work and increases CI runtime,
+      but skipping quality checks entirely lets formatting/lint/build failures leak into merge gates.
+    solution: |
+      Use one dedicated quality-gate workflow that runs lint, format check, and build verification.
+      Keep test workflows focused on executing their test suite commands only. Merge gating requires
+      both the quality-gate workflow and all test-suite workflows to pass.
+    tradeoffs: |
+      Adds one required workflow and enforces explicit branch-protection configuration. In return,
+      CI avoids duplicated lint/format work and test workflow outcomes remain behavior-focused.
     links:
       - {target: 34c0790ac993, rel: refines}
       - {target: 9673d6a79b8a, rel: refines}
@@ -355,6 +435,19 @@ rules:
       environment, comparison of rebuilt state to materialized state, and
       rollback or compensation misuse scenarios. Tests run against real
       PostgreSQL and real validator logic.
+    problem: |
+      A ledgered system can appear correct in normal request handling while still failing the
+      enterprise requirements that matter most during incidents: replay, restore, divergence
+      detection, and compensating rollback.
+    solution: |
+      Add dedicated tests that start from durable ledger facts and prove the system can rebuild
+      state deterministically. The suite covers replay from genesis, replay from checkpoints,
+      restore from backup into a clean environment, comparison of rebuilt state to materialized
+      state, and rollback or compensation misuse scenarios. Tests run against real PostgreSQL and
+      real validator logic.
+    tradeoffs: |
+      Replay and recovery tests are slower than unit tests and require more setup. That cost is
+      acceptable because disaster recovery guarantees cannot be established by fast tests alone.
     links:
       - {target: 7e1f4bd87e6f, rel: refines}
       - {target: f8776a7fc7da, rel: refines}
@@ -371,6 +464,20 @@ rules:
       asserts on the produced diff and events, verifies production state is
       unchanged, and confirms teardown revokes access and removes mutable
       state. Tests must use the real twin orchestration path.
+    problem: |
+      A digital twin feature is only safe if clone creation is fast, isolation is real, and teardown
+      reliably removes mutable state and credentials. Without explicit tests, a twin becomes an
+      unverified production-adjacent environment.
+    solution: |
+      Add a twin lifecycle suite that provisions a sandboxed twin from production-relevant inputs,
+      executes a realistic transaction sequence inside it, asserts on the produced diff and events,
+      verifies that production state is unchanged, and confirms that teardown revokes access and
+      removes mutable state. Tests must use the real twin orchestration path, not a mocked clone
+      service.
+    tradeoffs: |
+      Twin lifecycle tests require infrastructure support and can be more operationally involved
+      than ordinary integration tests. That is appropriate because the twin feature itself is
+      operational infrastructure exposed as a product capability.
     links:
       - {target: 7e1f4bd87e6f, rel: refines}
       - {target: 8ff4458283c5, rel: refines}
@@ -387,6 +494,30 @@ rules:
       with a local Kubernetes cluster for integration tests. CI mirrors local
       execution exactly. Appropriate when total test time is under five
       minutes.
+    diagram: |
+      ┌───────────────────────────────────────────────────────┐
+      │  Development Host                                     │
+      │                                                       │
+      │  ┌────────────┐  ┌───────────────┐  ┌───────────────┐ │
+      │  │ Unit Tests │  │ Integration   │  │ Browser Tests │ │
+      │  │ (local     │  │ Tests (K8s    │  │ (headless     │ │
+      │  │  runner)   │  │  deployment)  │  │  engine)      │ │
+      │  └─────┬──────┘  └───────┬───────┘  └───────┬───────┘ │
+      │        │                 │                  │         │
+      │        └─────────────────┼──────────────────┘         │
+      │                          ▼                            │
+      │                Test Runner CLI                        │
+      │                (single command, all suites)           │
+      └───────────────────────────────────────────────────────┘
+
+      CI mirrors this exactly on runners, spinning up a local K8s cluster
+      (e.g., kind or minikube) for integration tests.
+    when_appropriate: |
+      Enterprise projects whose full gate is still short enough that one runner can execute the
+      complete suite sequentially without harming throughput.
+    tradeoffs: |
+      No parallelism. Full suite runs sequentially. Acceptable when total test time is under five
+      minutes.
     links:
       - {target: 9f579d269f3e, rel: refines}
       - {target: e9f7459b95e2, rel: refines}
@@ -401,6 +532,33 @@ rules:
       workflows for quality gate, unit, integration, component, and E2E tests.
       Merge gate requires all workflows to pass. Failure is immediately
       localized. Appropriate when total test time exceeds five minutes.
+    diagram: |
+      ┌─────────────────────────────────────────────────┐
+      │  CI Platform (triggered on push/PR)             │
+      │                                                 │
+      │  ┌──────────────────┐  ┌────────────────────┐   │
+      │  │ Workflow:        │  │ Workflow: Unit     │   │
+      │  │ Quality Gate     │  │ test               │   │
+      │  │ lint+format+build│  │                    │   │
+      │  └────────┬─────────┘  └────────┬───────────┘   │
+      │           │                     │               │
+      │  ┌────────┴─────────┐  ┌───────┴────────────┐   │
+      │  │ Workflow: K8s    │  │ Workflow:          │   │
+      │  │ Integration test │  │ Component test     │   │
+      │  └────────┬─────────┘  └────────┬───────────┘   │
+      │           │                     │               │
+      │           └──────────┬──────────┘               │
+      │                      ▼                          │
+      │            Workflow: Full-Page E2E test         │
+      │                                                 │
+      │  Merge gate: quality gate + all test workflows  │
+      └─────────────────────────────────────────────────┘
+    when_appropriate: |
+      Projects with enough suite volume or enough required environments that sequential execution is
+      too slow. Each suite runs on its own runner in parallel. Failure is immediately localized.
+    tradeoffs: |
+      Higher CI cost (four runners instead of one). Setup duplication across workflows. Worth it
+      when total test time exceeds five minutes.
     links:
       - {target: fab7da1aaf57, rel: refines}
       - {target: e89af6c2f0d3, rel: refines}
@@ -416,6 +574,29 @@ rules:
       serializes request/response pairs, compares against existing fixtures,
       alerts on schema drift, and commits updated fixtures. Integration tests
       use committed fixtures and never call live APIs during test runs.
+    diagram: |
+      ┌──────────────────────────────────────────────────┐
+      │  Scheduled CI Job (weekly or on-demand)          │
+      │                                                  │
+      │  ┌────────────────────────────────────────────┐  │
+      │  │  Fixture Recorder                          │  │
+      │  │  1. Call live external APIs                │  │
+      │  │  2. Serialize request/response pairs       │  │
+      │  │  3. Compare against existing fixtures      │  │
+      │  │  4. Alert on schema drift                  │  │
+      │  │  5. Commit updated fixtures                │  │
+      │  └────────────────────────────────────────────┘  │
+      │                                                  │
+      │  Integration tests use committed fixtures        │
+      │  (never call live APIs during test runs)         │
+      └──────────────────────────────────────────────────┘
+    when_appropriate: |
+      Projects with external API dependencies. Fixtures are the bridge between "never mock" and
+      "don't hit live APIs on every test run."
+    tradeoffs: |
+      Requires API credentials in CI for the recorder job. Fixtures may not cover edge cases that
+      only appear under specific conditions. Supplement with manual fixture capture for known edge
+      cases.
     links:
       - {target: 135eccfbae17, rel: refines}
       - {target: 05d7d8bf3011, rel: refines}
