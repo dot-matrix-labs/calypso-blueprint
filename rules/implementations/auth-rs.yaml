@@ -1,0 +1,406 @@
+meta:
+  domain: IMPL-AUTH-RS
+  title: Auth - Rust Implementation
+  implements: AUTH
+  version: 1
+
+rules:
+  # ── Database ────────────────────────────────────────────────────────────────
+
+  - number: IMPL-AUTH-RS-001
+    hash: 96b9779798bf
+    name: auth-data-in-graph-model
+    type: implementation
+    description: >
+      All auth data (user, passkey_credential, agent, recovery_shard) lives in
+      calypso_app as distinct entity types in the graph model with their own
+      schemas and sensitivity settings.
+    links:
+      - {target: f45cd0927a41, rel: implements}  # AUTH-A-001 single-application-passkey-auth
+    deprecated: false
+
+  # ── Authentication ──────────────────────────────────────────────────────────
+
+  - number: IMPL-AUTH-RS-002
+    hash: a4a23ee8e667
+    name: passkey-webauthn-fido2
+    type: implementation
+    description: >
+      Passkey-first authentication via WebAuthn (FIDO2). Server stores the
+      public key and credential ID only; no password hash exists. Uses the
+      webauthn-rs crate for FIDO2 protocol handling.
+    links:
+      - {target: 91782768755f, rel: implements}  # AUTH-D-001 passkey-authentication
+      - {target: 24cd299b632f, rel: implements}  # AUTH-P-001 passkey-first-password-never
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-003
+    hash: 7704ad62af58
+    name: challenge-response-flow
+    type: implementation
+    description: >
+      Server generates a random challenge via OsRng, client signs with the
+      passkey, server verifies the signature against the stored public key.
+      Challenge is time-bounded and single-use.
+    links:
+      - {target: 91782768755f, rel: implements}  # AUTH-D-001 passkey-authentication
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-004
+    hash: 6157a46d0025
+    name: bip39-recovery-shard
+    type: implementation
+    description: >
+      Key recovery uses a BIP-39 mnemonic via the bip39 crate to encrypt a
+      recovery shard stored server-side. Recovery requires the mnemonic plus
+      a second factor (backup-code via Argon2id hash or hardware-key via
+      credential ID lookup). Argon2 via the argon2 crate from RustCrypto.
+    links:
+      - {target: 583a1a04f43b, rel: implements}  # AUTH-D-007 key-recovery-without-passwords
+    deprecated: false
+
+  # ── Token Management ──────────────────────────────────────────────────────
+
+  - number: IMPL-AUTH-RS-005
+    hash: 5c1aeec07db5
+    name: es256-signing
+    type: implementation
+    description: >
+      Token signing uses ES256 (ECDSA P-256) via the p256 and ecdsa crates
+      from RustCrypto. DIY JWT construction (~100 lines) with pinned
+      algorithm. No jsonwebtoken library dependency. Signing key from KMS.
+    links:
+      - {target: 7a27eb77385c, rel: implements}  # AUTH-D-002 pinned-algorithm-token-verification
+      - {target: 0ce2a38691c6, rel: implements}  # AUTH-P-009 algorithm-pinned-not-negotiated
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-006
+    hash: b859b69ef2f3
+    name: algorithm-pinning-es256
+    type: implementation
+    description: >
+      JWT header alg is verified to be ES256 before validation; any other
+      value is rejected outright. The algorithm is a compile-time constant,
+      not a runtime configuration value read from the token.
+    links:
+      - {target: 7a27eb77385c, rel: implements}  # AUTH-D-002 pinned-algorithm-token-verification
+      - {target: 0ce2a38691c6, rel: implements}  # AUTH-P-009 algorithm-pinned-not-negotiated
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-007
+    hash: 48900cfbcc19
+    name: token-httponly-cookie
+    type: implementation
+    description: >
+      Tokens stored in HTTP-only, Secure, SameSite=Strict cookies. Never
+      exposed in response bodies, URLs, or client-accessible storage. Axum
+      cookie handling via tower-cookies.
+    links:
+      - {target: e6c8393de085, rel: implements}  # AUTH-D-008 http-only-session-cookies
+      - {target: 98659756871c, rel: implements}  # AUTH-P-002 tokens-opaque-to-browsers
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-008
+    hash: 1205f7a09bfd
+    name: token-expiry-1h-rotation
+    type: implementation
+    description: >
+      Default token expiry is 1 hour. Refresh uses rotation: new token issued
+      on each refresh, old token invalidated immediately via jti revocation.
+    links:
+      - {target: fb3677b0b045, rel: implements}  # AUTH-C-018 token-refresh-rotation
+      - {target: b38917607d24, rel: implements}  # AUTH-P-005 deterministic-gates
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-009
+    hash: 21f7f598490b
+    name: jti-revocation-table
+    type: implementation
+    description: >
+      Every token carries a jti claim. Revocation list is a table in
+      calypso_app queried on every authenticated request via sqlx.
+    links:
+      - {target: 61846075d02a, rel: implements}  # AUTH-D-009 token-revocation-store
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-010
+    hash: 5c8e57a66c2b
+    name: revocation-cache-ttl-60s
+    type: implementation
+    description: >
+      In-memory caching of revoked jti values is permitted with a TTL of 60
+      seconds maximum. Uses a simple HashMap<Uuid, Instant> behind a RwLock,
+      no external caching library needed.
+    links:
+      - {target: 61846075d02a, rel: implements}  # AUTH-D-009 token-revocation-store
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-011
+    hash: 7184337f4ef3
+    name: security-revocation-cache-bypass
+    type: implementation
+    description: >
+      Security-critical revocations (account compromise, passkey change)
+      bypass the in-memory cache; middleware performs a direct DB read.
+    links:
+      - {target: 61846075d02a, rel: implements}  # AUTH-D-009 token-revocation-store
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-012
+    hash: eec220241001
+    name: revocation-entry-expiry-cleanup
+    type: implementation
+    description: >
+      Revocation entries expire from the table after the token's own exp
+      timestamp. Expired entries cleaned up by a Tokio background task.
+    links:
+      - {target: 61846075d02a, rel: implements}  # AUTH-D-009 token-revocation-store
+    deprecated: false
+
+  # ── Agent Authentication ──────────────────────────────────────────────────
+
+  - number: IMPL-AUTH-RS-013
+    hash: ce786a1d663a
+    name: agent-scoped-tokens
+    type: implementation
+    description: >
+      Agents receive scoped tokens with an explicit scopes claim
+      (Vec<String>, e.g., ["analytics:read", "schema:read"]).
+    links:
+      - {target: 47fb0e2f6869, rel: implements}  # AUTH-D-003 scoped-agent-tokens
+      - {target: adff78a52d6d, rel: implements}  # AUTH-P-003 agent-credentials-scoped
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-014
+    hash: 0f35c3dd7814
+    name: agent-max-ttl-24h
+    type: implementation
+    description: >
+      Agent token maximum TTL is 24 hours; agents must re-authenticate daily.
+    links:
+      - {target: 47fb0e2f6869, rel: implements}  # AUTH-D-003 scoped-agent-tokens
+      - {target: da787ad20e22, rel: implements}  # AUTH-C-010 agent-token-ttl-24h-max
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-015
+    hash: 4159e982e108
+    name: agent-dedicated-endpoint
+    type: implementation
+    description: >
+      Agent tokens issued by a dedicated Axum route handler, not the user
+      login flow.
+    links:
+      - {target: 47fb0e2f6869, rel: implements}  # AUTH-D-003 scoped-agent-tokens
+    deprecated: false
+
+  # ── Session Management ────────────────────────────────────────────────────
+
+  - number: IMPL-AUTH-RS-016
+    hash: e5054dce48f5
+    name: auth-middleware-tower-layer
+    type: implementation
+    description: >
+      Single auth middleware implemented as a Tower layer. Extracts cookie,
+      verifies JWT (pinned algorithm + expiry + jti revocation check), and
+      attaches the user or agent to Axum request extensions. Applied to all
+      protected route groups.
+    links:
+      - {target: ea0b6ab72f87, rel: implements}  # AUTH-C-007 auth-middleware-all-protected-routes
+      - {target: b38917607d24, rel: implements}  # AUTH-P-005 deterministic-gates
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-017
+    hash: f6f5f547bb91
+    name: rate-limiting-token-bucket
+    type: implementation
+    description: >
+      Login and register endpoints rate-limited via a DIY token bucket (~40
+      lines Rust). Per-IP and per-username limiting. Stored in a
+      DashMap<String, TokenBucket> for lock-free concurrent access.
+    links:
+      - {target: be4504ccae63, rel: implements}  # AUTH-C-014 rate-limiting-auth-endpoints
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-018
+    hash: 2b2cdeead4c1
+    name: progressive-delay-backoff
+    type: implementation
+    description: >
+      Progressive delay (exponential backoff) used instead of hard cutoff for
+      rate limiting on auth endpoints.
+    links:
+      - {target: e2110b5f1e53, rel: implements}  # AUTH-C-024 progressive-delays-lockout
+    deprecated: false
+
+  # ── Agent Scope Enforcement ───────────────────────────────────────────────
+
+  - number: IMPL-AUTH-RS-019
+    hash: d38b10aa9a83
+    name: scope-enforcement-extractor
+    type: implementation
+    description: >
+      Scope enforcement via a RequireScope Axum extractor at route
+      registration. Route handlers never contain scope logic; the check runs
+      before the handler via the extractor.
+    links:
+      - {target: 47fb0e2f6869, rel: implements}  # AUTH-D-003 scoped-agent-tokens
+      - {target: 4a27dd2618ac, rel: implements}  # AUTH-C-009 agent-scope-validated
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-020
+    hash: 01f6414634e0
+    name: missing-scope-is-compile-error
+    type: implementation
+    description: >
+      Routes that require authentication use typed extractors that enforce
+      scope at the type level. A route without a scope extractor that attempts
+      to access authenticated state will not compile. Intentionally public
+      routes use an explicit Public marker type.
+    links:
+      - {target: ea0b6ab72f87, rel: implements}  # AUTH-C-007 auth-middleware-all-protected-routes
+      - {target: b38917607d24, rel: implements}  # AUTH-P-005 deterministic-gates
+    deprecated: false
+
+  # ── Package Structure ─────────────────────────────────────────────────────
+
+  - number: IMPL-AUTH-RS-021
+    hash: e08213b8244f
+    name: crate-structure-auth
+    type: implementation
+    description: >
+      Auth code split into /crates/server/src/auth (passkey, jwt, agent-auth,
+      middleware Tower layers), /crates/server/src/routes/auth.rs (endpoints),
+      and /crates/core/src/types (auth types). Server-side auth code is not
+      visible to WASM crate compilation.
+    links:
+      - {target: f45cd0927a41, rel: implements}  # AUTH-A-001 single-application-passkey-auth
+    deprecated: false
+
+  # ── Core Types ─────────────────────────────────────────────────────────────
+
+  - number: IMPL-AUTH-RS-022
+    hash: 34f28745aa52
+    name: passkey-credential-struct
+    type: implementation
+    description: >
+      PasskeyCredential struct: credential_id (String), public_key (Vec<u8>),
+      user_id (Uuid), created_at (i64). Stored server-side; no private key
+      material. Derives Serialize, Deserialize.
+    links:
+      - {target: 91782768755f, rel: implements}  # AUTH-D-001 passkey-authentication
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-023
+    hash: 2b3a1c72b047
+    name: token-payload-struct
+    type: implementation
+    description: >
+      TokenPayload struct: sub (Uuid), jti (Uuid), scopes (Vec<String>),
+      exp (i64), iat (i64), kind (TokenKind enum: User | Agent). Unified
+      format for both user and agent tokens.
+    links:
+      - {target: 7a27eb77385c, rel: implements}  # AUTH-D-002 pinned-algorithm-token-verification
+      - {target: 47fb0e2f6869, rel: implements}  # AUTH-D-003 scoped-agent-tokens
+    deprecated: false
+
+  # ── Dependency Decisions ──────────────────────────────────────────────────
+
+  - number: IMPL-AUTH-RS-024
+    hash: 10b234431b18
+    name: dep-webauthn-rs
+    type: implementation
+    description: >
+      Buy webauthn-rs for FIDO2 protocol handling. Security-critical, full
+      FIDO2 conformance, pure Rust, actively maintained.
+    links:
+      - {target: 91782768755f, rel: implements}  # AUTH-D-001 passkey-authentication
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-025
+    hash: ec86c48b3c46
+    name: dep-jwt-diy-rustcrypto
+    type: implementation
+    description: >
+      DIY JWT sign/verify (~100 lines) using p256 and ecdsa crates for ECDSA.
+      No jsonwebtoken library. Rust's strong typing makes a DIY JWT
+      implementation safer than in dynamic languages.
+    links:
+      - {target: 7a27eb77385c, rel: implements}  # AUTH-D-002 pinned-algorithm-token-verification
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-026
+    hash: 3fd1fcd283fd
+    name: dep-bip39-crate
+    type: implementation
+    description: >
+      Buy bip39 crate for BIP-39 mnemonic generation. Standardized
+      2048-word list, well-specified entropy encoding.
+    links:
+      - {target: 583a1a04f43b, rel: implements}  # AUTH-D-007 key-recovery-without-passwords
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-027
+    hash: 3e8b9e900c24
+    name: dep-no-auth-saas
+    type: implementation
+    description: >
+      Do not buy Auth SaaS (Auth0, Clerk). Adds latency, cost, and vendor
+      lock-in. A Rust implementation of passkey + JWT is more reliable than
+      a SaaS dependency in the critical login path.
+    links:
+      - {target: 701fb5c194b8, rel: implements}  # AUTH-P-008 authentication-is-self-hosted
+    deprecated: false
+
+  # ── Antipatterns (Rust-Specific) ──────────────────────────────────────────
+
+  - number: IMPL-AUTH-RS-028
+    hash: ed9c8dfe749d
+    name: anti-tokens-in-wasm-storage
+    type: implementation
+    description: >
+      Never store tokens in WASM-accessible storage (localStorage, JS global
+      state). The WASM boundary does not protect against XSS reading JS-
+      accessible storage. HTTP-only cookies are invisible to all client code.
+    links:
+      - {target: 917f546b2ccc, rel: implements}  # AUTH-X-005 tokens-in-localstorage
+      - {target: 98659756871c, rel: implements}  # AUTH-P-002 tokens-opaque-to-browsers
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-029
+    hash: 70403f77d2cd
+    name: anti-auth-saas-default
+    type: implementation
+    description: >
+      Do not default to Auth SaaS. Rust passkey + JWT flow is ~300 lines with
+      RustCrypto. More reliable, faster, and no external dependency in the
+      authentication path.
+    links:
+      - {target: 178dc0b4cde5, rel: implements}  # AUTH-X-004 auth-saas-sole-login-path
+      - {target: 701fb5c194b8, rel: implements}  # AUTH-P-008 authentication-is-self-hosted
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-030
+    hash: bf012b998881
+    name: anti-symmetric-signing
+    type: implementation
+    description: >
+      Never use symmetric signing (HS256) for production tokens. HMAC requires
+      sharing the secret with every verifier. ES256 asymmetric signing keeps
+      the private key with the issuer only.
+    links:
+      - {target: 1b840588d7ed, rel: implements}  # AUTH-X-002 algorithm-negotiation
+      - {target: 0ce2a38691c6, rel: implements}  # AUTH-P-009 algorithm-pinned
+    deprecated: false
+
+  - number: IMPL-AUTH-RS-031
+    hash: ed2299449f46
+    name: anti-in-memory-only-revocation
+    type: implementation
+    description: >
+      Never use in-memory-only revocation. A HashMap behind a RwLock is not
+      durable across restarts. The revocation table in calypso_app is the
+      source of truth; in-memory caching is a read optimization.
+    links:
+      - {target: 4e13f71c51cd, rel: implements}  # AUTH-X-009 in-memory-revocation
+      - {target: 61846075d02a, rel: implements}  # AUTH-D-009 token-revocation-store
+    deprecated: false

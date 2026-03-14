@@ -1,0 +1,370 @@
+meta:
+  domain: IMPL-ARCH-RS
+  title: Architecture - Rust Implementation
+  implements: ARCH
+  version: 1
+
+rules:
+  # ── Stack ───────────────────────────────────────────────────────────────────
+
+  - number: IMPL-ARCH-RS-001
+    hash: 4f5ac81f8e70
+    name: rust-only-language
+    type: implementation
+    description: >
+      Rust is the only language for server, worker, and WASM client code. No
+      JavaScript, TypeScript, Go, or Python in production paths. The type
+      system spans all boundaries via shared crate types. Build-time
+      enforcement of memory safety, thread safety, and type correctness
+      eliminates entire categories of runtime failure.
+    links:
+      - {target: 0fa329015368, rel: implements}   # ARCH-P-001 boundaries-are-physical
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-002
+    hash: f9208916f4e5
+    name: cargo-workspace-build-system
+    type: implementation
+    description: >
+      Cargo is the build system, package manager, and test runner. All crates
+      are members of a single Cargo workspace. No Makefile, npm, or alternative
+      build tool in the critical path.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-003
+    hash: bffe43fc9da6
+    name: leptos-wasm-ui-framework
+    type: implementation
+    description: >
+      Leptos is the UI framework for browser-side rendering via WASM. Fine-grained
+      reactivity with server-side rendering and hydration support. No React,
+      Yew, or Dioxus. Leptos compiles to WASM with minimal binary size and
+      streaming HTML rendering for first-paint performance on mobile PWAs.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-004
+    hash: 687e6a91f564
+    name: tailwind-css-styling
+    type: implementation
+    description: >
+      Tailwind CSS (vanilla, no pre/post processors) is the only styling
+      approach. Integrated via Trunk or cargo-leptos build pipeline. No
+      CSS-in-Rust, Sass, or runtime CSS generation.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-005
+    hash: 183dbc92e50b
+    name: leptos-signals-state-management
+    type: implementation
+    description: >
+      State management uses Leptos signals and derived signals only. No
+      external state management library. Signals provide fine-grained
+      reactivity without virtual DOM diffing overhead.
+    links:
+      - {target: c4b55c6bb7a0, rel: implements}   # ARCH-P-005 simplicity-scales
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-006
+    hash: 2792ddb93e70
+    name: cargo-test-unit-testing
+    type: implementation
+    description: >
+      cargo test is the unit test runner. Unit tests live alongside source in
+      #[cfg(test)] modules. No external test framework for unit tests.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-007
+    hash: 5ca617b803e5
+    name: playwright-e2e-testing
+    type: implementation
+    description: >
+      Playwright is the browser and E2E test runner for WASM UI testing. Tests
+      live in /tests/e2e. Playwright drives headless Chromium against the
+      compiled WASM application served by the Rust server.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-008
+    hash: a7c355207d45
+    name: rest-api-style
+    type: implementation
+    description: >
+      REST is the API style for all business integrations. Axum handles HTTP
+      routing with typed extractors and responses. No GraphQL or gRPC unless
+      the product requires massive concurrency or sub-second real-time.
+    links:
+      - {target: 4211a13461f0, rel: implements}   # ARCH-D-004 type-safe-api-contracts
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-009
+    hash: 20f2a701e5c8
+    name: axum-http-server
+    type: implementation
+    description: >
+      Axum is the HTTP server framework, built on Tokio and Hyper. Type-safe
+      extractors, middleware via tower, and compile-time route validation.
+      No Actix, Rocket, or Warp.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-010
+    hash: 9c6c30a31b70
+    name: tokio-async-runtime
+    type: implementation
+    description: >
+      Tokio is the async runtime. Multi-threaded scheduler for I/O-bound
+      server workloads. No async-std or smol. The entire ecosystem (sqlx,
+      reqwest, hyper) builds on Tokio.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+    deprecated: false
+
+  # ── Repository Structure ────────────────────────────────────────────────────
+
+  - number: IMPL-ARCH-RS-011
+    hash: 5f05a0990686
+    name: workspace-directory-layout
+    type: implementation
+    description: >
+      Fixed Cargo workspace layout: /crates/server (Axum API server),
+      /crates/web (Leptos WASM client), /crates/core (shared domain types
+      and logic), /crates/db (database layer), /crates/crypto (encryption
+      primitives), /crates/worker (agent task runner), /tests/integration,
+      /tests/e2e, /docs. Workspace root Cargo.toml declares all members.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+      - {target: b5c27e8e1ed7, rel: implements}   # ARCH-D-003 monorepo-explicit-package-boundaries
+    deprecated: false
+
+  # ── Build Separation ────────────────────────────────────────────────────────
+
+  - number: IMPL-ARCH-RS-012
+    hash: b66443e4d733
+    name: wasm-browser-only-target
+    type: implementation
+    description: >
+      /crates/web compiles to wasm32-unknown-unknown target. No server-side
+      dependencies resolve. Server modules are unreachable from the WASM
+      import graph. Cargo features gate platform-specific code.
+    links:
+      - {target: 39e42948f441, rel: implements}   # ARCH-D-001 strict-runtime-separation
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-013
+    hash: 615ec2ed7698
+    name: server-native-binary-only
+    type: implementation
+    description: >
+      /crates/server compiles to native binary. No WASM or browser dependencies
+      resolve. Client modules are unreachable from the server dependency graph.
+      Conditional compilation via #[cfg(not(target_arch = "wasm32"))] guards
+      server-only code.
+    links:
+      - {target: 39e42948f441, rel: implements}   # ARCH-D-001 strict-runtime-separation
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-014
+    hash: 2c3cda54781e
+    name: ci-separate-build-targets
+    type: implementation
+    description: >
+      CI/CD runs separate build targets: cargo build --release for server,
+      trunk build --release or cargo-leptos for WASM client. No shared
+      compilation unit spans both targets.
+    links:
+      - {target: 0fa329015368, rel: implements}   # ARCH-P-001 boundaries-are-physical
+    deprecated: false
+
+  # ── Data & Integration ────────────────────────────────────────────────────
+
+  - number: IMPL-ARCH-RS-015
+    hash: b4804925a566
+    name: shared-types-in-crates-core
+    type: implementation
+    description: >
+      All API input/output types, domain types, and shared enums defined in
+      /crates/core. Both server and WASM client depend on this crate. Types
+      derive serde Serialize/Deserialize for automatic JSON serialization.
+      No type duplication across crate boundaries.
+    links:
+      - {target: ccd33c7dd2c2, rel: implements}   # ARCH-P-004 types-shared-logic-not
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-016
+    hash: 9ceb4dd1e041
+    name: serde-for-all-serialization
+    type: implementation
+    description: >
+      serde with serde_json for all JSON serialization. Types shared between
+      server and client derive Serialize and Deserialize. API contracts are
+      enforced at compile time through shared type definitions.
+    links:
+      - {target: 4211a13461f0, rel: implements}   # ARCH-D-004 type-safe-api-contracts
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-017
+    hash: 835b5da75146
+    name: api-contracts-compile-time-checked
+    type: implementation
+    description: >
+      All API contracts are type-checked at compile time. Breaking changes to
+      types in /crates/core produce compile errors in both server and client
+      crates. No runtime type validation needed for internal boundaries.
+    links:
+      - {target: 4211a13461f0, rel: implements}   # ARCH-D-004 type-safe-api-contracts
+    deprecated: false
+
+  # ── Core Crate Categories ──────────────────────────────────────────────────
+
+  - number: IMPL-ARCH-RS-018
+    hash: 8d088273a850
+    name: db-layer-in-crates-db
+    type: implementation
+    description: >
+      Database access layer lives in /crates/db. Connection pools, migrations,
+      query functions, and the property graph model implementation. Uses sqlx
+      for compile-time checked SQL queries.
+    links:
+      - {target: b5c27e8e1ed7, rel: implements}   # ARCH-D-003 monorepo-explicit-package-boundaries
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-019
+    hash: 412c1d9096ba
+    name: crypto-in-crates-crypto
+    type: implementation
+    description: >
+      Cryptographic primitives live in /crates/crypto. AES-256-GCM encryption,
+      HKDF key derivation, HMAC signing, and KMS client abstraction. Uses the
+      RustCrypto ecosystem (aes-gcm, hkdf, hmac, sha2).
+    links:
+      - {target: b5c27e8e1ed7, rel: implements}   # ARCH-D-003 monorepo-explicit-package-boundaries
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-020
+    hash: 45b583ddfb4b
+    name: auth-in-server-middleware
+    type: implementation
+    description: >
+      Authentication and authorization implemented as Axum middleware via tower
+      layers in /crates/server. No auth logic in the WASM client bundle.
+    links:
+      - {target: 39e42948f441, rel: implements}   # ARCH-D-001 strict-runtime-separation
+    deprecated: false
+
+  # ── Dependency Policy ──────────────────────────────────────────────────────
+
+  - number: IMPL-ARCH-RS-021
+    hash: 2964ef776020
+    name: dependency-dual-threshold
+    type: implementation
+    description: >
+      Both conditions must be true to add a crate dependency: (1) critical
+      functionality not feasible internally, (2) mature, minimal footprint,
+      well-maintained. RustCrypto, sqlx, and Playwright are Buy; small
+      utilities and data transformations are DIY. Rust's ownership model and
+      strong type system make DIY safer and more maintainable than in
+      garbage-collected languages.
+    links:
+      - {target: 19ba825434e1, rel: implements}   # ARCH-D-002 buy-vs-diy-decision-framework
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-022
+    hash: e541767267d0
+    name: dependency-doc-required
+    type: implementation
+    description: >
+      All dependencies documented in docs/dependencies.md with risk/benefit
+      justification. Cargo.lock committed. cargo audit run in CI. cargo deny
+      enforces license and advisory policies.
+    links:
+      - {target: 9be37f247b72, rel: implements}   # ARCH-P-003 dependencies-are-liabilities
+    deprecated: false
+
+  # ── WASM/PWA ───────────────────────────────────────────────────────────────
+
+  - number: IMPL-ARCH-RS-023
+    hash: 64ee83c30232
+    name: wasm-pwa-first-class
+    type: implementation
+    description: >
+      The WASM client is a first-class PWA. Web manifest, service worker (JS
+      shim for caching and offline support), and installable on mobile devices.
+      WASM binary size optimized via wasm-opt, LTO, and codegen-units=1.
+      Target first-load under 500KB gzipped for mobile network performance.
+    links:
+      - {target: c4b55c6bb7a0, rel: implements}   # ARCH-P-005 simplicity-scales
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-024
+    hash: c8aa779a5f9f
+    name: trunk-wasm-build-tool
+    type: implementation
+    description: >
+      Trunk (or cargo-leptos) is the WASM build and bundling tool. Manages
+      wasm-bindgen, wasm-opt, asset hashing, and Tailwind integration. No
+      webpack, vite, or Node.js in the build pipeline.
+    links:
+      - {target: ebad74d6a752, rel: implements}   # ARCH-A-001 monorepo-collocated-packages
+    deprecated: false
+
+  # ── Antipatterns (Rust-Specific) ───────────────────────────────────────────
+
+  - number: IMPL-ARCH-RS-025
+    hash: 25676558dbaf
+    name: antipattern-type-duplication
+    type: implementation
+    description: >
+      Do not define the same API type in both /crates/web and /crates/server.
+      Import from /crates/core. Rust's compiler will catch this at build time
+      but duplicated types mean duplicated maintenance.
+    links:
+      - {target: ccd33c7dd2c2, rel: implements}   # ARCH-P-004 types-shared-logic-not
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-026
+    hash: 6a8933e1a94e
+    name: antipattern-dependency-by-default
+    type: implementation
+    description: >
+      Do not add a crate for every solved problem. Rust's standard library and
+      the ownership model make DIY implementations more reliable than in
+      dynamic languages. A 20-line Rust implementation with compile-time
+      guarantees is preferable to a dependency with 50 transitive crates.
+    links:
+      - {target: 9be37f247b72, rel: implements}   # ARCH-P-003 dependencies-are-liabilities
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-027
+    hash: 122d28f919f2
+    name: antipattern-unsafe-without-justification
+    type: implementation
+    description: >
+      Do not use unsafe without a // SAFETY: comment documenting the invariant.
+      Minimize unsafe scope to the smallest possible block. Wrap unsafe in safe
+      API modules. Run Miri in CI for all unsafe code. Every unsafe block is a
+      potential soundness hole; the burden of proof is on the author.
+    links:
+      - {target: c4b55c6bb7a0, rel: implements}   # ARCH-P-005 simplicity-scales
+    deprecated: false
+
+  - number: IMPL-ARCH-RS-028
+    hash: 6908518a3111
+    name: antipattern-implicit-build-coupling
+    type: implementation
+    description: >
+      Do not share Cargo features or conditional compilation flags that couple
+      server and WASM builds. A change to the server feature set must not
+      affect the WASM compilation. Builds must be independent from day one.
+    links:
+      - {target: 0fa329015368, rel: implements}   # ARCH-P-001 boundaries-are-physical
+    deprecated: false

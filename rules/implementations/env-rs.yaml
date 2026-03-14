@@ -1,0 +1,152 @@
+meta:
+  domain: IMPL-ENV-RS
+  title: Environment - Rust Implementation
+  implements: ENV
+  version: 1
+
+rules:
+  - number: IMPL-ENV-RS-001
+    hash: 0c769044995a
+    name: host-dep-git
+    type: implementation
+    description: >
+      git is a required host dependency for version control.
+    links:
+      - {target: 9bf3512d80fc, rel: implements}  # ENV-C-001
+    deprecated: false
+
+  - number: IMPL-ENV-RS-002
+    hash: b51ce7b2f8b8
+    name: host-dep-gh-https
+    type: implementation
+    description: >
+      gh (GitHub CLI) is a required host dependency, authenticated via HTTPS.
+    links:
+      - {target: 9bf3512d80fc, rel: implements}  # ENV-C-001
+    deprecated: false
+
+  - number: IMPL-ENV-RS-003
+    hash: 9bffbaf7a908
+    name: host-dep-tmux
+    type: implementation
+    description: >
+      tmux is a required host dependency for persistent terminal sessions
+      that survive SSH disconnects.
+    links:
+      - {target: 1d0d5a6c0fde, rel: implements}  # ENV-C-008
+    deprecated: false
+
+  - number: IMPL-ENV-RS-004
+    hash: 80b2510c9f5f
+    name: host-dep-rust-toolchain
+    type: implementation
+    description: >
+      Rust toolchain installed via rustup. Includes rustc, cargo, rustfmt,
+      clippy. The wasm32-unknown-unknown target added for WASM compilation.
+      Rust version pinned in rust-toolchain.toml for reproducibility.
+    links:
+      - {target: 9bf3512d80fc, rel: implements}  # ENV-C-001
+    deprecated: false
+
+  - number: IMPL-ENV-RS-005
+    hash: e7e382ca1d1b
+    name: host-dep-trunk
+    type: implementation
+    description: >
+      Trunk (or cargo-leptos) installed on the host for WASM build and
+      bundling. Manages wasm-bindgen, wasm-opt, and asset pipeline.
+    links:
+      - {target: 9bf3512d80fc, rel: implements}  # ENV-C-001
+    deprecated: false
+
+  - number: IMPL-ENV-RS-006
+    hash: 1644782dea61
+    name: host-dep-agent-cli
+    type: implementation
+    description: >
+      An agent CLI (Claude Code, Cursor server, Gemini CLI, or equivalent) is
+      a required host dependency. The agent runs on the cloud host, not locally.
+    links:
+      - {target: 54bdaf625e7e, rel: implements}  # ENV-C-004
+    deprecated: false
+
+  - number: IMPL-ENV-RS-007
+    hash: 2d0578863f99
+    name: host-dep-playwright
+    type: implementation
+    description: >
+      Playwright OS dependencies required on the host for headless Chromium
+      E2E testing of the WASM application.
+    links:
+      - {target: 7add10d6242f, rel: implements}  # ENV-C-016
+    deprecated: false
+
+  - number: IMPL-ENV-RS-008
+    hash: 0be6debe49a4
+    name: session-start-read-context
+    type: implementation
+    description: >
+      At session start, the agent reads all files in agent-context/ before
+      any development or documentation work.
+    links:
+      - {target: 223b1f507440, rel: implements}  # ENV-C-009
+    deprecated: false
+
+  - number: IMPL-ENV-RS-009
+    hash: 26315ab65a26
+    name: preview-server-port-31415
+    type: implementation
+    description: >
+      The Calypso dev server binds to port 31415. This is the project-wide
+      convention and must be exposed on the host firewall.
+    links:
+      - {target: edd5ed9ab836, rel: implements}  # ENV-C-005
+    deprecated: false
+
+  # ── Dependency Justification ──────────────────────────────────────────────
+
+  - number: IMPL-ENV-RS-010
+    hash: 008566e6d49a
+    name: justified-tmux
+    type: implementation
+    description: >
+      tmux is justified as a buy decision. Session persistence with decades
+      of stability; a DIY terminal multiplexer is absurd.
+    links:
+      - {target: 1d0d5a6c0fde, rel: implements}  # ENV-C-008
+    deprecated: false
+
+  - number: IMPL-ENV-RS-011
+    hash: 18b3632e4f2a
+    name: justified-rustup
+    type: implementation
+    description: >
+      rustup is justified as a buy decision. Official Rust toolchain manager
+      with target management, version pinning, and component installation.
+      No viable alternative.
+    links:
+      - {target: 9bf3512d80fc, rel: implements}  # ENV-C-001
+    deprecated: false
+
+  - number: IMPL-ENV-RS-012
+    hash: f07925b500c0
+    name: justified-gh
+    type: implementation
+    description: >
+      gh is justified as a buy decision. GitHub API integration with auth
+      management; a DIY approach is fragile and under-tested.
+    links:
+      - {target: 9bf3512d80fc, rel: implements}  # ENV-C-001
+    deprecated: false
+
+  - number: IMPL-ENV-RS-013
+    hash: c97103fba63d
+    name: justified-playwright
+    type: implementation
+    description: >
+      Playwright is justified as a buy decision. Headless browser automation
+      with cross-browser support; no viable DIY alternative. Required for
+      WASM UI E2E testing.
+    links:
+      - {target: 7add10d6242f, rel: implements}  # ENV-C-016
+    deprecated: false

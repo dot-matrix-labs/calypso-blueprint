@@ -1,0 +1,281 @@
+meta:
+  domain: IMPL-DEPLOY-RS
+  title: Deployment - Rust Implementation
+  implements: DEPLOY
+  version: 1
+
+rules:
+  # ── Container Packaging ─────────────────────────────────────────────────
+
+  - number: IMPL-DEPLOY-RS-001
+    hash: b6dab1787f10
+    name: multistage-distroless-container
+    type: implementation
+    description: >
+      Multi-stage Dockerfile: Rust builder stage with cargo build --release,
+      final stage uses gcr.io/distroless/cc-debian12 (or equivalent). Copy
+      only the compiled static binary into the final stage. No shell, no
+      package manager, minimal attack surface. Static linking via
+      RUSTFLAGS="-C target-feature=+crt-static" or musl target.
+    links:
+      - {target: cebbff0e956c, rel: implements}  # DEPLOY-D-001 immutable-distroless-container-builds
+      - {target: f4deae0ff5d3, rel: implements}  # DEPLOY-P-001 containers-are-the-great-unifier
+      - {target: 3a7b8dab73da, rel: implements}  # DEPLOY-C-001 dockerfile-created
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-002
+    hash: 6a2132c7e507
+    name: cargo-lock-deterministic
+    type: implementation
+    description: >
+      Cargo.lock committed to version control. cargo build --locked in the
+      builder stage ensures deterministic dependency resolution matching
+      the committed lockfile.
+    links:
+      - {target: cebbff0e956c, rel: implements}  # DEPLOY-D-001 immutable-distroless-container-builds
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-003
+    hash: bad29ea081e7
+    name: static-binary-output
+    type: implementation
+    description: >
+      cargo build --release produces a single static binary. The compiled
+      binary is the only artifact copied into the distroless production image.
+      No runtime dependencies beyond libc (or none with musl).
+    links:
+      - {target: cebbff0e956c, rel: implements}  # DEPLOY-D-001 immutable-distroless-container-builds
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-004
+    hash: e57c1e38cd12
+    name: no-process-managers
+    type: implementation
+    description: >
+      No systemd services, supervisord, or custom restart scripts. The
+      container orchestrator handles process lifecycle exclusively.
+    links:
+      - {target: f4deae0ff5d3, rel: implements}  # DEPLOY-P-001 containers-are-the-great-unifier
+      - {target: b9d1a6dddde4, rel: implements}  # DEPLOY-C-002 orchestrator-auto-restart
+    deprecated: false
+
+  # ── Environment Variables ──────────────────────────────────────────────────
+
+  - number: IMPL-DEPLOY-RS-005
+    hash: 5fbec6b15ef6
+    name: production-env-gitignored
+    type: implementation
+    description: >
+      .env file contains production secrets and is .gitignored. Configuration
+      loaded via envy or dotenvy crate for structured deserialization into a
+      typed Config struct. Missing required config is a compile-time error
+      via serde's deny_unknown_fields.
+    links:
+      - {target: 584e64645b8f, rel: implements}  # DEPLOY-P-009 secrets-are-runtime-configuration
+      - {target: 3f7f5f443afe, rel: implements}  # DEPLOY-C-003 secrets-injected-securely
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-006
+    hash: d6714a61cc9c
+    name: test-env-committed
+    type: implementation
+    description: >
+      .env.test file contains test-only credentials and fixture paths and is
+      committed to version control.
+    links:
+      - {target: 584e64645b8f, rel: implements}  # DEPLOY-P-009 secrets-are-runtime-configuration
+      - {target: 5286b4639f51, rel: implements}  # DEPLOY-C-004 test-env-committed
+    deprecated: false
+
+  # ── Logging ────────────────────────────────────────────────────────────────
+
+  - number: IMPL-DEPLOY-RS-007
+    hash: 46801fb15f70
+    name: tracing-structured-logging
+    type: implementation
+    description: >
+      Structured logging via the tracing crate with tracing-subscriber for
+      JSON output. All log entries include timestamp, level, span context,
+      and trace_id. Output to stdout, captured by the container orchestrator.
+    links:
+      - {target: 41353c4858b0, rel: implements}  # DEPLOY-P-003 logs-are-for-machines-first
+      - {target: 681125756d40, rel: implements}  # DEPLOY-C-005 stdout-stderr-captured
+      - {target: 969f83c41da9, rel: implements}  # DEPLOY-C-006 structured-log-entries
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-008
+    hash: d273bccde058
+    name: unique-error-log
+    type: implementation
+    description: >
+      Deduplicated error categories tracked in-memory with count and
+      last-seen timestamp, written to /var/log/calypso/uniques.log. A Tokio
+      background task flushes periodically.
+    links:
+      - {target: 4b71998780a6, rel: implements}  # DEPLOY-D-002 dual-log-architecture
+      - {target: a9c435b04f11, rel: implements}  # DEPLOY-C-010 uniques-log-implemented
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-009
+    hash: e5be19695375
+    name: log-rotation-via-cluster
+    type: implementation
+    description: >
+      Log rotation managed by cluster log aggregation facility, not by
+      application-level rotation.
+    links:
+      - {target: 41353c4858b0, rel: implements}  # DEPLOY-P-003 logs-are-for-machines-first
+      - {target: 1b33ad831887, rel: implements}  # DEPLOY-C-011 log-rotation-configured
+    deprecated: false
+
+  # ── Browser Error Forwarding ───────────────────────────────────────────────
+
+  - number: IMPL-DEPLOY-RS-010
+    hash: d5333c573293
+    name: wasm-panic-hook-capture
+    type: implementation
+    description: >
+      WASM panics captured via console_error_panic_hook and forwarded to
+      the server logging endpoint. Leptos error boundaries catch component
+      rendering failures.
+    links:
+      - {target: aef55d669b45, rel: implements}  # DEPLOY-D-003 browser-to-server-error-forwarding
+      - {target: 2a36bd9bbcb2, rel: implements}  # DEPLOY-C-008 browser-error-forwarding
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-011
+    hash: e3526e4a8978
+    name: error-post-to-api-logs
+    type: implementation
+    description: >
+      All captured browser errors POST to /api/logs with payload containing
+      trace_id, error, stack, url, and timestamp. The WASM client uses
+      web-sys fetch API for the POST.
+    links:
+      - {target: aef55d669b45, rel: implements}  # DEPLOY-D-003 browser-to-server-error-forwarding
+      - {target: 2a36bd9bbcb2, rel: implements}  # DEPLOY-C-008 browser-error-forwarding
+    deprecated: false
+
+  # ── Trace ID ──────────────────────────────────────────────────────────────
+
+  - number: IMPL-DEPLOY-RS-012
+    hash: c9702d2762db
+    name: trace-id-uuid-v7-in-browser
+    type: implementation
+    description: >
+      Trace ID generated as UUID v7 in the WASM client at the start of each
+      user action. UUID v7 is time-ordered, enabling efficient indexing and
+      natural chronological sorting of traces.
+    links:
+      - {target: fffb29a3e0a6, rel: implements}  # DEPLOY-D-004 trace-id-propagation
+      - {target: 2d45f6788919, rel: implements}  # DEPLOY-C-007 trace-id-propagated
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-013
+    hash: ac8ee36a3dae
+    name: trace-id-request-header
+    type: implementation
+    description: >
+      Trace ID sent as X-Trace-Id request header from WASM client to server.
+    links:
+      - {target: fffb29a3e0a6, rel: implements}  # DEPLOY-D-004 trace-id-propagation
+      - {target: 2d45f6788919, rel: implements}  # DEPLOY-C-007 trace-id-propagated
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-014
+    hash: 767813c2fb8b
+    name: trace-id-server-middleware
+    type: implementation
+    description: >
+      Axum middleware (Tower layer) extracts X-Trace-Id from incoming requests
+      and attaches it to the tracing span for that request lifecycle. All log
+      entries for that request include the trace_id field.
+    links:
+      - {target: fffb29a3e0a6, rel: implements}  # DEPLOY-D-004 trace-id-propagation
+      - {target: 55b6ac786a19, rel: implements}  # DEPLOY-P-004 traces-span-the-full-stack
+      - {target: 5ead7b43c21d, rel: implements}  # DEPLOY-C-021 trace-id-search-works
+    deprecated: false
+
+  # ── Build and Deploy ──────────────────────────────────────────────────────
+
+  - number: IMPL-DEPLOY-RS-015
+    hash: c599860d1491
+    name: wasm-build-command
+    type: implementation
+    description: >
+      WASM client built via trunk build --release or cargo-leptos. Output is
+      optimized via wasm-opt with size optimization (-Oz) for mobile PWA
+      performance.
+    links:
+      - {target: 123eab1a292b, rel: implements}  # DEPLOY-P-005 deployment-is-a-build
+      - {target: 26419e6cc6ce, rel: implements}  # DEPLOY-C-012 deploy-script-idempotent
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-016
+    hash: d2ffb09a15a2
+    name: server-docker-build
+    type: implementation
+    description: >
+      Server image built via docker build -f crates/server/Dockerfile
+      -t calypso-server:latest producing the immutable container artifact
+      with the static Rust binary.
+    links:
+      - {target: cebbff0e956c, rel: implements}  # DEPLOY-D-001 immutable-distroless-container-builds
+      - {target: 123eab1a292b, rel: implements}  # DEPLOY-P-005 deployment-is-a-build
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-017
+    hash: 86d0d83f0a09
+    name: kubectl-apply-deploy
+    type: implementation
+    description: >
+      Deployment executed via kubectl apply -f k8s/deployments/server.yaml.
+      Declarative, idempotent, non-interactive.
+    links:
+      - {target: e889c6c25ede, rel: implements}  # DEPLOY-A-002 kubernetes-enterprise-deployment
+      - {target: 123eab1a292b, rel: implements}  # DEPLOY-P-005 deployment-is-a-build
+      - {target: bd28ad6f0308, rel: implements}  # DEPLOY-C-019 zero-manual-ssh-steps
+    deprecated: false
+
+  # ── Dependency Justification ──────────────────────────────────────────────
+
+  - number: IMPL-DEPLOY-RS-018
+    hash: a7ce5a67a5dd
+    name: tracing-buy-decision
+    type: implementation
+    description: >
+      tracing and tracing-subscriber are Buy dependencies: the standard Rust
+      observability framework with structured logging, span context, and
+      subscriber composition. No viable DIY alternative.
+    links:
+      - {target: 41353c4858b0, rel: implements}  # DEPLOY-P-003 logs-are-for-machines-first
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-019
+    hash: fafb18013f05
+    name: uuid-diy-or-uuid-crate
+    type: implementation
+    description: >
+      UUID generation via the uuid crate with v7 feature for time-ordered
+      UUIDs. Buy decision — UUID v7 generation requires monotonic clock
+      handling that is not trivial to DIY correctly.
+    links:
+      - {target: fffb29a3e0a6, rel: implements}  # DEPLOY-D-004 trace-id-propagation
+    deprecated: false
+
+  # ── Antipatterns ──────────────────────────────────────────────────────────
+
+  - number: IMPL-DEPLOY-RS-020
+    hash: 1bd42d0995d2
+    name: no-hot-reload-dev-servers
+    type: implementation
+    description: >
+      Do not use cargo-watch with hot-reloading as a substitute for
+      containerized deployment. Build the container. Run the container.
+      Agents do not benefit from hot-reloading. cargo-leptos serve is
+      acceptable only as a development convenience for the WASM compilation
+      cycle, not as the deployment model.
+    links:
+      - {target: 9d33a458e91a, rel: implements}  # DEPLOY-P-002 no-hot-reloading-dev-servers
+      - {target: 2a5c123b62fc, rel: implements}  # DEPLOY-X-001 hybrid-environments
+    deprecated: false

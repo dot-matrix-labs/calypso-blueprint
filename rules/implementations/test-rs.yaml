@@ -1,0 +1,293 @@
+meta:
+  domain: IMPL-TEST-RS
+  title: Testing - Rust Implementation
+  implements: TEST
+  version: 1
+
+rules:
+  # ── Test Driver ─────────────────────────────────────────────────────────
+
+  - number: IMPL-TEST-RS-001
+    hash: 180adf8be8d5
+    name: cargo-test-single-driver
+    type: implementation
+    description: >
+      cargo test is the single test driver for all Rust test categories (unit,
+      integration, property-based). No alternative test runner. Tests compile
+      and run through Cargo's built-in harness with the standard #[test]
+      attribute.
+    links:
+      - {target: e71a98fb1de2, rel: implements}   # TEST-C-001 unit-tests
+      - {target: a12043dd7788, rel: implements}   # TEST-X-004 monolithic-ci-workflow
+    deprecated: false
+
+  - number: IMPL-TEST-RS-002
+    hash: e75a9531e4bf
+    name: playwright-browser-e2e
+    type: implementation
+    description: >
+      Playwright is used for E2E browser testing of the WASM UI. Tests are
+      written in TypeScript or Python (Playwright's native languages) and
+      driven against the compiled WASM application served by the Rust server.
+      This is the only permitted use of a non-Rust language in the test suite.
+    links:
+      - {target: f34f055c75c5, rel: implements}   # TEST-D-004 headless-browser-testing
+      - {target: 4276faad79f4, rel: implements}   # TEST-T-004 browser-fidelity
+    deprecated: false
+
+  - number: IMPL-TEST-RS-003
+    hash: 11d19e993b94
+    name: proptest-property-testing
+    type: implementation
+    description: >
+      proptest crate for property-based testing of core domain logic. Define
+      invariants that hold for all valid inputs. Property tests complement
+      unit tests for complex state transitions, serialization roundtrips,
+      and crypto operations.
+    links:
+      - {target: 217845b40c8f, rel: implements}   # TEST-P-005 suite-independence
+    deprecated: false
+
+  # ── Test Category Locations ─────────────────────────────────────────────
+
+  - number: IMPL-TEST-RS-004
+    hash: 8d40d4c59fa5
+    name: unit-test-location
+    type: implementation
+    description: >
+      Unit tests reside in #[cfg(test)] modules within each source file. Run
+      via cargo test --lib. Test private interfaces directly. No separate
+      directory for unit tests.
+    links:
+      - {target: e71a98fb1de2, rel: implements}   # TEST-C-001 unit-tests
+    deprecated: false
+
+  - number: IMPL-TEST-RS-005
+    hash: df6eeca16191
+    name: integration-test-location
+    type: implementation
+    description: >
+      Integration tests reside in /tests/integration as separate crate files.
+      Run via cargo test --test integration. Test only public API. Spawn real
+      PostgreSQL containers for database tests.
+    links:
+      - {target: 1b3bbdf1be70, rel: implements}   # TEST-P-001 prefer-real-systems
+    deprecated: false
+
+  - number: IMPL-TEST-RS-006
+    hash: 6233599ba747
+    name: e2e-test-location
+    type: implementation
+    description: >
+      E2E browser tests reside in /tests/e2e, run via Playwright against the
+      compiled WASM application served by a real Rust server instance with
+      real PostgreSQL.
+    links:
+      - {target: 0dcc3d6b670e, rel: implements}   # TEST-C-006 e2e-test-passing
+    deprecated: false
+
+  # ── CI Workflow Structure ──────────────────────────────────────────────
+
+  - number: IMPL-TEST-RS-007
+    hash: 8af7163e8d4a
+    name: per-suite-ci-workflows
+    type: implementation
+    description: >
+      Separate CI workflow files: test-unit.yml (cargo test --lib --bins),
+      test-integration.yml (cargo test --test integration with PostgreSQL),
+      test-e2e.yml (Playwright against deployed container), test-property.yml
+      (cargo test --test proptest). Each reports pass/fail independently.
+    links:
+      - {target: fab7da1aaf57, rel: implements}   # TEST-D-002 suite-per-workflow-ci
+      - {target: fb899ca2312e, rel: implements}   # TEST-C-007 four-ci-workflows
+    deprecated: false
+
+  - number: IMPL-TEST-RS-008
+    hash: fba95ae76283
+    name: quality-gate-workflow
+    type: implementation
+    description: >
+      quality-gate.yml runs cargo clippy -- -D warnings, cargo fmt -- --check,
+      cargo build --release, and cargo audit. Separate from test workflows.
+    links:
+      - {target: e89af6c2f0d3, rel: implements}   # TEST-D-005 separate-quality-gate
+      - {target: 34c0790ac993, rel: implements}   # TEST-C-010 quality-gate-workflow
+    deprecated: false
+
+  - number: IMPL-TEST-RS-009
+    hash: c9d6fd4843fc
+    name: merge-gate-all-pass
+    type: implementation
+    description: >
+      Merge is blocked unless the quality gate and all required test workflows
+      pass.
+    links:
+      - {target: e01fc87ad565, rel: implements}   # TEST-C-012 merge-gate-configured
+      - {target: 3450e2a1cbdb, rel: implements}   # TEST-T-006 merge-gating
+    deprecated: false
+
+  - number: IMPL-TEST-RS-010
+    hash: 59a5a77cdac4
+    name: local-ci-command-parity
+    type: implementation
+    description: >
+      Local invocation uses the exact same cargo test commands as CI. CI
+      cannot use alternate runners or alternate test configurations.
+    links:
+      - {target: 2a5242355dd5, rel: implements}   # TEST-D-003 local-ci-command-parity
+      - {target: 9f579d269f3e, rel: implements}   # TEST-P-006 local-ci-parity
+      - {target: 6d71b8f70b27, rel: implements}   # TEST-C-009 canonical-commands-documented
+    deprecated: false
+
+  # ── Fixture Format ──────────────────────────────────────────────────────
+
+  - number: IMPL-TEST-RS-011
+    hash: ab2dcc4ac8a1
+    name: golden-fixture-recorder
+    type: implementation
+    description: >
+      The fixture recorder is a Rust binary in /tests/fixtures/recorder that
+      makes real HTTP requests to external services, serializes responses to
+      JSON files in /tests/fixtures/, and logs schema changes.
+    links:
+      - {target: 135eccfbae17, rel: implements}   # TEST-D-001 golden-fixture-recording
+      - {target: a8a20e29fa32, rel: implements}   # TEST-C-003 golden-fixture-recorded
+    deprecated: false
+
+  - number: IMPL-TEST-RS-012
+    hash: 920d5e075748
+    name: fixtures-are-files
+    type: implementation
+    description: >
+      Fixtures are file artifacts under /tests/fixtures/. Environment variables
+      are configuration only and must not be used as fixture storage.
+    links:
+      - {target: 65d4d742b6e6, rel: implements}   # TEST-P-002 fixtures-are-files
+      - {target: 73c69823c03a, rel: implements}   # TEST-X-003 fixtures-in-env-vars
+    deprecated: false
+
+  # ── Test Infrastructure ─────────────────────────────────────────────────
+
+  - number: IMPL-TEST-RS-013
+    hash: faad5634eb0a
+    name: testcontainers-postgres
+    type: implementation
+    description: >
+      Integration tests use testcontainers-rs to spawn ephemeral PostgreSQL
+      containers. Each test suite gets a fresh database on a random port.
+      Container is torn down unconditionally in Drop. No fixed DATABASE_URL.
+    links:
+      - {target: 1b3bbdf1be70, rel: implements}   # TEST-P-001 prefer-real-systems
+      - {target: 217845b40c8f, rel: implements}   # TEST-P-005 suite-independence
+    deprecated: false
+
+  - number: IMPL-TEST-RS-014
+    hash: 558f243e337e
+    name: miri-for-unsafe
+    type: implementation
+    description: >
+      Miri runs in CI on all crates containing unsafe code. Detects undefined
+      behavior, use-after-free, and data races in unsafe blocks. No crate
+      with unsafe may merge without passing Miri.
+    links:
+      - {target: e9f7459b95e2, rel: implements}   # TEST-T-001 environment-parity
+    deprecated: false
+
+  # ── Dependency Justification ────────────────────────────────────────────
+
+  - number: IMPL-TEST-RS-015
+    hash: 5404c7da1990
+    name: proptest-dependency
+    type: implementation
+    description: >
+      proptest is a Buy dependency: property-based testing with shrinking.
+      No viable DIY alternative for strategy composition and minimal
+      counterexample generation.
+    links:
+      - {target: e71a98fb1de2, rel: implements}   # TEST-C-001 unit-tests
+    deprecated: false
+
+  - number: IMPL-TEST-RS-016
+    hash: da8a37dc326a
+    name: playwright-dependency
+    type: implementation
+    description: >
+      Playwright is a Buy dependency: browser automation for WASM E2E tests.
+      No viable Rust-native alternative for real headless browser testing.
+    links:
+      - {target: cd9ec303e282, rel: implements}   # TEST-C-002 playwright-installed
+    deprecated: false
+
+  - number: IMPL-TEST-RS-017
+    hash: 4caca579884c
+    name: testcontainers-dependency
+    type: implementation
+    description: >
+      testcontainers-rs is a Buy dependency: ephemeral Docker container
+      management for integration tests. Handles lifecycle, port mapping,
+      and cleanup.
+    links:
+      - {target: 1b3bbdf1be70, rel: implements}   # TEST-P-001 prefer-real-systems
+    deprecated: false
+
+  - number: IMPL-TEST-RS-018
+    hash: 0a4a4dcc3c47
+    name: insta-snapshot-testing
+    type: implementation
+    description: >
+      insta crate for snapshot testing of complex output (JSON responses,
+      error messages, serialized structures). Buy decision — snapshot
+      management with review workflow is not trivial to DIY.
+    links:
+      - {target: 217845b40c8f, rel: implements}   # TEST-P-005 suite-independence
+    deprecated: false
+
+  # ── Antipatterns (Rust-Specific) ────────────────────────────────────────
+
+  - number: IMPL-TEST-RS-019
+    hash: 90349e0e1ebb
+    name: no-split-runners
+    type: implementation
+    description: >
+      Do not run some test suites with cargo test and others with a custom
+      runner or standalone Playwright CLI. All Rust tests through cargo test;
+      E2E browser tests through Playwright. Two runners, clearly separated.
+    links:
+      - {target: a12043dd7788, rel: implements}   # TEST-X-004 monolithic-ci-workflow
+    deprecated: false
+
+  - number: IMPL-TEST-RS-020
+    hash: d89809d5ce44
+    name: no-mock-traits
+    type: implementation
+    description: >
+      Do not use mockall or mock traits for database or external service
+      testing. Use testcontainers for real PostgreSQL. Use recorded fixtures
+      for external APIs. Rust's type system catches interface drift at compile
+      time; mocks hide it at runtime.
+    links:
+      - {target: 1b3bbdf1be70, rel: implements}   # TEST-P-001 prefer-real-systems
+    deprecated: false
+
+  - number: IMPL-TEST-RS-021
+    hash: 8884f4d887b9
+    name: no-local-ci-drift
+    type: implementation
+    description: >
+      Do not run a suite with one cargo test invocation locally and a different
+      one in CI.
+    links:
+      - {target: 75558009a61e, rel: implements}   # TEST-X-005 local-ci-divergence
+    deprecated: false
+
+  - number: IMPL-TEST-RS-022
+    hash: c5c5a9c203ba
+    name: no-cfg-test-side-effects
+    type: implementation
+    description: >
+      Do not put setup logic or side effects in #[cfg(test)] that differs from
+      production code paths. Test modules test the production code; they do not
+      create a parallel implementation.
+    links:
+      - {target: 2485ba0453b8, rel: implements}   # TEST-X-009 test-environment-shortcuts
+    deprecated: false

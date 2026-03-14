@@ -1,0 +1,204 @@
+meta:
+  domain: IMPL-WORKER-RS
+  title: Worker - Rust Implementation
+  implements: WORKER
+  version: 1
+
+rules:
+  # ── Container & Runtime ─────────────────────────────────────────────────
+
+  - number: IMPL-WORKER-RS-001
+    hash: 94375da336e9
+    name: distroless-worker-binary
+    type: implementation
+    description: >
+      Worker container built as a statically linked Rust binary in a
+      distroless image. No shell (/bin/sh absent), no package manager, no
+      runtime binary installation path. Only the compiled binary, CA
+      certificates, and timezone data.
+    links:
+      - {target: 04c8e0e0c08d, rel: implements}  # WORKER-P-004 distroless-with-explicit-allowances
+      - {target: 6cee5e4dbf44, rel: implements}  # WORKER-C-001 no-shell-binary
+    deprecated: false
+
+  - number: IMPL-WORKER-RS-002
+    hash: b878cdfcea39
+    name: tokio-task-loop
+    type: implementation
+    description: >
+      Worker runs a Tokio task loop: poll task queue view via sqlx (read-only),
+      claim via API call, execute, submit result via API. Graceful shutdown
+      via tokio::signal. No shell involvement in the task lifecycle.
+    links:
+      - {target: fec546a4edeb, rel: implements}  # WORKER-D-001 task-queue-read-only-view
+      - {target: 828eead860c0, rel: implements}  # WORKER-P-001 read-only-database-access
+    deprecated: false
+
+  # ── Database Access ─────────────────────────────────────────────────────
+
+  - number: IMPL-WORKER-RS-003
+    hash: bf1a6505c990
+    name: select-only-db-role
+    type: implementation
+    description: >
+      Worker's sqlx::PgPool connects with a SELECT-only PostgreSQL role
+      (e.g., agent_coding). INSERT, UPDATE, DELETE produce permission errors
+      at the database level. Rust's type system further constrains the worker
+      crate to only use query functions, never execute functions.
+    links:
+      - {target: 828eead860c0, rel: implements}  # WORKER-P-001 read-only-database-access
+      - {target: cebee7387f5b, rel: implements}  # WORKER-D-007 per-agent-type-database-role
+      - {target: ba3b855fc0a5, rel: implements}  # WORKER-C-002 select-only-db-role
+    deprecated: false
+
+  # ── API Writes ──────────────────────────────────────────────────────────
+
+  - number: IMPL-WORKER-RS-004
+    hash: 5ba8a85a0819
+    name: writes-through-reqwest-api
+    type: implementation
+    description: >
+      All agent writes submitted as authenticated HTTP requests via reqwest
+      to the Axum API server. The worker crate has no dependency on the
+      database write layer. Compile-time enforcement: the worker crate does
+      not depend on crates/db write modules.
+    links:
+      - {target: 04607753d09a, rel: implements}  # WORKER-P-002 writes-through-authenticated-api
+    deprecated: false
+
+  - number: IMPL-WORKER-RS-005
+    hash: fc7366e39d6a
+    name: delegated-token-submission
+    type: implementation
+    description: >
+      At task creation the API generates a single-use, task-scoped token.
+      The worker presents the token via Authorization header when submitting
+      results. The API verifies scope, user identity match, and invalidates
+      the token after first use.
+    links:
+      - {target: 94e51d38d726, rel: implements}  # WORKER-D-002 delegated-user-token
+      - {target: 99b401f918f7, rel: implements}  # WORKER-P-006 single-use-task-scoped-tokens
+    deprecated: false
+
+  # ── Vendor CLI Invocation ───────────────────────────────────────────────
+
+  - number: IMPL-WORKER-RS-006
+    hash: 7d926de66aa0
+    name: command-array-spawn
+    type: implementation
+    description: >
+      Vendor CLI binaries invoked using tokio::process::Command with argument
+      array, not shell string. Input via stdin, output captured on
+      stdout/stderr. No shell interpolation. Rust's Command API uses array
+      form by default, making shell injection structurally impossible without
+      explicitly opting into .arg("sh").
+    links:
+      - {target: 6a55cc478eca, rel: implements}  # WORKER-D-004 vendor-binary-process-spawn
+      - {target: fb9c8615723a, rel: implements}  # WORKER-C-007 vendor-cli-array-form
+    deprecated: false
+
+  # ── Audit Logging ───────────────────────────────────────────────────────
+
+  - number: IMPL-WORKER-RS-007
+    hash: c5ef0cf3294d
+    name: structured-execution-audit
+    type: implementation
+    description: >
+      Every agent execution (task claim, vendor API call, CLI invocation,
+      result submission) logged via API POST to audit endpoint. Log entries
+      include task_id, agent_type, operation_type, input_hash (SHA-256),
+      output_hash, token_used, timestamp, and result_status. Content stored
+      in task record, not in audit log.
+    links:
+      - {target: 8979f3da3356, rel: implements}  # WORKER-D-005 structured-execution-audit-log
+      - {target: 69e1235be7de, rel: implements}  # WORKER-C-008 audit-log-on-vendor-invocation
+    deprecated: false
+
+  # ── Digital Twins ───────────────────────────────────────────────────────
+
+  - number: IMPL-WORKER-RS-008
+    hash: cc1a65763a30
+    name: sandboxed-twin-execution
+    type: implementation
+    description: >
+      Worker requests a sandboxed digital twin via the API. Twin runs with
+      isolated credentials and separate mutable storage. Worker executes
+      simulation, produces structured diff artifact. Twin torn down after
+      execution. Promotion requires separate authorization.
+    links:
+      - {target: f97902bbcca1, rel: implements}  # WORKER-D-006 sandboxed-digital-twin-execution
+      - {target: 6e0a5f6d7052, rel: implements}  # WORKER-P-007 simulation-in-digital-twins
+    deprecated: false
+
+  # ── Agent Type Isolation ────────────────────────────────────────────────
+
+  - number: IMPL-WORKER-RS-009
+    hash: 6684af4bc7d6
+    name: per-type-deployment
+    type: implementation
+    description: >
+      Each agent type has its own Kubernetes Deployment, database role,
+      and vendor API credentials injected via K8s Secrets. Worker binary
+      reads its type from an environment variable set in the deployment
+      manifest. Different agent types cannot share credentials.
+    links:
+      - {target: f84a99a27579, rel: implements}  # WORKER-P-008 agent-type-isolation
+      - {target: cebee7387f5b, rel: implements}  # WORKER-D-007 per-agent-type-database-role
+    deprecated: false
+
+  # ── Network Policy ─────────────────────────────────────────────────────
+
+  - number: IMPL-WORKER-RS-010
+    hash: ac2d477b8cea
+    name: network-policy-blocks-db
+    type: implementation
+    description: >
+      Kubernetes NetworkPolicy blocks direct database port access from worker
+      pods. Worker can only reach the API server and declared vendor API
+      hostnames. All other egress is blocked.
+    links:
+      - {target: 04607753d09a, rel: implements}  # WORKER-P-002 writes-through-authenticated-api
+      - {target: 828eead860c0, rel: implements}  # WORKER-P-001 read-only-database-access
+    deprecated: false
+
+  # ── Antipatterns (Rust-Specific) ────────────────────────────────────────
+
+  - number: IMPL-WORKER-RS-011
+    hash: 45be317d2e76
+    name: anti-direct-db-writes
+    type: implementation
+    description: >
+      Do not add crates/db as a write dependency in the worker crate's
+      Cargo.toml. The worker crate must not compile if it attempts to import
+      write functions. Compile-time enforcement via Cargo dependency graph.
+    links:
+      - {target: a76fb9bc6f9a, rel: implements}  # WORKER-X-001 direct-database-writes
+      - {target: 828eead860c0, rel: implements}  # WORKER-P-001 read-only-database-access
+    deprecated: false
+
+  - number: IMPL-WORKER-RS-012
+    hash: ab87c165ed4e
+    name: anti-shell-form-invocation
+    type: implementation
+    description: >
+      Do not use Command::new("sh").arg("-c").arg(cmd_string). Rust's
+      Command API defaults to safe array-form invocation. Opting into shell
+      invocation requires explicit, reviewable code.
+    links:
+      - {target: 50e243fb9728, rel: implements}  # WORKER-X-006 shell-form-cli-invocation
+      - {target: 6a55cc478eca, rel: implements}  # WORKER-D-004 vendor-binary-process-spawn
+    deprecated: false
+
+  - number: IMPL-WORKER-RS-013
+    hash: 6bb4a88dcfbc
+    name: anti-runtime-cli-update
+    type: implementation
+    description: >
+      Do not allow runtime download or update of vendor CLI binaries. Vendor
+      CLI versions pinned in Dockerfile. Updates require image rebuild and
+      rolling deployment. Rust's static linking model makes this natural —
+      the binary is self-contained.
+    links:
+      - {target: 445514ee90dd, rel: implements}  # WORKER-X-007 runtime-vendor-cli-update
+      - {target: 6a55cc478eca, rel: implements}  # WORKER-D-004 vendor-binary-process-spawn
+    deprecated: false

@@ -1,0 +1,164 @@
+meta:
+  domain: IMPL-UX-RS
+  title: UX - Rust Implementation
+  implements: UX
+  version: 1
+
+rules:
+  # ── Crate Structure ───────────────────────────────────────────────────────
+
+  - number: IMPL-UX-RS-001
+    hash: 197fab2bb25e
+    name: workspace-surface-layout
+    type: implementation
+    description: >
+      Workspace organized into crates/web (Leptos WASM end-user UI),
+      crates/server (Axum API with agent router), crates/core (capability
+      types, service flow types). Each actor type maps to a distinct crate
+      or module consuming shared types from crates/core.
+    links:
+      - {target: 67863239eb85, rel: implements}  # UX-A-001 unified-service-layer
+      - {target: 60c41e0c35c7, rel: implements}  # UX-D-004 unified-design-system
+    deprecated: false
+
+  # ── Core Types ──────────────────────────────────────────────────────────────
+
+  - number: IMPL-UX-RS-002
+    hash: ba72955e21bb
+    name: capability-struct
+    type: implementation
+    description: >
+      Capability struct with id (String), allowed_actors (Vec<ActorType>),
+      and required_scopes (Vec<String>). Defined in crates/core. Derives
+      Serialize, Deserialize, Clone. Serves as the atomic unit of UX design
+      and access control.
+    links:
+      - {target: 8de237165c47, rel: implements}  # UX-D-003 agent-native-interface
+      - {target: 300c0e349c72, rel: implements}  # UX-A-002 api-first-client-agnostic
+    deprecated: false
+
+  - number: IMPL-UX-RS-003
+    hash: 75c3f8045b0e
+    name: actor-type-enum
+    type: implementation
+    description: >
+      ActorType enum (EndUser, Admin, Agent) in crates/core. Determines which
+      interface surface is appropriate. Exhaustive match ensures all actor
+      types are handled at compile time.
+    links:
+      - {target: e43e9ff85857, rel: implements}  # UX-P-003 medium-appropriate-interface
+    deprecated: false
+
+  - number: IMPL-UX-RS-004
+    hash: 3ad118ae80c9
+    name: agent-presence-struct
+    type: implementation
+    description: >
+      AgentPresence struct with agent_id, account_id, authorized_scopes
+      (Vec<String>), granted_at, last_active_at, and visible_to_account_holder
+      (always true, enforced by constructor). Defined in crates/core.
+    links:
+      - {target: b6f0649c24cf, rel: implements}  # UX-P-005 agent-presence-explicit
+    deprecated: false
+
+  - number: IMPL-UX-RS-005
+    hash: 81f5a40e3f43
+    name: agent-action-record-struct
+    type: implementation
+    description: >
+      AgentActionRecord struct with agent_id, account_id, capability_id,
+      input_summary (String), outcome (Success | Rejected | Failed enum),
+      and timestamp. Defined in crates/core.
+    links:
+      - {target: b6f0649c24cf, rel: implements}  # UX-P-005 agent-presence-explicit
+    deprecated: false
+
+  - number: IMPL-UX-RS-006
+    hash: e75d682cb5b1
+    name: service-flow-state-struct
+    type: implementation
+    description: >
+      ServiceFlowState struct with id, label, and available_transitions
+      (Vec<ServiceFlowTransition>). The authoritative UX specification unit
+      from which Leptos components are derived.
+    links:
+      - {target: 173636ad122f, rel: implements}  # UX-D-001 service-flow-mapping
+      - {target: d7f85752c1b1, rel: implements}  # UX-P-001 service-delivery-precedes-surface
+    deprecated: false
+
+  # ── Dependency Decisions ───────────────────────────────────────────────────
+
+  - number: IMPL-UX-RS-007
+    hash: 9e3ab29688c9
+    name: leptos-buy-decision
+    type: implementation
+    description: >
+      Leptos is a buy decision for the WASM UI framework. Fine-grained
+      reactivity, SSR + hydration, and Rust-native component model. No viable
+      DIY alternative for browser rendering via WASM.
+    links:
+      - {target: 95f2b6bff569, rel: implements}  # UX-P-004 beauty-is-functional-requirement
+    deprecated: false
+
+  - number: IMPL-UX-RS-008
+    hash: 4e16f38acdca
+    name: tailwind-buy-decision
+    type: implementation
+    description: >
+      Tailwind CSS is a buy decision for design tokens and utility classes.
+      Provides the token system for the shared design system across all
+      surfaces. Integrated via the WASM build pipeline.
+    links:
+      - {target: 95f2b6bff569, rel: implements}  # UX-P-004 beauty-is-functional-requirement
+      - {target: 60c41e0c35c7, rel: implements}  # UX-D-004 unified-design-system
+    deprecated: false
+
+  - number: IMPL-UX-RS-009
+    hash: 678db4f10fdc
+    name: agent-sdk-typed-http-client
+    type: implementation
+    description: >
+      Agent SDK HTTP client built using reqwest with typed request/response
+      structs from crates/core. The same types used by the server ensure
+      compile-time API contract compatibility. DIY thin wrapper.
+    links:
+      - {target: 8de237165c47, rel: implements}  # UX-D-003 agent-native-interface
+    deprecated: false
+
+  - number: IMPL-UX-RS-010
+    hash: 16f58daa9dd8
+    name: design-token-diy
+    type: implementation
+    description: >
+      Design token definitions are a JSON/TOML file consumed by the Tailwind
+      config. No external design token package needed.
+    links:
+      - {target: 60c41e0c35c7, rel: implements}  # UX-D-004 unified-design-system
+    deprecated: false
+
+  # ── Antipatterns (Rust/WASM-Specific) ──────────────────────────────────────
+
+  - number: IMPL-UX-RS-011
+    hash: 53676df514bf
+    name: no-technology-specific-specs
+    type: implementation
+    description: >
+      Design documents must not specify "use a Leptos component" or "apply
+      Tailwind flex." Specifications describe user states and transitions;
+      implementations satisfy them independently.
+    links:
+      - {target: e49ebcb9644c, rel: implements}  # UX-P-006 designers-specify-needs
+      - {target: 099bffc7e55a, rel: implements}  # UX-T-007 design-coupled-to-framework
+    deprecated: false
+
+  - number: IMPL-UX-RS-012
+    hash: 0d46ff382cb6
+    name: no-gui-dependent-tooling
+    type: implementation
+    description: >
+      Calypso runs on hosted Linux with no display server. Any tool requiring
+      a live browser window or native GUI is prohibited. Visual output is
+      evaluated via headless Playwright screenshots.
+    links:
+      - {target: 95f2b6bff569, rel: implements}  # UX-P-004 beauty-is-functional-requirement
+    deprecated: false

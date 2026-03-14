@@ -1,0 +1,537 @@
+meta:
+  domain: IMPL-DATA-RS
+  title: Data - Rust Implementation
+  implements: DATA
+  version: 1
+
+rules:
+  # ── Database ──────────────────────────────────────────────────────────────
+
+  - number: IMPL-DATA-RS-001
+    hash: 53eb269377bc
+    name: postgresql-from-first-commit
+    type: implementation
+    description: >
+      PostgreSQL is the database from the first commit. Three core tables in
+      calypso_app provide a flexible property graph model.
+    links:
+      - {target: 2148c73bfc28, rel: implements}  # DATA-P-004 postgresql-with-graph-patterns
+      - {target: 38d305fb7362, rel: implements}  # DATA-C-001 three-databases-provisioned
+    deprecated: false
+
+  - number: IMPL-DATA-RS-002
+    hash: d19ee121795d
+    name: three-table-property-graph
+    type: implementation
+    description: >
+      Three tables: entities (id UUID, type TEXT, properties JSONB, tenant_id
+      UUID, version INT), relations (id UUID, source_id UUID, target_id UUID,
+      type TEXT, properties JSONB), and entity_types (type TEXT PK, schema
+      JSONB, sensitive TEXT[], kms_key_id TEXT). Domain types in /crates/core
+      map to these structures via serde.
+    links:
+      - {target: ad20dbdec789, rel: implements}  # DATA-D-002 property-graph-on-postgresql
+      - {target: 90cf3db02e62, rel: implements}  # DATA-C-003 property-graph-tables-initialized
+    deprecated: false
+
+  - number: IMPL-DATA-RS-003
+    hash: 609e756a8b8e
+    name: roles-and-privileges
+    type: implementation
+    description: >
+      Three database roles: app_rw (read/write on calypso_app), analytics_w
+      (INSERT only on calypso_analytics), audit_w (INSERT only on
+      calypso_audit). No role crosses database boundaries.
+    links:
+      - {target: 127078d82e9d, rel: implements}  # DATA-C-002 three-roles-created
+      - {target: e58dde384025, rel: implements}  # DATA-A-001 three-database-single-instance
+    deprecated: false
+
+  - number: IMPL-DATA-RS-004
+    hash: 2d1c367cb973
+    name: three-connection-pools
+    type: implementation
+    description: >
+      The application server holds three separate sqlx::PgPool instances:
+      app_rw for the transactional graph, analytics_w for the analytics tier,
+      audit_w for the append-only audit log. Pool configuration (max
+      connections, idle timeout) is per-pool.
+    links:
+      - {target: e58dde384025, rel: implements}  # DATA-A-001 three-database-single-instance
+      - {target: d7eca61da7e1, rel: implements}  # DATA-P-001 separate-analytics-from-transactional
+    deprecated: false
+
+  - number: IMPL-DATA-RS-005
+    hash: 333c6bd7817c
+    name: sqlx-compile-time-queries
+    type: implementation
+    description: >
+      sqlx with compile-time checked queries via the sqlx::query! macro. SQL
+      queries are verified against the database schema at compile time. No ORM.
+      No string concatenation in query construction. Parameterized queries are
+      structurally enforced by the sqlx API.
+    links:
+      - {target: 03eb3c217c19, rel: implements}  # DATA-C-005 parameterized-queries-only
+    deprecated: false
+
+  - number: IMPL-DATA-RS-006
+    hash: 6429e85396f1
+    name: dev-environment-containers
+    type: implementation
+    description: >
+      Docker Compose or k3s starts PostgreSQL (distroless image) and Vault (dev
+      mode). An init.sql script creates the three databases and three roles on
+      first container start.
+    links:
+      - {target: 6452802894f9, rel: implements}  # DATA-C-004 local-dev-containerized
+    deprecated: false
+
+  - number: IMPL-DATA-RS-007
+    hash: f69637a4b3bf
+    name: sqlx-migrations
+    type: implementation
+    description: >
+      Database migrations managed via sqlx-cli (sqlx migrate run). Core graph
+      tables established in the initial migration. The flexible JSONB schema
+      means business evolution rarely requires further DDL migrations.
+    links:
+      - {target: f87c3c6aa92e, rel: implements}  # DATA-C-013 core-migration-applied
+      - {target: ad20dbdec789, rel: implements}  # DATA-D-002 property-graph-on-postgresql
+    deprecated: false
+
+  - number: IMPL-DATA-RS-008
+    hash: bf33a1923c6a
+    name: schema-evolution-via-registry
+    type: implementation
+    description: >
+      Adding a new entity type is INSERT INTO entity_types. Adding a property
+      is UPDATE entity_types SET schema. Registry changes are audited and
+      revertible. No DDL migrations for business model changes.
+    links:
+      - {target: 522c78fa3ceb, rel: implements}  # DATA-D-003 type-registry-validation
+      - {target: c1a58c5b6248, rel: implements}  # DATA-P-003 schema-as-data
+    deprecated: false
+
+  - number: IMPL-DATA-RS-009
+    hash: a94a87852ed4
+    name: application-layer-validation
+    type: implementation
+    description: >
+      Validation performed in the application layer against the JSON Schema in
+      the entity_types registry before SQL execution. Uses the jsonschema crate
+      for JSON Schema validation in Rust.
+    links:
+      - {target: 522c78fa3ceb, rel: implements}  # DATA-D-003 type-registry-validation
+    deprecated: false
+
+  # ── Encryption ──────────────────────────────────────────────────────────────
+
+  - number: IMPL-DATA-RS-010
+    hash: 2258f7313992
+    name: aes-256-gcm-rustcrypto
+    type: implementation
+    description: >
+      Application-layer field encryption uses AES-256-GCM via the RustCrypto
+      aes-gcm crate. Constant-time operations, no unsafe in the crypto path,
+      and audited implementations. No OpenSSL dependency.
+    links:
+      - {target: 8b531a730c7d, rel: implements}  # DATA-D-001 encrypt-before-insert
+      - {target: d3654bc07931, rel: implements}  # DATA-C-006 application-layer-encryption-active
+    deprecated: false
+
+  - number: IMPL-DATA-RS-011
+    hash: 9528f0741fe4
+    name: key-per-type-from-registry
+    type: implementation
+    description: >
+      The entity_types registry declares which properties are sensitive and
+      which kms_key_id protects them. One key compromise exposes only one
+      entity type.
+    links:
+      - {target: 60ed722d31f6, rel: implements}  # DATA-D-005 key-per-type-encryption
+    deprecated: false
+
+  - number: IMPL-DATA-RS-012
+    hash: c3e75ce07e45
+    name: field-encryptor-module
+    type: implementation
+    description: >
+      The FieldEncryptor module intercepts writes, checks the registry, and
+      encrypts sensitive keys within the JSONB property blob before storage.
+      Decryption occurs after read. Rust's ownership model ensures plaintext
+      is zeroized after use via the zeroize crate.
+    links:
+      - {target: 8b531a730c7d, rel: implements}  # DATA-D-001 encrypt-before-insert
+      - {target: 60ed722d31f6, rel: implements}  # DATA-D-005 key-per-type-encryption
+    deprecated: false
+
+  - number: IMPL-DATA-RS-013
+    hash: 988967d1f090
+    name: ciphertext-envelope-format
+    type: implementation
+    description: >
+      Encrypted fields store base64url(keyVersion 4B || nonce 12B || ciphertext
+      + auth tag n+16B). keyVersion enables rotation without cutover. Nonce is
+      random per call via OsRng. Auth tag is 16 bytes appended by AES-GCM.
+    links:
+      - {target: 8b531a730c7d, rel: implements}  # DATA-D-001 encrypt-before-insert
+      - {target: 60ed722d31f6, rel: implements}  # DATA-D-005 key-per-type-encryption
+    deprecated: false
+
+  - number: IMPL-DATA-RS-014
+    hash: c93d947af148
+    name: key-rotation-background-task
+    type: implementation
+    description: >
+      KMS issues a new key version. New writes use the new version immediately.
+      A Tokio background task re-encrypts old rows by parsing keyVersion from
+      the envelope, decrypting with the old key, re-encrypting with the new
+      key. Old key retained read-only until zero rows remain. No downtime.
+    links:
+      - {target: 6539ad97bbcb, rel: implements}  # DATA-C-016 key-rotation-tested
+      - {target: d27ba8a19e8a, rel: implements}  # DATA-C-024 automated-key-rotation
+    deprecated: false
+
+  # ── Analytics Tier ──────────────────────────────────────────────────────────
+
+  - number: IMPL-DATA-RS-015
+    hash: 3ad2be4db439
+    name: analytics-write-only-role
+    type: implementation
+    description: >
+      Events written to calypso_analytics via analytics_w role. This role has
+      no read path back to calypso_app.
+    links:
+      - {target: f8dc70f7a4ff, rel: implements}  # DATA-D-006 aggregation-tier-separation
+    deprecated: false
+
+  - number: IMPL-DATA-RS-016
+    hash: c7af07749421
+    name: session-pseudonym-attribution
+    type: implementation
+    description: >
+      Events attributed to a rotating session pseudonym, not a user ID.
+    links:
+      - {target: 41bebcc94544, rel: implements}  # DATA-D-007 session-pseudonymization
+      - {target: 5e9dfa261da1, rel: implements}  # DATA-C-011 analytics-pseudonymized
+    deprecated: false
+
+  - number: IMPL-DATA-RS-017
+    hash: 8347e7f2ef8c
+    name: pseudonym-mapping-not-exported
+    type: implementation
+    description: >
+      The mapping between session pseudonym and user identity exists only in
+      calypso_app and is never exported to the analytics store.
+    links:
+      - {target: 41bebcc94544, rel: implements}  # DATA-D-007 session-pseudonymization
+    deprecated: false
+
+  - number: IMPL-DATA-RS-018
+    hash: 4a003717d288
+    name: differential-privacy-laplace
+    type: implementation
+    description: >
+      Laplace noise applied on all aggregation exports. Privacy budget
+      (epsilon) tracked per dataset in calypso_app. The analytics export layer
+      checks and decrements atomically before executing the query. Budget
+      exhaustion returns a structured error.
+    links:
+      - {target: eb6fb098108a, rel: implements}  # DATA-D-008 differential-privacy-on-export
+      - {target: b79051bf62a8, rel: implements}  # DATA-C-015 differential-privacy-active
+    deprecated: false
+
+  - number: IMPL-DATA-RS-019
+    hash: c2f6fc4125b5
+    name: analytics-event-hmac-signature
+    type: implementation
+    description: >
+      Events signed using HMAC-SHA256 via the hmac and sha2 crates with a
+      session-derived key (HKDF). Validated server-side before storage.
+    links:
+      - {target: b6e2c422c2db, rel: implements}  # DATA-D-009 signed-analytics-at-edge
+    deprecated: false
+
+  - number: IMPL-DATA-RS-020
+    hash: 1f02b9c61ac1
+    name: idempotent-analytics-writes
+    type: implementation
+    description: >
+      Analytics store uses INSERT ... ON CONFLICT (event_id) DO NOTHING for
+      idempotent writes. The event pipeline is at-least-once; duplicates are
+      discarded at the store.
+    links:
+      - {target: f8dc70f7a4ff, rel: implements}  # DATA-D-006 aggregation-tier-separation
+    deprecated: false
+
+  # ── Audit Logging ────────────────────────────────────────────────────────
+
+  - number: IMPL-DATA-RS-021
+    hash: 0ecd846fbf23
+    name: audit-log-before-access
+    type: implementation
+    description: >
+      Every sensitive data access logged before the access executes. If the
+      audit write fails, the data read is denied. Rust's Result type enforces
+      error handling; the audit write cannot be silently ignored.
+    links:
+      - {target: 44465342d178, rel: implements}  # DATA-D-010 audit-log-first
+      - {target: c9d640683d0c, rel: implements}  # DATA-P-008 audit-precedes-access
+      - {target: 601e0d14ee88, rel: implements}  # DATA-C-009 audit-log-first-ordering
+    deprecated: false
+
+  - number: IMPL-DATA-RS-022
+    hash: 185fbb9fec12
+    name: audit-insert-only-role
+    type: implementation
+    description: >
+      Written via audit_w role: INSERT-only, no UPDATE, no DELETE, no
+      TRUNCATE.
+    links:
+      - {target: 44465342d178, rel: implements}  # DATA-D-010 audit-log-first
+      - {target: 83c607c6aff9, rel: implements}  # DATA-C-022 audit-log-tamper-resistance
+    deprecated: false
+
+  - number: IMPL-DATA-RS-023
+    hash: 91f4fcbd78ed
+    name: audit-separate-encryption-key
+    type: implementation
+    description: >
+      Audit log uses a separate encryption key from the data it audits.
+    links:
+      - {target: 44465342d178, rel: implements}  # DATA-D-010 audit-log-first
+      - {target: c9d640683d0c, rel: implements}  # DATA-P-008 audit-precedes-access
+    deprecated: false
+
+  - number: IMPL-DATA-RS-024
+    hash: b00f021b6811
+    name: audit-writer-credential-isolation
+    type: implementation
+    description: >
+      audit_w credentials are held only by the audit writer module. No other
+      code path in the application can obtain them. Rust's module visibility
+      system (pub(crate), pub(super)) enforces this at compile time.
+    links:
+      - {target: 44465342d178, rel: implements}  # DATA-D-010 audit-log-first
+    deprecated: false
+
+  - number: IMPL-DATA-RS-025
+    hash: a11a0af8e0d1
+    name: audit-entry-struct
+    type: implementation
+    description: >
+      AuditEntry struct with fields: action, actor_id, actor_kind (User |
+      Agent | System enum), resource_type, resource_id, timestamp, result
+      (Allowed | Denied enum). Defined in /crates/core.
+    links:
+      - {target: 44465342d178, rel: implements}  # DATA-D-010 audit-log-first
+      - {target: a49a8c360813, rel: implements}  # DATA-C-008 audit-logging-operational
+    deprecated: false
+
+  - number: IMPL-DATA-RS-026
+    hash: 69af1334b5a6
+    name: audit-backup-independent
+    type: implementation
+    description: >
+      Audit log backed up independently from calypso_app. Separate databases
+      ensure backup isolation. Audit log replication to append-only cold
+      storage is required.
+    links:
+      - {target: 11386dd10236, rel: implements}  # DATA-C-025 immutable-audit-cold-storage
+      - {target: c9d640683d0c, rel: implements}  # DATA-P-008 audit-precedes-access
+    deprecated: false
+
+  # ── Core Types ───────────────────────────────────────────────────────────
+
+  - number: IMPL-DATA-RS-027
+    hash: 38b2031f52e1
+    name: kms-client-trait
+    type: implementation
+    description: >
+      KmsClient trait with async fn encrypt, decrypt, and rotate_key methods.
+      Abstracts over Vault, AWS KMS, GCP KMS. Implementations in /crates/crypto.
+      Trait objects allow runtime KMS provider selection without code changes.
+    links:
+      - {target: ed6163ae0eaf, rel: implements}  # DATA-P-007 keys-separate-from-data
+      - {target: e1be2f2f1847, rel: implements}  # DATA-C-007 kms-integrated-no-config-keys
+    deprecated: false
+
+  - number: IMPL-DATA-RS-028
+    hash: 9189824d4770
+    name: field-encryptor-trait
+    type: implementation
+    description: >
+      FieldEncryptor trait with encrypt_field and decrypt_field methods.
+      Generates fresh random nonce via OsRng, fetches current key version from
+      KMS. Supports both current-key and old-key ciphertext for rotation.
+    links:
+      - {target: 8b531a730c7d, rel: implements}  # DATA-D-001 encrypt-before-insert
+      - {target: 60ed722d31f6, rel: implements}  # DATA-D-005 key-per-type-encryption
+    deprecated: false
+
+  - number: IMPL-DATA-RS-029
+    hash: a73194e417f1
+    name: analytics-event-struct
+    type: implementation
+    description: >
+      AnalyticsEvent struct with event_type, payload (serde_json::Value),
+      session_pseudonym (rotating, never a user ID), event_id (Uuid for
+      idempotent inserts), timestamp, and signature (HMAC-SHA256).
+    links:
+      - {target: f8dc70f7a4ff, rel: implements}  # DATA-D-006 aggregation-tier-separation
+      - {target: 41bebcc94544, rel: implements}  # DATA-D-007 session-pseudonymization
+      - {target: b6e2c422c2db, rel: implements}  # DATA-D-009 signed-analytics-at-edge
+    deprecated: false
+
+  # ── Dependency Decisions ────────────────────────────────────────────────
+
+  - number: IMPL-DATA-RS-030
+    hash: 5ffeab9ba4bb
+    name: sqlx-postgres-client
+    type: implementation
+    description: >
+      Use sqlx with the postgres feature. Compile-time checked SQL queries,
+      connection pooling, and async-first design on Tokio. Buy decision.
+    links:
+      - {target: 03eb3c217c19, rel: implements}  # DATA-C-005 parameterized-queries-only
+    deprecated: false
+
+  - number: IMPL-DATA-RS-031
+    hash: c59e72b452e9
+    name: rustcrypto-aes-hkdf
+    type: implementation
+    description: >
+      AES-256-GCM encryption via aes-gcm crate, HKDF key derivation via hkdf
+      crate, HMAC via hmac crate, SHA-256 via sha2 crate. All from the
+      RustCrypto project. Audited, no-std compatible, constant-time. Buy
+      decision — cryptographic primitives are never DIY.
+    links:
+      - {target: 8b531a730c7d, rel: implements}  # DATA-D-001 encrypt-before-insert
+      - {target: 3be027de3daf, rel: implements}  # DATA-P-002 layered-encryption
+    deprecated: false
+
+  - number: IMPL-DATA-RS-032
+    hash: 601626b0fec1
+    name: no-orm
+    type: implementation
+    description: >
+      No ORM (Diesel, SeaORM). ORMs add code generation steps, runtime
+      abstraction, and schema-file maintenance. sqlx compile-time checked
+      queries provide type safety without the abstraction layer.
+      Do-not-buy decision.
+    links:
+      - {target: 03eb3c217c19, rel: implements}  # DATA-C-005 parameterized-queries-only
+    deprecated: false
+
+  - number: IMPL-DATA-RS-033
+    hash: d92e7f85056f
+    name: dp-diy-implementation
+    type: implementation
+    description: >
+      Laplace noise addition is ~20 lines DIY in Rust. Privacy budget tracking
+      (epsilon accounting per dataset, atomic decrement, exhaustion enforcement)
+      is DB-backed state. Not a library concern.
+    links:
+      - {target: eb6fb098108a, rel: implements}  # DATA-D-008 differential-privacy-on-export
+    deprecated: false
+
+  - number: IMPL-DATA-RS-034
+    hash: 47cdc26e0cf2
+    name: kms-sdk-buy-when-needed
+    type: implementation
+    description: >
+      Use official thin KMS SDK client for the target provider (AWS, GCP,
+      Vault). Buy-when-needed decision. For Vault, use reqwest with the Vault
+      HTTP API directly (~100 lines).
+    links:
+      - {target: ed6163ae0eaf, rel: implements}  # DATA-P-007 keys-separate-from-data
+    deprecated: false
+
+  - number: IMPL-DATA-RS-035
+    hash: b61e975a81af
+    name: zeroize-sensitive-memory
+    type: implementation
+    description: >
+      All types holding plaintext secrets, keys, or decrypted PII derive
+      Zeroize and ZeroizeOnDrop from the zeroize crate. Plaintext is zeroed
+      from memory when dropped, not left for the allocator. Buy decision —
+      memory safety for secrets is critical.
+    links:
+      - {target: 8b531a730c7d, rel: implements}  # DATA-D-001 encrypt-before-insert
+    deprecated: false
+
+  # ── Antipatterns (Rust/PostgreSQL-Specific) ─────────────────────────────
+
+  - number: IMPL-DATA-RS-036
+    hash: 6a9073137a49
+    name: antipattern-orm-abstraction
+    type: implementation
+    description: >
+      Do not use an ORM. sqlx compile-time checked queries provide stronger
+      guarantees than any ORM. The ORM adds a schema file, generation step,
+      and runtime query builder that obscures the actual SQL.
+    links:
+      - {target: 03eb3c217c19, rel: implements}  # DATA-C-005 parameterized-queries-only
+    deprecated: false
+
+  - number: IMPL-DATA-RS-037
+    hash: 28a85c71d9af
+    name: antipattern-logging-decrypted
+    type: implementation
+    description: >
+      Do not derive Debug on types containing decrypted PII. Implement a
+      custom Debug that redacts sensitive fields. Rust's #[derive(Debug)]
+      on a struct holding plaintext will dump it on any unwrap or panic.
+    links:
+      - {target: ca5f8232e396, rel: implements}  # DATA-D-012 pii-scrubbing-log-pipeline
+      - {target: 845a26aaeb89, rel: implements}  # DATA-X-008 pii-in-error-logs
+    deprecated: false
+
+  - number: IMPL-DATA-RS-038
+    hash: f618111cbf7b
+    name: antipattern-env-var-keys
+    type: implementation
+    description: >
+      Do not store encryption keys in environment variables. Keys in .env are
+      readable by any process on the host. Use a KMS client trait with runtime
+      provider.
+    links:
+      - {target: ed6163ae0eaf, rel: implements}  # DATA-P-007 keys-separate-from-data
+      - {target: 3f2840ae0508, rel: implements}  # DATA-X-006 keys-alongside-data
+    deprecated: false
+
+  - number: IMPL-DATA-RS-039
+    hash: 12da1fd3b1aa
+    name: antipattern-single-role-app-audit
+    type: implementation
+    description: >
+      Do not use a single database role for app and audit. If app_rw can write
+      to the audit table, a compromised application can cover its tracks.
+    links:
+      - {target: 44465342d178, rel: implements}  # DATA-D-010 audit-log-first
+      - {target: 127078d82e9d, rel: implements}  # DATA-C-002 three-roles-created
+    deprecated: false
+
+  - number: IMPL-DATA-RS-040
+    hash: 010678a66327
+    name: antipattern-static-nonce
+    type: implementation
+    description: >
+      Do not use a static or deterministic nonce with AES-GCM. Always generate
+      via OsRng::default().gen::<[u8; 12]>() per encryption call. A reused
+      nonce breaks GCM authentication entirely.
+    links:
+      - {target: 8b531a730c7d, rel: implements}  # DATA-D-001 encrypt-before-insert
+    deprecated: false
+
+  - number: IMPL-DATA-RS-041
+    hash: 78443b9829d0
+    name: antipattern-no-key-version
+    type: implementation
+    description: >
+      Do not store raw ciphertext without a key version. Without keyVersion
+      in the envelope, rotation requires a full table re-encryption cutover.
+    links:
+      - {target: 60ed722d31f6, rel: implements}  # DATA-D-005 key-per-type-encryption
+      - {target: 6539ad97bbcb, rel: implements}  # DATA-C-016 key-rotation-tested
+    deprecated: false
