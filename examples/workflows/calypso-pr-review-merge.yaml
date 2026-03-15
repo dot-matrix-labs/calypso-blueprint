@@ -2,16 +2,13 @@ version: 1
 name: calypso-pr-review-merge
 initial_state: check-feature-completeness
 
-# Entry point: the orchestrator dispatches here after the feature workflow reaches done.
-# This is a separate state machine — development and review/merge are decoupled.
-#
 # Review gates (in order):
 #   a) feature complete  — all issue checkboxes checked
 #   b) tests pass        — CI green on the PR branch
-#   c) dependencies ready — any PRs this one depends on are merged or ready to merge
-#   d) mark mergeable    — merge agent submits the required approving review via gh (mandatory)
-#   e) merge queue       — use gh to assign a merge queue position among ready PRs
-#   f) execute merge     — merge when at queue head with all gates still satisfied
+#   c) dependencies ready — dependent PRs merged or ready
+#   d) mark mergeable    — merge agent submits approving review (mandatory)
+#   e) merge queue       — assign position among ready PRs
+#   f) execute merge     — merge at queue head with all gates still satisfied
 
 states:
   check-feature-completeness:
@@ -19,17 +16,10 @@ states:
     role: merge-queue
     cost: guru
     description: >
-      Read the linked GitHub issue and PR to verify all phase checkboxes are checked,
-      acceptance criteria are met, and the PR description is current.
+      Verify all phase checkboxes are checked, acceptance criteria met,
+      and PR description is current.
     prompt: |
-      Review this PR for feature completeness:
-        - All phase checkboxes on the linked issue are checked (documentation, stubs,
-          tdd, implementation, saved).
-        - All acceptance criteria listed in the issue are satisfied.
-        - The PR features checklist is fully checked.
-        - The PR test plan checklist is fully checked.
-        - The PR description accurately reflects the implemented scope.
-      If any item is incomplete, report exactly which ones are missing.
+      Verify: all phase checkboxes checked (documentation, stubs, tdd, implementation, saved), all acceptance criteria met, PR features + test plan checklists complete, PR description current. Report any missing items.
     completion:
       all_of:
         - issue-all-phases-checked
@@ -60,16 +50,9 @@ states:
     role: merge-queue
     cost: cheap
     description: >
-      Verify all PRs this feature depends on are either already merged into main
-      or are themselves ready to merge (CI green, feature complete, no outstanding blocks).
+      Verify all dependency PRs are merged or ready to merge.
     prompt: |
-      Inspect this PR for declared dependencies on other pull requests:
-        - Check the PR description and linked issues for "depends on" references.
-        - For each dependency, verify it is either:
-            a) Already merged into main, or
-            b) Ready to merge: CI green, feature complete, no open blocking conditions.
-        - If all dependencies are satisfied (or there are none), the check passes.
-        - If any dependency is still in progress or blocked, record which PR is blocking and why.
+      Check PR/issue for "depends on" refs. Each dependency must be: (a) merged into main, or (b) ready to merge (CI green, complete, unblocked). All satisfied or none → pass. Any blocked → report which and why.
     completion:
       any_of:
         - no-dependencies
@@ -85,18 +68,11 @@ states:
     kind: github
     role: merge-queue
     description: >
-      The merge agent submits the required approving review on the PR via the gh CLI.
-      PRs cannot be merged without at least one approval from the merge agent — this
-      state is the designated approval gate.
+      Submit the required approving review — PRs cannot merge without it.
     prompt: |
-      Submit the merge agent's approving review on this PR:
-        1. Un-draft the PR if it is still in draft state:
-             gh pr ready <number>
-        2. Submit the approving review:
-             gh pr review <number> --approve --body "Approved by merge agent: all gates satisfied."
-        3. Verify the review appears on the PR and the required-review count is satisfied.
-        4. Verify all required status checks are still passing after the review.
-      This approval is a hard requirement — the PR cannot enter the merge queue without it.
+      1. Un-draft: `gh pr ready <number>`
+      2. Approve: `gh pr review <number> --approve --body "Approved by merge agent: all gates satisfied."`
+      3. Verify review appears and required checks still passing.
     completion:
       all_of:
         - merge-agent-approval-submitted
@@ -110,17 +86,9 @@ states:
     kind: github
     role: merge-queue
     description: >
-      Assign a merge queue position among all currently ready PRs using the gh CLI.
+      Assign merge queue position among all ready PRs.
     prompt: |
-      Assign this PR a position in the merge queue:
-        1. List all open PRs that also have the merge-agent approval and are CI-green.
-        2. Determine the correct landing order based on:
-             - Feature dependencies (a dependent must land after its requirement).
-             - PR age (older PRs generally land first, all else equal).
-             - Any explicit ordering declared in linked issues.
-        3. Record the queue position and the rationale in a PR comment.
-        4. If this PR is already at queue head, proceed to execute-merge immediately.
-        5. If other PRs are ahead, record this PR as waiting.
+      List all approved+CI-green PRs. Order by: dependency constraints, then PR age. Record queue position + rationale in PR comment. At queue head → execute-merge. Behind others → waiting-for-queue-head.
     completion:
       all_of:
         - merge-queue-position-recorded
@@ -137,11 +105,9 @@ states:
     kind: human
     role: operator-or-orchestrator
     description: >
-      This PR is queued but not yet at the head. Wait for earlier PRs to merge before
-      proceeding.
+      This PR is queued but not yet at the head. Wait for earlier PRs to merge.
     prompt: |
-      This PR is waiting in the merge queue. Earlier PRs must merge first. When the PRs
-      ahead have landed, re-enter the queue check to re-evaluate position.
+      PR is queued behind others. When PRs ahead have landed, re-evaluate position.
     next:
       on:
         queue-position-advanced: assign-merge-queue
@@ -152,11 +118,7 @@ states:
     role: merge-queue
     description: Merge the PR now that it is at queue head and all gates still pass.
     prompt: |
-      Execute the merge for this PR:
-        1. Re-verify all gates still hold: CI green, merge-agent approval present, no new conflicts.
-        2. Merge via: gh pr merge <number> --merge --delete-branch
-        3. Confirm the PR is closed and the branch is deleted.
-        4. Update the linked GitHub issue to "done".
+      Re-verify all gates (CI green, approval, no conflicts). `gh pr merge <number> --merge --delete-branch`. Confirm PR closed, branch deleted, issue set to done.
     completion:
       all_of:
         - pull-request-merged
@@ -175,7 +137,7 @@ states:
     role: operator-or-orchestrator
     description: A review or merge gate failed and requires human resolution.
     prompt: |
-      Resolve the blocking condition before the PR can proceed through review and merge.
+      Resolve the blocking condition before the PR can proceed.
     next:
       on:
         issue-cleared: check-feature-completeness
@@ -250,7 +212,6 @@ checks:
     kind: github
     description: >
       The merge agent has submitted an approving review via gh pr review --approve.
-      This is the mandatory minimum-one-approval gate — the PR cannot be merged without it.
   pr-not-draft:
     kind: deterministic
     description: The PR is not in draft state.
@@ -284,10 +245,7 @@ checks:
 
 agent_prompts:
   merge-queue: |
-    Manage PR review and merge. Verify feature completeness, check CI status, resolve
-    dependency ordering, approve reviews, assign queue positions, and execute merges at
-    queue head. Use the gh CLI for all GitHub operations. Record all queue decisions and
-    their rationale in PR comments.
+    Verify feature completeness, CI status, dependency ordering. Approve, assign queue position, execute merges at queue head. Use gh CLI for all GitHub ops. Record queue decisions + rationale in PR comments.
 
 github_actions:
   current_required:

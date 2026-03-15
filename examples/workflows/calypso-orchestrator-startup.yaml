@@ -9,16 +9,7 @@ states:
     cost: cheap
     description: Evaluate all active work and select the highest-priority task to dispatch next.
     prompt: |
-      Scan the project state and identify what work is pending across three categories in
-      priority order:
-        1. Planning tasks — features that have been requested but not yet broken into
-           implementation units or whose specification is incomplete.
-        2. Merge tasks — feature branches that are implementation-complete and are waiting
-           to land on main.
-        3. Development tasks — active feature branches that need to be started or resumed
-           from their current implementation state.
-      Report the full queue, select the single highest-priority item, and declare which
-      category it belongs to.
+      Scan pending work in priority order: (1) planning — unspecified features or incomplete specs, (2) merge — implementation-complete branches waiting to land, (3) development — active or unstarted feature branches. Report the full queue, select the highest-priority item, declare its category.
     completion:
       any_of:
         - planning-task-identified
@@ -60,19 +51,9 @@ states:
     cost: cheap
     description: >
       Read docs/plan.md to identify the current active phase, then assign each
-      unstarted issue in that phase to a worker. Workers will each set up their
-      own local worktree via the feature development workflow.
+      unstarted issue in that phase to a worker.
     prompt: |
-      Read docs/plan.md and determine the current active phase — the earliest phase
-      that has open, unstarted issues.
-
-      For each unstarted issue in that phase:
-        1. Assign it to an available worker via GitHub issue assignment.
-        2. Record the assignment (worker → issue number) so dispatch can fan out.
-
-      If only one worker is available, assign the single highest-priority issue.
-      If multiple workers are available, assign one issue per worker, respecting
-      dependency order (no issue may be assigned before its dependencies are merged).
+      Read docs/plan.md. Find the earliest phase with open, unstarted issues. Assign one issue per available worker via `gh issue edit --add-assignee`, respecting dependency order (no issue assigned before its dependencies merge). One worker available → assign single highest-priority issue.
     completion:
       all_of:
         - active-phase-identified
@@ -98,8 +79,7 @@ states:
     role: operator
     description: No pending work was found. Waiting for new tasks or an external trigger.
     prompt: |
-      The orchestrator found no pending work. Wait for a new feature to be queued or for
-      an external trigger before resuming operations.
+      No pending work. Wait for a new feature to be queued or an external trigger.
     next:
       on:
         new-task-queued: scan-work-queue
@@ -110,8 +90,7 @@ states:
     role: operator-or-orchestrator
     description: A dispatch encountered a blocking condition that requires human resolution.
     prompt: |
-      A task dispatch encountered a blocking condition. Resolve the issue or redirect the
-      orchestrator to a different task.
+      A task dispatch hit a blocking condition. Resolve or redirect to a different task.
     next:
       on:
         issue-cleared: scan-work-queue
@@ -144,16 +123,10 @@ checks:
 
 agent_prompts:
   orchestrator: |
-    You are the Calypso orchestrator. Maintain the health of the development process, scan
-    for pending work across all active features, and dispatch tasks in priority order:
-    planning first, merging second, development third.
+    Scan for pending work across all active features. Dispatch in priority order: planning first, merging second, development third. Maintain process health.
   planner: |
-    Refine and maintain the project feature plan. Ensure each feature is well-specified,
-    its GitHub issue is current, and the roadmap is accurate before engineering begins.
+    Refine the project plan. Ensure features are well-specified with current GitHub issues before engineering begins.
   merge-queue: |
-    Manage the merge queue. Determine landing order across all merge-ready features, verify
-    all gates are satisfied, and execute merges for queue-head features.
+    Manage the merge queue. Determine landing order, verify all gates, execute merges for queue-head features.
   engineer: |
-    Execute development tasks. Start new feature branches from the current main or resume
-    in-progress implementations from their current state, leaving each feature in a clean
-    committed and pushed state.
+    Execute development tasks. Start or resume feature branches from their current state. Leave each feature committed and pushed.

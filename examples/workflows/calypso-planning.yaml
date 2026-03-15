@@ -22,16 +22,7 @@ states:
     description: >
       Retrieve all open GitHub issues and classify each one by type and phase.
     prompt: |
-      Retrieve all open GitHub issues:
-
-        gh issue list --state open --json number,title,labels,body,assignees,milestone
-
-      For each issue, classify:
-        - Type: feature | bug | chore | spike | question
-        - Phase: which plan phase it belongs to, if declared via label or milestone
-        - Dependencies: any "depends on #N" or "blocked by #N" references in the body
-
-      Produce a structured list for use in the reconciliation step.
+      Run `gh issue list --state open --json number,title,labels,body,assignees,milestone`. Classify each issue by type (feature|bug|chore|spike|question), phase (from label/milestone), and dependencies (depends-on/blocked-by refs in body). Output a structured list.
     completion:
       all_of:
         - open-issues-retrieved
@@ -48,20 +39,10 @@ states:
       Cross-reference open issues against docs/plan.md. Add missing issues to the plan.
       Resolve plan items that have no corresponding open issue.
     prompt: |
-      Read docs/plan.md and cross-reference it against the open issue list.
-
-      For every open GitHub issue NOT in the plan:
-        - Add it to the appropriate phase section.
-        - If the phase is not obvious, add it to a backlog section.
-        - Record the GitHub issue number as the canonical reference for that item.
-
-      For every item in the plan with NO corresponding open issue:
-        - Check if the issue was closed or merged → mark the plan item as complete
-          and move it to a "completed" section.
-        - Check if the issue was never created or the reference is broken → flag it
-          as an orphan. Do not remove it silently.
-
-      Write all changes back to docs/plan.md. Record every decision made.
+      Cross-reference open issues against docs/plan.md.
+      - Open issue NOT in plan → add to appropriate phase (backlog if unclear), record issue number.
+      - Plan item with NO open issue → if closed/merged mark complete, if broken reference flag as orphan.
+      Write all changes to docs/plan.md. Record every decision.
     completion:
       all_of:
         - plan-covers-all-open-issues
@@ -89,12 +70,7 @@ states:
       One or more plan items have no corresponding open GitHub issue and could not be
       automatically resolved. Human decides what to do with each one.
     prompt: |
-      The planner found items in docs/plan.md with no corresponding open GitHub issue.
-      For each flagged item, decide:
-        - Reopen or create the issue if the work is still needed.
-        - Remove the item from the plan if it is no longer relevant.
-        - Leave a note in docs/plan.md explaining the decision.
-      Once all orphans are resolved, mark this state complete.
+      Plan items found with no corresponding open issue. For each: reopen/create the issue if needed, remove if irrelevant, or leave a note. Mark complete when all orphans resolved.
     completion:
       all_of:
         - no-unresolved-orphans
@@ -109,33 +85,10 @@ states:
       Reorder all items in each plan phase by dependency then by risk, placing the
       highest-risk and most-unknown tasks first within their dependency constraints.
     prompt: |
-      Read the current docs/plan.md and produce a new priority ordering for every
-      item in every phase. Apply the following rules in order:
-
-      Rule 1 — Dependency ordering:
-        Build a dependency graph from "depends on" and "blocked by" references in
-        issues and plan entries. Within each phase, topologically sort items so that
-        prerequisites always appear before the items that depend on them.
-
-      Rule 2 — Risk-first within dependency constraints:
-        Among items at the same dependency depth, sort by descending risk. Treat an
-        item as higher risk if it:
-          - Uses technology, APIs, or patterns not yet established in this codebase.
-          - Has unclear or incomplete acceptance criteria.
-          - Blocks multiple other items if it runs long.
-          - Involves external integrations or third-party dependencies.
-          - Has no prior art in this codebase (spike territory).
-          - Has a high ratio of unknowns to knowns in its implementation approach.
-
-      For each item, write a one-line rationale explaining its position.
-
-      Update GitHub issue priority labels to match:
-        p0 → must land first (high dependency depth or highest risk in phase)
-        p1 → next tier
-        p2 → standard priority
-        p3 → low priority or future phase
-
-      Write the updated ordering and rationale back to docs/plan.md.
+      Reorder docs/plan.md per phase:
+      1. Topological sort by dependency graph (depends-on/blocked-by).
+      2. Within same depth, sort descending risk: unfamiliar tech, unclear criteria, high fan-out, external deps, no prior art.
+      One-line rationale per item. Update GitHub labels: p0 (land first) → p3 (low/future). Write to docs/plan.md.
     completion:
       all_of:
         - dependency-graph-built
@@ -155,17 +108,7 @@ states:
       Self-review the updated plan for correctness — every issue present, no
       dependency cycles, and risk ordering is internally consistent.
     prompt: |
-      Review the updated docs/plan.md for correctness. Check each of the following:
-
-        1. Every open GitHub issue appears exactly once in the plan.
-        2. No plan item is listed without a corresponding open issue reference.
-        3. There are no dependency cycles in the graph.
-        4. Within each phase, items with dependents appear before the items that
-           depend on them.
-        5. Among items at the same dependency depth, higher-risk items appear first,
-           and a rationale is present for each.
-
-      Report every violation. If the plan passes all checks, approve it.
+      Verify docs/plan.md: (1) every open issue appears exactly once, (2) no items without issue refs, (3) no dependency cycles, (4) prerequisites before dependents per phase, (5) higher-risk before lower-risk at same depth with rationale. Report violations or approve.
     completion:
       all_of:
         - plan-complete-and-consistent
@@ -181,11 +124,7 @@ states:
     cost: cheap
     description: Commit and push the updated plan document to the repository.
     prompt: |
-      Commit the updated docs/plan.md:
-        1. git add docs/plan.md
-        2. git commit -m "plan: reconcile issues and reprioritize phases ($(date +%Y-%m-%d))"
-        3. git push
-      Do not include other files in this commit.
+      `git add docs/plan.md && git commit -m "plan: reconcile issues and reprioritize phases ($(date +%Y-%m-%d))" && git push`. No other files.
     completion:
       all_of:
         - plan-committed
@@ -291,9 +230,4 @@ checks:
 
 agent_prompts:
   planner: |
-    Maintain docs/plan.md as the authoritative source of feature phases, dependency
-    ordering, and prioritization. Every open GitHub issue must appear in the plan
-    exactly once. Prioritize by dependency first — work that other work depends on
-    comes first. Then within each dependency tier, prioritize by risk and unknowns —
-    unfamiliar technology, unclear requirements, and high-blocking items come before
-    well-understood routine work. Record a rationale for every ordering decision.
+    Maintain docs/plan.md as the authoritative feature plan. Every open GitHub issue appears exactly once. Prioritize by dependency first (prerequisites before dependents), then by risk within each tier (unfamiliar > unclear > high-blocking > routine). Record rationale for every ordering decision.

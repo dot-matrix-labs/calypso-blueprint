@@ -5,22 +5,10 @@ initial_state: write-increment
 # The implementation loop is the innermost development cycle:
 # write code → run tests → evaluate → iterate or advance.
 #
-# This state machine is entered from the feature workflow when the TDD
-# red phase is complete and failing tests are ready. It exits when
-# all tests pass or when a blocking condition requires human input.
-#
-# When the agent gets stuck, it escalates through three context-loading
-# stages before asking a human. Each stage gives the agent progressively
-# broader context to self-unblock:
+# Escalation chain (3 levels before human):
 #   1. consult-issue-spec           — re-read the GitHub issue
 #   2. consult-implementation-rules — re-read rules/implementations/
 #   3. consult-blueprint            — re-read rules/blueprints/
-# Only after exhausting all three does it reach a human gate.
-#
-# Gate categories active in this loop:
-#   agent      — subjective quality judgements (is this test failure meaningful?)
-#   git-hook   — not applicable here; git hooks fire at commit/push time (save-state)
-#   ci         — not applicable here; CI runs after push (save-state)
 
 states:
   write-increment:
@@ -31,11 +19,7 @@ states:
       Write the minimal code increment needed to advance the failing tests.
       Do not over-implement — only add what the current red tests require.
     prompt: |
-      Write the next increment of implementation:
-        - Focus on the test(s) currently failing.
-        - Write only what is needed to make those tests pass — no more.
-        - Do not commit or push; that happens in save-state.
-        - Do not refactor or clean up beyond what is required to make tests pass.
+      Write minimal code to advance failing tests. Only what current red tests require — no more. Do not commit, push, refactor, or clean up.
     completion:
       all_of:
         - code-increment-written
@@ -60,22 +44,14 @@ states:
     role: engineer
     cost: cheap
     description: >
-      Interpret the test output and decide what to do next. The agent must
-      distinguish between: meaningful progress toward passing, no progress
-      (stuck), a test infrastructure problem, or an implementation uncertainty.
+      Interpret the test output and decide what to do next.
     prompt: |
-      Evaluate the test run output:
-        - If all tests pass: exit the implementation loop.
-        - If tests are still failing but the failures changed in a way that
-          shows progress: return to write-increment.
-        - If tests are failing and the same failures repeat with no change
-          after two or more increments: transition to diagnose-stuck.
-        - If the test runner itself failed (import error, environment issue,
-          build error unrelated to logic): transition to fix-test-infra.
-        - If you are uncertain how to implement the feature correctly (not a
-          test runner problem, not a clear stub mismatch — a genuine uncertainty
-          about what the code should do): transition to consult-issue-spec
-          to reload context before continuing.
+      Evaluate test output:
+      - All pass → exit-success
+      - Failures changed (progress) → write-increment
+      - Same failures ≥2 increments (stuck) → diagnose-stuck
+      - Runner crashed (import/build/env error) → fix-test-infra
+      - Uncertain what code should do → consult-issue-spec
     completion:
       any_of:
         - all-tests-passing
@@ -96,23 +72,10 @@ states:
     role: engineer
     cost: default
     description: >
-      Analyze why no progress is being made. The agent must determine
-      whether the stubs, the tests, or the implementation approach are
-      at fault — then either self-correct or begin the escalation chain.
+      Analyze why no progress is being made. Determine whether the stubs,
+      tests, or implementation approach are at fault.
     prompt: |
-      You have not made progress across two or more increments. Diagnose:
-        1. Re-read the failing test carefully. Is the test correctly written
-           against the stub interface?
-        2. Re-read the stub. Does it match what the test expects?
-        3. Compare the current test failures against the previous failures.
-           Is the implementation approach fundamentally misaligned?
-        If you identify a fixable inconsistency (stub mismatch, test bug,
-          wrong approach): correct it and return to write-increment.
-        If the issue is a test infrastructure problem (environment, config,
-          tooling): transition to fix-test-infra.
-        If you still cannot identify a path forward: transition to
-          consult-issue-spec to reload the feature spec as the first
-          escalation step.
+      No progress ≥2 increments. Diagnose: (1) test correctly written against stub interface? (2) stub matches test expectations? (3) implementation approach fundamentally misaligned? Fixable inconsistency → correct + write-increment. Infra problem → fix-test-infra. Still blocked → consult-issue-spec.
     completion:
       any_of:
         - inconsistency-identified-and-corrected
@@ -129,24 +92,10 @@ states:
     role: engineer
     cost: default
     description: >
-      Escalation level 1. Re-read the full GitHub issue — feature description,
-      acceptance criteria, API contract, and examples — to check whether the
-      current implementation approach is aligned with what was actually asked for.
-      Many stuck implementations are misreading the spec.
+      Escalation level 1. Re-read the full GitHub issue to check whether the
+      implementation approach aligns with what was actually asked for.
     prompt: |
-      You are stuck. Before escalating further, re-read the full GitHub issue:
-        1. Read the feature description from top to bottom.
-        2. Read every acceptance criterion. For each one: can you state in one
-           sentence exactly what code change satisfies it?
-        3. Read the API contract and any usage examples in the issue.
-        4. Compare what you have implemented against what the issue describes.
-           Identify any mismatch between your implementation and the spec.
-        If you now understand what to implement:
-          - Summarize the misalignment you found.
-          - Transition to write-increment to apply the correction.
-        If the spec is clear but you still do not know how to implement it
-        within the existing codebase constraints:
-          - Transition to consult-implementation-rules for the next escalation.
+      Escalation L1: re-read full GitHub issue. For each acceptance criterion, state in one sentence what code change satisfies it. Compare implementation against spec — identify any mismatch. Misalignment found → write-increment. Still unclear → consult-implementation-rules.
     completion:
       any_of:
         - implementation-unblocked
@@ -161,25 +110,10 @@ states:
     role: engineer
     cost: guru
     description: >
-      Escalation level 2. Re-read the implementation rules for this codebase
-      (rules/implementations/). These define required patterns, forbidden
-      approaches, module boundaries, and architectural constraints that must
-      be observed. The implementation may be failing because it violates a rule.
+      Escalation level 2. Re-read the implementation rules (rules/implementations/)
+      for required patterns, forbidden approaches, and module boundaries.
     prompt: |
-      You are still stuck after re-reading the spec. Re-read the implementation
-      rules now:
-        1. Read all files under rules/implementations/ relevant to the language
-           and domain of this feature.
-        2. For each failing test: check whether the implementation approach
-           violates any rule (wrong module boundary, forbidden dependency,
-           disallowed pattern, missing required abstraction).
-        3. Check whether the test itself is testing something the rules prohibit.
-        If you identify a rules violation or a rules-mandated pattern you were
-        not following:
-          - Note the rule and how it changes your approach.
-          - Transition to write-increment to apply the correction.
-        If the rules do not resolve the uncertainty:
-          - Transition to consult-blueprint for the final escalation.
+      Escalation L2: read rules/implementations/ for this language/domain. Check each failing test against rules — wrong module boundary? forbidden dependency? disallowed pattern? missing abstraction? Rule violation found → note rule + write-increment. Still unclear → consult-blueprint.
     completion:
       any_of:
         - implementation-unblocked
@@ -195,29 +129,9 @@ states:
     cost: guru
     description: >
       Escalation level 3. Re-read the full blueprint rules (rules/blueprints/).
-      These define the highest-level architectural invariants of the system —
-      domain model, service boundaries, data ownership, and process rules.
-      If the feature cannot be implemented after reading the blueprint, it
-      requires operator clarification.
+      If the feature cannot be implemented after this, it requires human input.
     prompt: |
-      You are still stuck after reading the spec and the implementation rules.
-      Re-read the full blueprint now:
-        1. Read all files under rules/blueprints/ relevant to this feature's
-           domain (process, UX, data model, etc.).
-        2. Identify whether the feature as described in the issue conflicts
-           with any blueprint invariant — this would be an issue-level defect,
-           not an implementation problem.
-        3. Identify whether the failing tests are testing something that the
-           blueprint prohibits or requires a different architectural approach
-           than what the stubs currently define.
-        If the blueprint clarifies the correct approach:
-          - Note the principle and how it resolves the implementation question.
-          - Transition to write-increment to apply the correction.
-        If after reading all three levels (spec, rules, blueprint) you still
-        cannot determine the correct implementation:
-          - State precisely what is ambiguous and why none of the three
-            reference levels resolved it.
-          - Transition to request-clarification for operator input.
+      Escalation L3: read rules/blueprints/ for this domain. Does the feature conflict with blueprint invariants? Do tests require a different architectural approach? Blueprint resolves it → note principle + write-increment. Still unclear after all 3 levels → request-clarification (state precisely what is ambiguous and why none of the 3 reference levels resolved it).
     completion:
       any_of:
         - implementation-unblocked
@@ -232,17 +146,9 @@ states:
     role: engineer
     cost: default
     description: >
-      Fix a test infrastructure problem preventing test execution. This covers
-      build errors, missing imports, environment configuration, and test runner
-      setup — not logic failures in the implementation under test.
+      Fix a test infrastructure problem preventing test execution — not logic failures.
     prompt: |
-      The test runner failed before reaching the test logic. Fix the infrastructure:
-        - Identify whether the issue is a missing import, build error,
-          environment variable, test setup/teardown, or tooling misconfiguration.
-        - Fix the issue at its root — do not suppress or skip the failing test.
-        - After the fix, return to run-tests to verify the runner succeeds.
-        - If the infrastructure issue requires an external dependency or
-          operator action to resolve, transition to request-clarification.
+      Test runner failed before reaching test logic. Fix root cause: missing import, build error, env var, test setup, tooling config. Do not suppress or skip tests. Fixed → run-tests. Needs external dependency → consult-issue-spec.
     completion:
       any_of:
         - infrastructure-fixed
@@ -283,13 +189,11 @@ states:
     kind: terminal
 
 checks:
-  # write-increment
   code-increment-written:
     kind: agent
     role: engineer
     description: At least one file was modified in service of making failing tests pass.
 
-  # run-tests / evaluate-results
   all-tests-passing:
     kind: deterministic
     description: The test runner exited 0 and reported zero failures.
@@ -318,7 +222,6 @@ checks:
       not a test runner problem or a clear stub mismatch, but an uncertainty
       about what the code should do.
 
-  # diagnose-stuck
   inconsistency-identified-and-corrected:
     kind: agent
     role: engineer
@@ -332,7 +235,6 @@ checks:
       After reviewing the failing tests, stubs, and previous failures, the
       agent cannot identify a path forward and must escalate.
 
-  # fix-test-infra
   infrastructure-fixed:
     kind: agent
     role: engineer
@@ -340,7 +242,6 @@ checks:
       The test infrastructure issue was resolved and the test runner
       can now execute the test suite.
 
-  # escalation chain (consult-issue-spec → consult-implementation-rules → consult-blueprint)
   implementation-unblocked:
     kind: agent
     role: engineer
@@ -366,7 +267,6 @@ checks:
       After re-reading the blueprint rules, the agent still cannot determine
       the correct implementation approach. Human clarification is required.
 
-  # request-clarification
   clarification-answered:
     kind: human
     description: The operator has responded to the agent's clarification request.

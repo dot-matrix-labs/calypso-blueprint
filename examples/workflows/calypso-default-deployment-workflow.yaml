@@ -43,8 +43,9 @@ states:
   tag-release:
     kind: agent
     role: release-manager
+    cost: cheap
     prompt: |
-      Create a release tag on a commit that is already on main and already has all required CI checks passing. The tag must use semver plus the six-digit PR hash suffix.
+      Tag the main commit with semver + 6-digit PR hash suffix (e.g. v1.2.3+abc123). Verify commit is on main and all required CI passed on that exact commit.
     completion:
       all_of:
         - release-tag-created
@@ -80,8 +81,9 @@ states:
   database-migrations:
     kind: agent
     role: deploy-orchestrator
+    cost: default
     prompt: |
-      Roll out the database migrations first. The release may proceed only if migrations complete cleanly and the new application remains compatible with both the previous and new schema versions.
+      Apply migrations. Verify system health. Confirm new app compatible with both old and new schema.
     completion:
       all_of:
         - database-migrations-applied
@@ -93,8 +95,9 @@ states:
   frontend-rollout:
     kind: agent
     role: deploy-orchestrator
+    cost: default
     prompt: |
-      Roll out the frontend application deployment and verify the running system remains healthy.
+      Roll out frontend. Verify system healthy before proceeding.
     completion:
       all_of:
         - frontend-rollout-complete
@@ -106,8 +109,9 @@ states:
   worker-rollout:
     kind: agent
     role: deploy-orchestrator
+    cost: default
     prompt: |
-      Roll out the worker deployments and verify the running system remains healthy.
+      Roll out workers. Verify system healthy before proceeding.
     completion:
       all_of:
         - worker-rollout-complete
@@ -119,8 +123,9 @@ states:
   static-web-rollout:
     kind: agent
     role: deploy-orchestrator
+    cost: default
     prompt: |
-      Roll out the static web tier last and verify the running system remains healthy end to end.
+      Roll out static web (final phase). Verify end-to-end health.
     completion:
       all_of:
         - static-web-rollout-complete
@@ -136,7 +141,7 @@ states:
     kind: human
     role: operator-or-orchestrator
     prompt: |
-      Resolve the blocking release issue or abort the rollout.
+      Resolve the blocking release issue or abort.
     next:
       on:
         issue-cleared: release-candidate
@@ -220,9 +225,9 @@ checks:
 
 agent_prompts:
   release-manager: |
-    Tag the release on a commit already on main, verify the tag format is semver plus the six-digit PR hash, and do not proceed unless all required CI checks passed on that exact commit.
+    Tag main commit with semver + 6-digit PR hash. Do not proceed unless all required CI passed on that exact commit.
   deploy-orchestrator: |
-    Execute the current rollout phase in order, verify the running system after the phase completes, and stop the rollout immediately if the health checks do not hold.
+    Execute rollout phases in order. Verify health after each. Stop immediately on health check failure.
 
 github_actions:
   current_required:
