@@ -48,17 +48,28 @@
     // ── Constants ──────────────────────────────────────────────────────────────
 
     const WORKFLOWS = [
-      { label: 'Feature Workflow (RS)',  path: 'calypso-blueprint/examples/workflows/calypso-default-feature-workflow.yaml' },
-      { label: 'Deployment Workflow',   path: 'calypso-blueprint/examples/workflows/calypso-default-deployment-workflow.yaml' },
+      { label: 'Planning',               path: 'examples/workflows/calypso-planning.yaml' },
+      { label: 'Orchestrator Startup',   path: 'examples/workflows/calypso-orchestrator-startup.yaml' },
+      { label: 'Feature Request',        path: 'examples/workflows/calypso-feature-request.yaml' },
+      { label: 'Feature Workflow',       path: 'examples/workflows/calypso-default-feature-workflow.yaml' },
+      { label: 'Implementation Loop',    path: 'examples/workflows/calypso-implementation-loop.yaml' },
+      { label: 'Save State',             path: 'examples/workflows/calypso-save-state.yaml' },
+      { label: 'PR Review & Merge',      path: 'examples/workflows/calypso-pr-review-merge.yaml' },
+      { label: 'Release Pipeline',       path: 'examples/workflows/calypso-release-request.yaml' },
+      { label: 'Deployment Request',     path: 'examples/workflows/calypso-deployment-request.yaml' },
     ];
 
     const KIND = {
       agent:         { color: '#3b82f6', label: 'Agent' },
       deterministic: { color: '#475569', label: 'Deterministic' },
+      'git-hook':    { color: '#f97316', label: 'Git Hook' },
       human:         { color: '#f59e0b', label: 'Human' },
       github:        { color: '#10b981', label: 'GitHub' },
       terminal:      { color: '#8b5cf6', label: 'Terminal' },
+      workflow:      { color: '#0ea5e9', label: 'Workflow' },
     };
+
+    const POLL_INTERVAL_MS = 2000;
 
     // ── Mermaid helpers ────────────────────────────────────────────────────────
 
@@ -70,6 +81,7 @@
         case 'human':         return ['{{',  '}}' ];
         case 'github':        return ['([',  '])' ];
         case 'terminal':      return ['((',  '))' ];
+        case 'workflow':      return ['[[',  ']]' ];  // subroutine shape (fallback only)
         default:              return ['(',   ')'  ];
       }
     }
@@ -82,62 +94,196 @@
       for (const [id, s] of Object.entries(states)) {
         const n = s?.next;
         if (!n) continue;
-        if (n.on_success)  push(id, 'success',  n.on_success);
-        if (n.on_failure)  push(id, 'failure',  n.on_failure);
-        if (n.on_complete) push(id, 'complete', n.on_complete);
-        if (n.pass)        push(id, 'pass',     n.pass);
-        if (n.fail)        push(id, 'fail',     n.fail);
-        if (n.on) for (const [cond, to] of Object.entries(n.on)) push(id, cond, String(to));
+        if (n.on_success)   push(id, 'success',   n.on_success);
+        if (n.on_failure)   push(id, 'failure',   n.on_failure);
+        if (n.on_rejection) push(id, 'rejection', n.on_rejection);
+        if (n.on_complete)  push(id, 'complete',  n.on_complete);
+        if (n.on_pass)      push(id, 'pass',      n.on_pass);
+        if (n.on_fail)      push(id, 'fail',      n.on_fail);
+        if (n.pass)         push(id, 'pass',      n.pass);
+        if (n.fail)         push(id, 'fail',      n.fail);
+        // `on:` key — js-yaml 4.x keeps it as the string "on"; also handle boolean true
+        const onMap = n.on || n[true];
+        if (onMap && typeof onMap === 'object') {
+          for (const [cond, to] of Object.entries(onMap)) push(id, String(cond), String(to));
+        }
       }
       return edges;
     }
 
-    function buildMermaid(doc) {
+    // Return the mermaid node ID to use as an edge target.
+    // For kind:workflow states, redirect to the sub-machine's initial state node.
+    function resolveTargetNode(toId, parentStates, workflowsByName) {
+      const s = parentStates[toId];
+      if (s?.kind === 'workflow') {
+        const subDoc = workflowsByName[s.workflow];
+        if (subDoc?.initial_state) return `${sid(toId)}__${sid(subDoc.initial_state)}`;
+      }
+      return sid(toId);
+    }
+
+    function _safeLabel(s) { return s.replace(/[<>{}"|]/g, ''); }
+
+    // Mermaid classDef / class names cannot contain hyphens
+    function mermaidClass(kind) { return (kind || 'agent').replace(/-/g, '_'); }
+
+    function _classDefs() {
+      return Object.entries(KIND).map(([k, { color }]) => {
+        const darkText = k === 'human' || k === 'git-hook';
+        const tc = darkText ? '#1e293b' : '#fff';
+        return `  classDef ${mermaidClass(k)} fill:${color},stroke:${color}cc,color:${tc}`;
+      });
+    }
+
+    // Single-workflow graph — expands kind:workflow states into inline subgraphs
+    function buildMermaid(doc, workflowsByName = {}) {
       const states = doc.states || {};
+      const lines  = ['flowchart TD'];
+      const cls    = [];
+
+      // ── Nodes / subgraphs ────────────────────────────────────────────────
+      for (const [id, s] of Object.entries(states)) {
+        if (s?.kind === 'workflow') {
+          const subDoc = workflowsByName[s.workflow];
+          const prefix = `${sid(id)}__`;
+          if (subDoc?.states) {
+            lines.push(`  subgraph ${sid(id)}["${id}"]`);
+            for (const [subId, subS] of Object.entries(subDoc.states)) {
+              const [o, c] = nodeShape(subS?.kind);
+              lines.push(`    ${prefix}${sid(subId)}${o}"${subId}"${c}`);
+              cls.push(`  class ${prefix}${sid(subId)} ${mermaidClass(subS?.kind)}`);
+            }
+            for (const { from, label, to } of extractEdges(subDoc.states)) {
+              lines.push(`    ${prefix}${from} -->|${_safeLabel(label)}| ${prefix}${to}`);
+            }
+            lines.push(`  end`);
+          } else {
+            // Sub-workflow not loaded yet — render as a subroutine placeholder
+            lines.push(`  ${sid(id)}[["${id}\\n(${s.workflow})"]]]`);
+            cls.push(`  class ${sid(id)} ${mermaidClass('workflow')}`);
+          }
+        } else {
+          const [o, c] = nodeShape(s?.kind);
+          lines.push(`  ${sid(id)}${o}"${id}"${c}`);
+          cls.push(`  class ${sid(id)} ${mermaidClass(s?.kind)}`);
+        }
+      }
+      lines.push('');
+
+      // ── Edges ─────────────────────────────────────────────────────────────
+      for (const [id, s] of Object.entries(states)) {
+        const n = s?.next;
+        if (!n) continue;
+
+        if (s?.kind === 'workflow') {
+          // Exit edges: each sub-machine terminal state → the parent target
+          const subDoc = workflowsByName[s.workflow];
+          if (!subDoc?.states) continue;
+          const prefix = `${sid(id)}__`;
+          const onMap = n.on || n[true];
+          if (!onMap || typeof onMap !== 'object') continue;
+          for (const [exitId, target] of Object.entries(onMap)) {
+            const tgt = String(target);
+            if (!states[tgt] || !subDoc.states[exitId]) continue;
+            const toNode = resolveTargetNode(tgt, states, workflowsByName);
+            lines.push(`  ${prefix}${sid(exitId)} -->|${_safeLabel(String(exitId))}| ${toNode}`);
+          }
+        } else {
+          const addEdge = (label, to) => {
+            if (!to || !states[to]) return;
+            const toNode = resolveTargetNode(to, states, workflowsByName);
+            lines.push(`  ${sid(id)} -->|${_safeLabel(label)}| ${toNode}`);
+          };
+          if (n.on_success)   addEdge('success',   n.on_success);
+          if (n.on_failure)   addEdge('failure',   n.on_failure);
+          if (n.on_rejection) addEdge('rejection', n.on_rejection);
+          if (n.on_complete)  addEdge('complete',  n.on_complete);
+          if (n.on_pass)      addEdge('pass',      n.on_pass);
+          if (n.on_fail)      addEdge('fail',      n.on_fail);
+          if (n.pass)         addEdge('pass',       n.pass);
+          if (n.fail)         addEdge('fail',       n.fail);
+          const onMap = n.on || n[true];
+          if (onMap && typeof onMap === 'object') {
+            for (const [cond, to] of Object.entries(onMap)) addEdge(String(cond), String(to));
+          }
+        }
+      }
+      lines.push('');
+
+      lines.push(..._classDefs(), ...cls);
+      return lines.join('\n');
+    }
+
+    // Holistic graph — all workflows as labelled subgraphs, linked together
+    function buildHolisticMermaid(docs) {
+      if (!docs.length) return 'flowchart TD\n  empty["No workflows loaded"]';
+
       const lines = ['flowchart TD'];
+      const cls   = [];
 
-      for (const [id, s] of Object.entries(states)) {
-        const [o, c] = nodeShape(s?.kind);
-        lines.push(`  ${sid(id)}${o}"${id}"${c}`);
-      }
-      lines.push('');
+      for (let i = 0; i < docs.length; i++) {
+        const doc    = docs[i];
+        const p      = `wf${i}`;
+        const states = doc.states || {};
+        const label  = (doc.name || `Workflow ${i + 1}`).replace(/"/g, '');
 
-      for (const { from, label, to } of extractEdges(states)) {
-        const safe = label.replace(/[<>{}"|]/g, '');
-        lines.push(`  ${from} -->|${safe}| ${to}`);
+        lines.push(`  subgraph ${p}["${label}"]`);
+        for (const [id, s] of Object.entries(states)) {
+          const [o, c] = nodeShape(s?.kind);
+          lines.push(`    ${p}_${sid(id)}${o}"${id}"${c}`);
+          cls.push(`  class ${p}_${sid(id)} ${mermaidClass(s?.kind)}`);
+        }
+        for (const { from, label: lbl, to } of extractEdges(states)) {
+          lines.push(`    ${p}_${from} -->|${_safeLabel(lbl)}| ${p}_${to}`);
+        }
+        lines.push(`  end`);
+        lines.push('');
       }
-      lines.push('');
 
-      for (const [k, { color }] of Object.entries(KIND)) {
-        const textColor = k === 'human' ? '#1e293b' : '#fff';
-        const stroke = color + 'cc';
-        lines.push(`  classDef ${k} fill:${color},stroke:${stroke},color:${textColor}`);
-      }
-      for (const [id, s] of Object.entries(states)) {
-        lines.push(`  class ${sid(id)} ${s?.kind || 'agent'}`);
-      }
+
+      lines.push(..._classDefs(), ...cls);
       return lines.join('\n');
     }
 
     // ── <calypso-graph> ────────────────────────────────────────────────────────
 
     class CalypsoGraph extends LitElement {
-      static properties = { doc: { type: Object } };
+      static properties = {
+        doc:      { type: Object  },
+        holistic: { type: Boolean },
+        allDocs:  { type: Array   },
+      };
       createRenderRoot() { return this; }
 
       async updated(changed) {
-        if (!changed.has('doc')) return;
+        if (!['doc', 'holistic', 'allDocs'].some(k => changed.has(k))) return;
         const el = this.querySelector('#mg');
         if (!el) return;
-        if (!this.doc?.states) { el.innerHTML = '<p style="color:#64748b;padding:20px">No states found in document.</p>'; return; }
+
+        // Build name→doc map for sub-workflow expansion
+        const workflowsByName = {};
+        for (const d of (this.allDocs || [])) {
+          if (d?.name) workflowsByName[d.name] = d;
+        }
+
+        let def;
+        if (this.holistic && this.allDocs?.length) {
+          def = buildHolisticMermaid(this.allDocs);
+        } else if (this.doc?.states) {
+          def = buildMermaid(this.doc, workflowsByName);
+        } else {
+          el.innerHTML = '<p style="color:#64748b;padding:20px">No states found in document.</p>';
+          return;
+        }
+
         el.innerHTML = '<p style="color:#94a3b8;padding:20px;text-align:center">Rendering diagram…</p>';
         try {
-          const { svg } = await mermaid.render('mg' + Date.now(), buildMermaid(this.doc));
+          const { svg } = await mermaid.render('mg' + Date.now(), def);
           el.innerHTML = svg;
           const s = el.querySelector('svg');
           if (s) { s.style.width = '100%'; s.style.height = 'auto'; s.style.maxWidth = '100%'; }
         } catch (e) {
-          el.innerHTML = `<pre style="color:#f87171;padding:16px;font-size:0.75rem;white-space:pre-wrap">${e.message}</pre>`;
+          el.innerHTML = `<pre style="color:#f87171;padding:16px;font-size:0.75rem;white-space:pre-wrap">${e.message}\n\n${def}</pre>`;
         }
       }
 
@@ -198,6 +344,8 @@
         if (n.on_success)  add('success',  n.on_success);
         if (n.on_failure)  add('failure',  n.on_failure);
         if (n.on_complete) add('complete', n.on_complete);
+        if (n.on_pass)     add('pass',     n.on_pass);
+        if (n.on_fail)     add('fail',     n.on_fail);
         if (n.pass)        add('pass',     n.pass);
         if (n.fail)        add('fail',     n.fail);
         if (n.on) for (const [c, to] of Object.entries(n.on)) add(c, String(to));
@@ -269,30 +417,102 @@
 
     class CalypsoApp extends LitElement {
       static properties = {
-        doc:      { type: Object  },
-        loading:  { type: Boolean },
-        error:    { type: String  },
-        wfIndex:  { type: Number  },
-        view:     { type: String  },
+        doc:        { type: Object  },
+        loading:    { type: Boolean },
+        error:      { type: String  },
+        wfIndex:    { type: Number  },
+        view:       { type: String  },
+        holistic:   { type: Boolean },
+        allDocs:    { type: Array   },
+        liveFlash:  { type: Boolean },  // pulses on live reload
       };
 
       constructor() {
         super();
         this.doc = null; this.loading = false; this.error = null;
         this.wfIndex = 0; this.view = 'diagram';
+        this.holistic = false; this.allDocs = [];
+        this.liveFlash = false;
+        this._yamlCache = {};   // path → raw text
+        this._pollTimer = null;
       }
 
-      connectedCallback() { super.connectedCallback(); this._load(0); }
+      connectedCallback() {
+        super.connectedCallback();
+        this._load(0);
+        this._loadAll();
+        this._pollTimer = setInterval(() => this._poll(), POLL_INTERVAL_MS);
+      }
+
+      disconnectedCallback() {
+        super.disconnectedCallback();
+        clearInterval(this._pollTimer);
+      }
+
+      // ── Data loading ───────────────────────────────────────────────────────
 
       async _load(i) {
         this.loading = true; this.error = null; this.doc = null;
         try {
-          const res = await fetch('../' + WORKFLOWS[i].path);
-          if (!res.ok) throw new Error(`HTTP ${res.status} — ${WORKFLOWS[i].path}`);
-          this.doc = jsyaml.load(await res.text());
+          const { path } = WORKFLOWS[i];
+          const res = await fetch('../' + path, { cache: 'no-store' });
+          if (!res.ok) throw new Error(`HTTP ${res.status} — ${path}`);
+          const text = await res.text();
+          this._yamlCache[path] = text;
+          this.doc = jsyaml.load(text);
         } catch (e) { this.error = e.message; }
         finally { this.loading = false; }
       }
+
+      async _loadAll() {
+        const docs = await Promise.all(
+          WORKFLOWS.map(async ({ path }) => {
+            try {
+              const res = await fetch('../' + path, { cache: 'no-store' });
+              if (!res.ok) return null;
+              const text = await res.text();
+              this._yamlCache[path] = text;
+              return jsyaml.load(text);
+            } catch { return null; }
+          })
+        );
+        this.allDocs = docs.filter(Boolean);
+      }
+
+      // ── Live-reload polling ────────────────────────────────────────────────
+
+      async _poll() {
+        if (this.loading) return;
+        let anyChanged = false;
+
+        await Promise.all(WORKFLOWS.map(async ({ path }, i) => {
+          try {
+            const res = await fetch('../' + path, { cache: 'no-store' });
+            if (!res.ok) return;
+            const text = await res.text();
+            const prev = this._yamlCache[path];
+            if (prev === undefined) { this._yamlCache[path] = text; return; }
+            if (text === prev) return;
+
+            // File changed — update cache and re-parse
+            this._yamlCache[path] = text;
+            anyChanged = true;
+            const parsed = jsyaml.load(text);
+
+            if (i === this.wfIndex) this.doc = parsed;
+
+            const newAll = [...this.allDocs];
+            if (i < newAll.length) { newAll[i] = parsed; this.allDocs = newAll; }
+          } catch {}
+        }));
+
+        if (anyChanged) {
+          this.liveFlash = true;
+          setTimeout(() => { this.liveFlash = false; }, 800);
+        }
+      }
+
+      // ── Styles ─────────────────────────────────────────────────────────────
 
       static styles = css`
         :host { display: block; background: #0f172a; min-height: 100vh; }
@@ -315,6 +535,22 @@
           border-radius: 6px; padding: 5px 10px; font-size: 0.82rem; cursor: pointer; outline: none;
         }
         select:focus { border-color: #38bdf8; }
+
+        /* live-reload indicator */
+        .live-dot {
+          width: 7px; height: 7px; border-radius: 50%;
+          background: #10b981; flex-shrink: 0;
+          opacity: 0.35; transition: opacity 0.2s;
+        }
+        .live-dot.flash {
+          opacity: 1;
+          animation: live-pulse 0.8s ease-out forwards;
+        }
+        @keyframes live-pulse {
+          0%   { transform: scale(1);   opacity: 1; }
+          40%  { transform: scale(2);   opacity: 0.8; }
+          100% { transform: scale(1);   opacity: 0.35; }
+        }
 
         .tabs { margin-left: auto; display: flex; gap: 4px; }
         .tab {
@@ -339,12 +575,25 @@
 
         .legend {
           display: flex; gap: 14px; flex-wrap: wrap;
-          margin-bottom: 18px; padding: 10px 14px;
+          margin-bottom: 14px; padding: 10px 14px;
           background: #1e293b; border: 1px solid #334155; border-radius: 8px;
         }
         .leg { display: flex; align-items: center; gap: 6px; font-size: 0.74rem; color: #94a3b8; }
         .leg-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
-        .leg-shape { width: 18px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+
+        /* diagram toolbar */
+        .diagram-toolbar {
+          display: flex; gap: 6px; margin-bottom: 10px; align-items: center; flex-wrap: wrap;
+        }
+        .ctrl-btn {
+          background: #1e293b; border: 1px solid #334155; border-radius: 6px;
+          color: #94a3b8; padding: 5px 12px; font-size: 0.78rem;
+          cursor: pointer; transition: all 0.12s; font-family: inherit;
+          display: inline-flex; align-items: center; gap: 5px;
+        }
+        .ctrl-btn:hover { border-color: #475569; color: #e2e8f0; }
+        .ctrl-btn.active { background: #38bdf810; border-color: #38bdf8; color: #38bdf8; }
+        .ctrl-btn .dim { color: #475569; font-size: 0.7rem; }
 
         /* diagram view */
         .diagram-wrap {
@@ -410,6 +659,8 @@
         .status.err { color: #f87171; }
         .status.load { color: #64748b; }
       `;
+
+      // ── Render helpers ─────────────────────────────────────────────────────
 
       _badge(kind) {
         const { color, label } = KIND[kind] || KIND.agent;
@@ -512,19 +763,28 @@
         `;
       }
 
+      // ── Main render ────────────────────────────────────────────────────────
+
       render() {
         const { doc, loading, error, view } = this;
         const states = doc?.states || {};
         const stateCount = Object.keys(states).length;
         const checkCount = Object.keys(doc?.checks || {}).length;
+        const showContent = doc || (this.holistic && this.allDocs.length > 0);
 
         return html`
           <header>
             <div class="logo">calypso <span>/ state machine</span></div>
             <span class="divider">|</span>
-            <select @change=${e => { this.wfIndex = +e.target.value; this._load(+e.target.value); }}>
-              ${WORKFLOWS.map((w, i) => html`<option value=${i} ?selected=${i === this.wfIndex}>${w.label}</option>`)}
-            </select>
+            ${!this.holistic
+              ? html`<select @change=${e => { this.wfIndex = +e.target.value; this._load(+e.target.value); }}>
+                  ${WORKFLOWS.map((w, i) => html`<option value=${i} ?selected=${i === this.wfIndex}>${w.label}</option>`)}
+                </select>`
+              : html`<span style="font-size:0.78rem;color:#475569">all workflows</span>`
+            }
+            <div title="Live reload — polls YAML every ${POLL_INTERVAL_MS / 1000}s">
+              <div class="live-dot ${this.liveFlash ? 'flash' : ''}"></div>
+            </div>
             <div class="tabs">
               ${['diagram', 'states', 'gates'].map(v => html`
                 <button class="tab ${view === v ? 'active' : ''}" @click=${() => this.view = v}>${v}</button>
@@ -536,13 +796,16 @@
             ${loading ? html`<div class="status load">Loading…</div>` : ''}
             ${error   ? html`<div class="status err">Error: ${error}</div>` : ''}
 
-            ${doc ? html`
+            ${showContent ? html`
               <div class="meta">
-                <span class="meta-title">${doc.name || 'Workflow'}</span>
-                ${doc.version      ? html`<span class="meta-pill">v${doc.version}</span>` : ''}
-                ${doc.initial_state ? html`<span class="meta-pill">initial: <code>${doc.initial_state}</code></span>` : ''}
-                ${stateCount       ? html`<span class="meta-pill">${stateCount} states</span>` : ''}
-                ${checkCount       ? html`<span class="meta-pill">${checkCount} checks</span>` : ''}
+                <span class="meta-title">
+                  ${this.holistic ? 'All Workflows' : (doc?.name || 'Workflow')}
+                </span>
+                ${!this.holistic && doc?.version       ? html`<span class="meta-pill">v${doc.version}</span>` : ''}
+                ${!this.holistic && doc?.initial_state ? html`<span class="meta-pill">initial: <code>${doc.initial_state}</code></span>` : ''}
+                ${!this.holistic && stateCount         ? html`<span class="meta-pill">${stateCount} states</span>` : ''}
+                ${!this.holistic && checkCount         ? html`<span class="meta-pill">${checkCount} checks</span>` : ''}
+                ${this.holistic ? html`<span class="meta-pill">${this.allDocs.length} workflows combined</span>` : ''}
               </div>
 
               <div class="legend">
@@ -558,8 +821,21 @@
               </div>
 
               ${view === 'diagram' ? html`
+                <div class="diagram-toolbar">
+                  <button
+                    class="ctrl-btn ${this.holistic ? 'active' : ''}"
+                    @click=${() => this.holistic = !this.holistic}
+                    title="Show all workflows as one combined graph"
+                  >
+                    ${this.holistic ? '⊖ collapse' : '⊕ expand all'}
+                  </button>
+                </div>
                 <div class="diagram-wrap">
-                  <calypso-graph .doc=${doc}></calypso-graph>
+                  <calypso-graph
+                    .doc=${doc}
+                    .holistic=${this.holistic}
+                    .allDocs=${this.allDocs}
+                  ></calypso-graph>
                 </div>
               ` : ''}
 

@@ -1,0 +1,155 @@
+version: 1
+name: calypso-feature-request
+initial_state: intake
+
+states:
+  intake:
+    kind: human
+    role: feature-requester
+    description: Human submits a feature request with motivation, intended experience, and constraints.
+    prompt: |
+      Describe the feature you want to add. Include:
+        - Motivation: why this feature is needed and what problem it solves.
+        - Intended experience: what the user will be able to do.
+        - Known constraints: anything that limits scope or implementation approach.
+    completion:
+      all_of:
+        - feature-request-submitted
+    next:
+      on_success: architecture-evaluation
+
+  architecture-evaluation:
+    kind: agent
+    role: architect
+    cost: guru
+    description: Evaluate whether the request is architecturally clear and safe to implement.
+    prompt: |
+      Evaluate the feature request against the current architecture. Assess:
+        - Feasibility: can this be built within the current architecture without breaking invariants?
+        - Clarity: is the request specific enough to become an implementation unit?
+        - Risk: are there architectural conflicts, data model implications, or cross-cutting concerns?
+      If the request is clear and feasible, approve it. If it needs clarification, identify
+      exactly what is missing and send it back to intake. If it conflicts with the architecture,
+      document the conflict and the reason it cannot proceed.
+    completion:
+      any_of:
+        - architecture-clear
+        - clarification-needed
+        - architecture-conflict
+    next:
+      on:
+        architecture-clear: create-github-issue
+        clarification-needed: intake
+        architecture-conflict: blocked
+
+  create-github-issue:
+    kind: agent
+    role: feature-definer
+    cost: default
+    description: Create a well-structured GitHub issue capturing the approved feature.
+    prompt: |
+      Create a GitHub issue for the approved feature. The issue must include:
+        - A clear title.
+        - Motivation section.
+        - Intended scope and acceptance criteria.
+        - Architectural notes from the evaluation.
+        - Links to any relevant planning or PRD documents.
+      Apply the appropriate labels.
+    completion:
+      all_of:
+        - github-issue-created
+        - github-issue-has-description
+        - github-issue-labeled
+    next:
+      on_success: update-plan
+      on_failure: blocked
+
+  update-plan:
+    kind: agent
+    role: planner
+    cost: default
+    description: Record the new feature in the project plan with its issue reference and priority.
+    prompt: |
+      Add the new feature to the project plan. Record:
+        - The GitHub issue reference.
+        - Priority relative to other planned features.
+        - Known dependencies on other features or infrastructure.
+        - Any phasing or milestone constraints.
+    completion:
+      all_of:
+        - plan-updated
+        - feature-in-plan
+    next:
+      on_success: planning
+      on_failure: blocked
+
+  planning:
+    kind: workflow
+    workflow: calypso-planning
+    description: >
+      Run a full planning pass now that the new issue exists. Reconciles the
+      new issue into the plan, re-prioritizes by dependency and risk, and
+      commits the updated plan before the orchestrator dispatches any work.
+    next:
+      on:
+        done: done
+        aborted: aborted
+
+  done:
+    kind: terminal
+
+  blocked:
+    kind: human
+    role: operator-or-orchestrator
+    description: A step encountered a blocking condition that requires human resolution.
+    prompt: |
+      Resolve the blocking issue before the feature request can continue.
+    next:
+      on:
+        issue-cleared: architecture-evaluation
+        resubmit: intake
+        abort: aborted
+
+  aborted:
+    kind: terminal
+
+checks:
+  feature-request-submitted:
+    kind: human
+    description: The feature request has been submitted with motivation, scope, and constraints.
+  architecture-clear:
+    kind: agent
+    role: architect
+    description: The request is architecturally feasible and clear enough to implement.
+  clarification-needed:
+    kind: agent
+    role: architect
+    description: The architect identified missing information that must be provided before evaluation can complete.
+  architecture-conflict:
+    kind: agent
+    role: architect
+    description: The request conflicts with the current architecture and cannot proceed without a redesign.
+  github-issue-created:
+    kind: deterministic
+  github-issue-has-description:
+    kind: deterministic
+  github-issue-labeled:
+    kind: deterministic
+  plan-updated:
+    kind: agent
+    role: planner
+  feature-in-plan:
+    kind: agent
+    role: planner
+
+agent_prompts:
+  architect: |
+    Evaluate feature requests against the current architecture. Assess feasibility, identify
+    risks, and determine whether the request is specific enough to become an implementation
+    unit. When clarification is needed, state exactly what is missing.
+  feature-definer: |
+    Create well-structured GitHub issues from approved feature requests, capturing motivation,
+    scope, acceptance criteria, and architectural context.
+  planner: |
+    Maintain the project feature plan. Record each new feature with its GitHub issue reference,
+    priority, and dependencies so the orchestrator can dispatch work in the correct order.

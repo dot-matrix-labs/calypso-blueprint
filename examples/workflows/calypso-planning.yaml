@@ -1,0 +1,299 @@
+version: 1
+name: calypso-planning
+initial_state: fetch-open-issues
+
+# Entry point: the orchestrator dispatches here at startup, before each development
+# cycle, and whenever the issue backlog or the mother plan is significantly changed.
+#
+# The mother plan lives at docs/plan.md and is the authoritative source of feature
+# phases, dependency ordering, and prioritization. GitHub issues are the authoritative
+# source of open work. These two must stay in sync.
+
+plan:
+  document: docs/plan.md
+  issue_tracker: github
+  priority_labels: [p0, p1, p2, p3]
+
+states:
+  fetch-open-issues:
+    kind: agent
+    role: planner
+    cost: cheap
+    description: >
+      Retrieve all open GitHub issues and classify each one by type and phase.
+    prompt: |
+      Retrieve all open GitHub issues:
+
+        gh issue list --state open --json number,title,labels,body,assignees,milestone
+
+      For each issue, classify:
+        - Type: feature | bug | chore | spike | question
+        - Phase: which plan phase it belongs to, if declared via label or milestone
+        - Dependencies: any "depends on #N" or "blocked by #N" references in the body
+
+      Produce a structured list for use in the reconciliation step.
+    completion:
+      all_of:
+        - open-issues-retrieved
+        - issues-classified
+    next:
+      on_success: reconcile-plan
+      on_failure: blocked
+
+  reconcile-plan:
+    kind: agent
+    role: planner
+    cost: default
+    description: >
+      Cross-reference open issues against docs/plan.md. Add missing issues to the plan.
+      Resolve plan items that have no corresponding open issue.
+    prompt: |
+      Read docs/plan.md and cross-reference it against the open issue list.
+
+      For every open GitHub issue NOT in the plan:
+        - Add it to the appropriate phase section.
+        - If the phase is not obvious, add it to a backlog section.
+        - Record the GitHub issue number as the canonical reference for that item.
+
+      For every item in the plan with NO corresponding open issue:
+        - Check if the issue was closed or merged → mark the plan item as complete
+          and move it to a "completed" section.
+        - Check if the issue was never created or the reference is broken → flag it
+          as an orphan. Do not remove it silently.
+
+      Write all changes back to docs/plan.md. Record every decision made.
+    completion:
+      all_of:
+        - plan-covers-all-open-issues
+        - plan-orphans-resolved-or-flagged
+        - plan-document-updated
+    next:
+      on_success: check-orphans
+      on_failure: blocked
+
+  check-orphans:
+    kind: deterministic
+    description: >
+      Gate: if any plan items were flagged as unresolvable orphans, route to human
+      review. If the plan is clean, proceed directly to reprioritization.
+    checks:
+      - no-unresolved-orphans
+    next:
+      on_pass: reprioritize
+      on_fail: resolve-orphans
+
+  resolve-orphans:
+    kind: human
+    role: operator-or-orchestrator
+    description: >
+      One or more plan items have no corresponding open GitHub issue and could not be
+      automatically resolved. Human decides what to do with each one.
+    prompt: |
+      The planner found items in docs/plan.md with no corresponding open GitHub issue.
+      For each flagged item, decide:
+        - Reopen or create the issue if the work is still needed.
+        - Remove the item from the plan if it is no longer relevant.
+        - Leave a note in docs/plan.md explaining the decision.
+      Once all orphans are resolved, mark this state complete.
+    completion:
+      all_of:
+        - no-unresolved-orphans
+    next:
+      on_success: reprioritize
+
+  reprioritize:
+    kind: agent
+    role: planner
+    cost: guru
+    description: >
+      Reorder all items in each plan phase by dependency then by risk, placing the
+      highest-risk and most-unknown tasks first within their dependency constraints.
+    prompt: |
+      Read the current docs/plan.md and produce a new priority ordering for every
+      item in every phase. Apply the following rules in order:
+
+      Rule 1 — Dependency ordering:
+        Build a dependency graph from "depends on" and "blocked by" references in
+        issues and plan entries. Within each phase, topologically sort items so that
+        prerequisites always appear before the items that depend on them.
+
+      Rule 2 — Risk-first within dependency constraints:
+        Among items at the same dependency depth, sort by descending risk. Treat an
+        item as higher risk if it:
+          - Uses technology, APIs, or patterns not yet established in this codebase.
+          - Has unclear or incomplete acceptance criteria.
+          - Blocks multiple other items if it runs long.
+          - Involves external integrations or third-party dependencies.
+          - Has no prior art in this codebase (spike territory).
+          - Has a high ratio of unknowns to knowns in its implementation approach.
+
+      For each item, write a one-line rationale explaining its position.
+
+      Update GitHub issue priority labels to match:
+        p0 → must land first (high dependency depth or highest risk in phase)
+        p1 → next tier
+        p2 → standard priority
+        p3 → low priority or future phase
+
+      Write the updated ordering and rationale back to docs/plan.md.
+    completion:
+      all_of:
+        - dependency-graph-built
+        - phases-topologically-sorted
+        - risk-ordering-applied
+        - plan-document-updated
+        - issue-priority-labels-updated
+    next:
+      on_success: validate-plan
+      on_failure: blocked
+
+  validate-plan:
+    kind: agent
+    role: planner
+    cost: guru
+    description: >
+      Self-review the updated plan for correctness — every issue present, no
+      dependency cycles, and risk ordering is internally consistent.
+    prompt: |
+      Review the updated docs/plan.md for correctness. Check each of the following:
+
+        1. Every open GitHub issue appears exactly once in the plan.
+        2. No plan item is listed without a corresponding open issue reference.
+        3. There are no dependency cycles in the graph.
+        4. Within each phase, items with dependents appear before the items that
+           depend on them.
+        5. Among items at the same dependency depth, higher-risk items appear first,
+           and a rationale is present for each.
+
+      Report every violation. If the plan passes all checks, approve it.
+    completion:
+      all_of:
+        - plan-complete-and-consistent
+        - no-dependency-cycles
+        - risk-ordering-defensible
+    next:
+      on_success: commit-plan
+      on_failure: blocked
+
+  commit-plan:
+    kind: agent
+    role: planner
+    cost: cheap
+    description: Commit and push the updated plan document to the repository.
+    prompt: |
+      Commit the updated docs/plan.md:
+        1. git add docs/plan.md
+        2. git commit -m "plan: reconcile issues and reprioritize phases ($(date +%Y-%m-%d))"
+        3. git push
+      Do not include other files in this commit.
+    completion:
+      all_of:
+        - plan-committed
+        - plan-pushed
+    next:
+      on_success: done
+      on_failure: blocked
+
+  done:
+    kind: terminal
+    description: >
+      Plan is reconciled with all open issues, prioritized by dependency and risk,
+      validated, and committed. The orchestrator can now dispatch development tasks
+      in the correct order.
+
+  blocked:
+    kind: human
+    role: operator-or-orchestrator
+    description: A planning step encountered a blocking condition.
+    prompt: |
+      Resolve the blocking condition and resume the planning pass.
+    next:
+      on:
+        issue-cleared: fetch-open-issues
+        retry-reconcile: reconcile-plan
+        retry-reprioritize: reprioritize
+        retry-validate: validate-plan
+        retry-commit: commit-plan
+        abort: aborted
+
+  aborted:
+    kind: terminal
+
+checks:
+  open-issues-retrieved:
+    kind: agent
+    role: planner
+    description: All open GitHub issues retrieved via gh issue list.
+  issues-classified:
+    kind: agent
+    role: planner
+    description: Each open issue is classified by type, phase, and dependency references.
+  plan-covers-all-open-issues:
+    kind: agent
+    role: planner
+    description: Every open GitHub issue appears in docs/plan.md.
+  plan-orphans-resolved-or-flagged:
+    kind: agent
+    role: planner
+    description: >
+      Every plan item with no corresponding open issue is either moved to completed,
+      or explicitly flagged as an orphan for human review.
+  plan-document-updated:
+    kind: deterministic
+    description: docs/plan.md reflects the latest reconciled and/or prioritized content.
+  no-unresolved-orphans:
+    kind: deterministic
+    description: No plan items remain flagged as orphans requiring human review.
+  dependency-graph-built:
+    kind: agent
+    role: planner
+    description: >
+      A directed dependency graph has been constructed from all "depends on" and
+      "blocked by" references across issues and plan entries.
+  phases-topologically-sorted:
+    kind: agent
+    role: planner
+    description: >
+      Items within each phase are ordered so that every prerequisite appears before
+      the items that depend on it.
+  risk-ordering-applied:
+    kind: agent
+    role: planner
+    description: >
+      Within each dependency tier, items are ordered by descending risk/unknowns,
+      with a written rationale for each item's position.
+  issue-priority-labels-updated:
+    kind: deterministic
+    description: >
+      GitHub issue priority labels (p0–p3) have been updated to match the new
+      ordering in docs/plan.md.
+  plan-complete-and-consistent:
+    kind: agent
+    role: planner
+    description: Every open issue appears exactly once in the plan with no orphan items.
+  no-dependency-cycles:
+    kind: agent
+    role: planner
+    description: The dependency graph contains no cycles.
+  risk-ordering-defensible:
+    kind: agent
+    role: planner
+    description: >
+      Risk rationale is present for each item and the ordering is internally
+      consistent — no high-risk item is ranked below a lower-risk item at the
+      same dependency depth without explanation.
+  plan-committed:
+    kind: deterministic
+    description: docs/plan.md is committed to the repository.
+  plan-pushed:
+    kind: deterministic
+    description: The planning commit is pushed to the remote.
+
+agent_prompts:
+  planner: |
+    Maintain docs/plan.md as the authoritative source of feature phases, dependency
+    ordering, and prioritization. Every open GitHub issue must appear in the plan
+    exactly once. Prioritize by dependency first — work that other work depends on
+    comes first. Then within each dependency tier, prioritize by risk and unknowns —
+    unfamiliar technology, unclear requirements, and high-blocking items come before
+    well-understood routine work. Record a rationale for every ordering decision.
