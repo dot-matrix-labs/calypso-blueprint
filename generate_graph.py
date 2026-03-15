@@ -4,11 +4,11 @@ import yaml
 import glob
 import os
 
-RULES_DIR = "/home/lucas/calypso-blueprint/rules"
+RULES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rules")
 
 # Collect all rule files
 blueprint_files = sorted(glob.glob(f"{RULES_DIR}/blueprints/*.yaml"))
-impl_files = sorted(glob.glob(f"{RULES_DIR}/implementations/*.yaml"))
+impl_files = sorted(glob.glob(f"{RULES_DIR}/implementations/**/*.yaml", recursive=True))
 all_files = blueprint_files + impl_files
 
 # Parse all files

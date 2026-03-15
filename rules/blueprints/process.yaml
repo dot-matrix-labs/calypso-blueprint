@@ -693,6 +693,24 @@ rules:
       - {target: 3d643a9a5413, rel: refines}
     deprecated: false
 
+  - number: PROCESS-D-012
+    hash: 8a4c2e7f10d6
+    name: fused-gate-architecture
+    type: design_pattern
+    description: >
+      Two-tier gate model separating local dev gates (git hooks run by the
+      developer or agent) from project gates (GitHub Actions CI). The CLI
+      maintains a fused view: a unified model of declared gates versus actual
+      enforcement. Hook scripts and workflow files are the ground truth; YAML
+      declares intent but does not enforce. Doctor checks
+      (required-git-hooks-installed, required-workflows-present) detect drift
+      between declared and actual gate state.
+    links:
+      - {target: 6fab3fb9c823, rel: refines}   # PROCESS-P-008
+      - {target: 309a8b908fc1, rel: refines}   # PROCESS-D-006
+      - {target: b4e71d903a28, rel: refines}   # PROCESS-D-011
+    deprecated: false
+
   # ── Architectures ────────────────────────────────────────────────────────────
 
   - number: PROCESS-A-001

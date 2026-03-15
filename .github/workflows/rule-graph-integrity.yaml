@@ -1,0 +1,53 @@
+name: Rule Graph Integrity
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'rules/**/*.yaml'
+      - 'generate_graph.py'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Validate all rule YAML files parse
+        run: |
+          python3 -c "
+          import yaml, glob, sys
+          files = sorted(
+              glob.glob('rules/blueprints/*.yaml')
+              + glob.glob('rules/implementations/**/*.yaml', recursive=True)
+          )
+          failed = []
+          for f in files:
+              try:
+                  yaml.safe_load(open(f))
+              except Exception as e:
+                  failed.append((f, str(e)))
+                  print(f'FAIL: {f}')
+                  print(f'  {e}')
+          if failed:
+              print(f'\n{len(failed)} file(s) failed YAML validation')
+              sys.exit(1)
+          print(f'All {len(files)} rule files parsed successfully')
+          "
+
+      - name: Regenerate graph and check for drift
+        run: |
+          python3 generate_graph.py
+          if git diff --exit-code rules/graph.yaml; then
+            echo "graph.yaml is up to date"
+          else
+            echo "::error::graph.yaml is out of date. Run 'python3 generate_graph.py' and commit the result."
+            exit 1
+          fi

@@ -1,0 +1,134 @@
+meta:
+  domain: IMPL-SCAFFOLD-RS
+  title: Scaffold - Rust Implementation
+  implements: PROCESS
+  version: 1
+
+rules:
+  - number: IMPL-SCAFFOLD-RS-001
+    hash: a1b2c3d4e501
+    name: host-tool-verification
+    type: implementation
+    description: >
+      Verify all required host tools are present and accessible: git, gh,
+      cargo, tmux, docker, kubectl. Fail fast with actionable error messages
+      if any tool is missing or not authenticated.
+    links:
+      - {target: 61e2c56c8451, rel: implements}  # ENV-P-006
+    deprecated: false
+
+  - number: IMPL-SCAFFOLD-RS-002
+    hash: a1b2c3d4e502
+    name: tmux-session-management
+    type: implementation
+    description: >
+      Create a named tmux session for scaffold work. The session name is
+      derived from the project name. All scaffold commands run inside this
+      session so work survives SSH disconnects.
+    links:
+      - {target: 1d0d5a6c0fde, rel: implements}  # ENV-C-008
+    deprecated: false
+
+  - number: IMPL-SCAFFOLD-RS-003
+    hash: a1b2c3d4e503
+    name: git-github-repo-init
+    type: implementation
+    description: >
+      Initialize the git repository and GitHub remote. Runs git init, gh repo
+      create with visibility settings, detaches from the template repository
+      (removes template remote), and pushes the initial commit to main.
+    links:
+      - {target: 3d643a9a5413, rel: implements}  # PROCESS-D-009
+      - {target: d38caa99ef55, rel: implements}  # PROCESS-C-006
+    deprecated: false
+
+  - number: IMPL-SCAFFOLD-RS-004
+    hash: a1b2c3d4e504
+    name: github-actions-ci-scaffolding
+    type: implementation
+    description: >
+      Write CI workflow files to .github/workflows/. Includes build, test,
+      lint, and checklist workflows. Workflow files are the ground truth for
+      project gates per the fused gate architecture.
+    links:
+      - {target: 3d643a9a5413, rel: implements}  # PROCESS-D-009
+      - {target: b4e71d903a28, rel: implements}  # PROCESS-D-011
+    deprecated: false
+
+  - number: IMPL-SCAFFOLD-RS-005
+    hash: a1b2c3d4e505
+    name: branch-protection-ruleset
+    type: implementation
+    description: >
+      Apply branch protection via the GitHub Rulesets API. The ruleset JSON
+      is committed to the repository for reproducibility. bypass_actors is
+      set to an empty array so no user or bot can bypass required checks.
+    links:
+      - {target: b4e71d903a28, rel: implements}  # PROCESS-D-011
+      - {target: f67b4697ac23, rel: implements}  # PROCESS-P-007
+    deprecated: false
+
+  - number: IMPL-SCAFFOLD-RS-006
+    hash: a1b2c3d4e506
+    name: ci-check-name-pre-registration
+    type: implementation
+    description: >
+      Trigger CI workflows (via workflow_dispatch or a dummy PR) to register
+      check names with GitHub before the ruleset references them. Required
+      because GitHub only allows selecting known check names in rulesets.
+    links:
+      - {target: b4e71d903a28, rel: implements}  # PROCESS-D-011
+    deprecated: false
+
+  - number: IMPL-SCAFFOLD-RS-007
+    hash: a1b2c3d4e507
+    name: calypso-config-local-hooks
+    type: implementation
+    description: >
+      Create the .calypso/ directory containing state-machine.yml and local
+      git hooks. Hook scripts are the ground truth for local dev gates per
+      the fused gate architecture. The state machine YAML declares the
+      workflow the agent follows.
+    links:
+      - {target: 3d643a9a5413, rel: implements}  # PROCESS-D-009
+      - {target: 8a4c2e7f10d6, rel: implements}  # PROCESS-D-012
+    deprecated: false
+
+  - number: IMPL-SCAFFOLD-RS-008
+    hash: a1b2c3d4e508
+    name: doctor-scaffold-verification
+    type: implementation
+    description: >
+      Run calypso doctor to confirm the scaffold is complete. Doctor checks
+      required-git-hooks-installed and required-workflows-present to detect
+      drift between declared and actual gate state.
+    links:
+      - {target: d38caa99ef55, rel: implements}  # PROCESS-C-006
+      - {target: 8a4c2e7f10d6, rel: implements}  # PROCESS-D-012
+    deprecated: false
+
+  - number: IMPL-SCAFFOLD-RS-009
+    hash: a1b2c3d4e509
+    name: product-owner-interview-trigger
+    type: implementation
+    description: >
+      Trigger the product owner interview workflow after the scaffold gate
+      passes. The interview collects project goals, user personas, and
+      acceptance criteria that feed into the PRD.
+    links:
+      - {target: d38caa99ef55, rel: implements}  # PROCESS-C-006
+      - {target: 3d643a9a5413, rel: implements}  # PROCESS-D-009
+    deprecated: false
+
+  - number: IMPL-SCAFFOLD-RS-010
+    hash: a1b2c3d4e510
+    name: scaffold-gate
+    type: implementation
+    description: >
+      Block feature work until both the scaffold is verified and the product
+      owner interview is complete. The gate is checked by the workflow state
+      machine before transitioning out of the scaffold phase.
+    links:
+      - {target: d38caa99ef55, rel: implements}  # PROCESS-C-006
+      - {target: f67b4697ac23, rel: implements}  # PROCESS-P-007
+    deprecated: false

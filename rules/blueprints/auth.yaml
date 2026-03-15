@@ -657,7 +657,7 @@ rules:
       access to human operators with explicit agent-registry:write scope. Registry
       mutations are audit-logged and trigger immediate token revocation for
       affected agents.
-    diagram: |
+    diagram: |2
                         ┌──────────────────┐
                         │   Auth Gateway   │
                         │                  │
