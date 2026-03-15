@@ -34,20 +34,6 @@ rules:
       - {target: 60c41e0c35c7, rel: implements}  # UX-D-005 service-flow-precedes-interface
     deprecated: false
 
-  - number: IMPL-PROCESS-RS-001-A
-    hash: c8d2f1a5e9b3
-    name: prd-userflow-state-machines
-    type: implementation
-    description: >
-      The PRD includes a state machine specification for every user goal
-      extracted from the product owner interview. Each state machine defines
-      entry conditions, exit conditions, all intermediate states, transitions,
-      feedback, and edge case recovery paths. State machines are formalized
-      before implementation begins per UX Pattern 1: Service Flow Mapping.
-    links:
-      - {target: 60c41e0c35c7, rel: implements}  # UX-D-005 service-flow-precedes-interface
-    deprecated: false
-
   - number: IMPL-PROCESS-RS-002
     hash: 653a8ad8fbbc
     name: workflow-state-machine-definition

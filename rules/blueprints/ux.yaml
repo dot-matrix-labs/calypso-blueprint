@@ -434,7 +434,7 @@ rules:
       rendering surfaces derived from the same service layer. Appropriate for
       products with heterogeneous user types. Trade-off: adds abstraction that
       teams unfamiliar with service-first design find counterintuitive.
-    diagram: |
+    diagram: |2
                         ┌───────────────────────────────────┐
                         │           Service Layer            │
                         │  (capabilities, state, business   │

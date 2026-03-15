@@ -1506,7 +1506,7 @@ roles:
       Resolves merge conflicts semantically. Never blindly accepts ours or theirs.
   feature-definer:
     model: claude-sonnet-4-x
-    description: Sets up the feature unit: issue, branch, worktree, draft PR.
+    description: "Sets up the feature unit: issue, branch, worktree, draft PR."
   pr-template-reviewer:
     model: claude-haiku-4-x
     description: Reviews PR description structure only. Not code quality.
