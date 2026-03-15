@@ -34,6 +34,39 @@ The **GitHub Issue is the source of truth** for a feature. Not a wiki page, not 
 
 ---
 
+## Deterministic Gate Architecture
+
+A project's workflow has two tiers of deterministic gates, both rooted in the git/GitHub control plane:
+
+| Tier | Mechanism | Scope | When enforced |
+|------|-----------|-------|---------------|
+| **Local dev gates** | Git hooks (`scripts/hooks/`) | Individual developer commits | Pre-commit, commit-msg, pre-push |
+| **Project gates** | GitHub Actions workflows (`.github/workflows/`) | Branch-level CI | On push, on PR, merge queue |
+
+Both tiers are **deterministic** — they produce a binary pass/fail result with no human judgement involved. Agent tasks are similarly deterministic: every task completes with exactly one of three outcomes: **OK**, **NOK**, or **ABORTED**.
+
+### Fused gate model
+
+The calypso-cli program maintains a **fused view** of all state machines and gates in memory at runtime. The project workflow definition (`.calypso/state-machine.yml`) declares gate groups and their expected tasks. The actual enforcement, however, lives in the git hook scripts and GitHub Actions workflow files — these are the ground truth that runs at commit time and CI time respectively.
+
+The relationship between these layers:
+
+```
+state-machine.yml          declares gates and their expected outcomes
+    │
+    ├── scripts/hooks/*    local gate implementations (ground truth for dev gates)
+    │
+    └── .github/workflows/* project gate implementations (ground truth for CI gates)
+```
+
+The workflow definition is the program's model of what gates exist. The hook scripts and workflow files are the actual implementations that enforce those gates. **When the implementations diverge from the workflow definition, calypso-cli must warn** — the doctor check `required-git-hooks-installed` covers the local tier, and `required-workflows-present` covers the project tier. This ensures the program's fused view stays consistent with the enforcement reality.
+
+### Why this matters
+
+Without this fused view, the program could believe a gate is passing (because the workflow definition says a task succeeded) while the actual enforcement mechanism (a hook or workflow) has drifted or is missing entirely. The doctor checks close this gap by treating hook and workflow file presence and correctness as first-class environment health signals, on par with tool installation and authentication.
+
+---
+
 ## State Machine 1: Prompt Classification
 
 When an agent receives a prompt, it must classify it before taking any action. The wrong classification produces wrong output: a planning prompt handled as an implementation request creates code no one asked for; an implementation request treated as planning creates docs instead of a fix.
