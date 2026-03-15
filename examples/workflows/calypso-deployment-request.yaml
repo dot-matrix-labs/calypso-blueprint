@@ -1,0 +1,213 @@
+version: 1
+name: calypso-deployment-request
+initial_state: deployment-trigger
+
+rollout_order:
+  - database-migrations
+  - frontend
+  - workers
+  - static-web
+
+states:
+  deployment-trigger:
+    kind: human
+    role: operator
+    description: Operator specifies the release to deploy and confirms the deployment window.
+    prompt: |
+      Specify the deployment:
+        - The release tag to deploy.
+        - The target environment.
+        - Confirmation that the deployment window is appropriate (timing, on-call coverage).
+    completion:
+      all_of:
+        - deployment-target-specified
+    next:
+      on_success: validate-release-artifacts
+
+  validate-release-artifacts:
+    kind: deterministic
+    description: Confirm all release artifacts for the specified tag exist and are ready.
+    checks:
+      - release-tag-exists
+      - github-release-published
+      - github-release-asset-published
+      - ghcr-images-published
+      - kubernetes-image-ready-signal-sent
+    next:
+      on_pass: cluster-preflight
+      on_fail: blocked
+
+  cluster-preflight:
+    kind: deterministic
+    description: >
+      Verify the Kubernetes cluster is reachable and in a healthy state before
+      beginning the rollout.
+    checks:
+      - kubernetes-cluster-reachable
+      - kubernetes-cluster-healthy-for-upgrade
+    next:
+      on_pass: database-migrations
+      on_fail: blocked
+
+  database-migrations:
+    kind: agent
+    role: deploy-orchestrator
+    cost: default
+    description: Apply database migrations and verify system health before proceeding.
+    prompt: |
+      Roll out database migrations first. Requirements:
+        - Apply all pending migrations in order.
+        - Verify the running system is healthy after migrations complete.
+        - Confirm the new application code is compatible with both the previous and new
+          schema versions before proceeding to application rollout.
+    completion:
+      all_of:
+        - database-migrations-applied
+        - running-system-healthy-after-migrations
+    next:
+      on_success: frontend-rollout
+      on_failure: blocked
+
+  frontend-rollout:
+    kind: agent
+    role: deploy-orchestrator
+    cost: default
+    description: Roll out the frontend application and verify system health.
+    prompt: |
+      Roll out the frontend application deployment. Verify the running system remains
+      healthy after the rollout completes before proceeding to workers.
+    completion:
+      all_of:
+        - frontend-rollout-complete
+        - running-system-healthy-after-frontend
+    next:
+      on_success: worker-rollout
+      on_failure: blocked
+
+  worker-rollout:
+    kind: agent
+    role: deploy-orchestrator
+    cost: default
+    description: Roll out worker deployments and verify system health.
+    prompt: |
+      Roll out all worker deployments. Verify the running system remains healthy after
+      workers are up before proceeding to the static web tier.
+    completion:
+      all_of:
+        - worker-rollout-complete
+        - running-system-healthy-after-workers
+    next:
+      on_success: static-web-rollout
+      on_failure: blocked
+
+  static-web-rollout:
+    kind: agent
+    role: deploy-orchestrator
+    cost: default
+    description: Roll out the static web tier and verify end-to-end system health.
+    prompt: |
+      Roll out the static web tier last. Verify end-to-end system health after the
+      static web tier is deployed. This is the final rollout phase.
+    completion:
+      all_of:
+        - static-web-rollout-complete
+        - running-system-healthy-after-static-web
+    next:
+      on_success: done
+      on_failure: blocked
+
+  done:
+    kind: terminal
+
+  blocked:
+    kind: human
+    role: operator-or-orchestrator
+    description: A rollout phase encountered a blocking condition.
+    prompt: |
+      Resolve the blocking deployment issue or abort the rollout. When resuming after a
+      partial rollout, use resume-rollout to re-enter at the database-migrations phase.
+    next:
+      on:
+        issue-cleared: validate-release-artifacts
+        retry-preflight: cluster-preflight
+        resume-rollout: database-migrations
+        abort: aborted
+
+  aborted:
+    kind: terminal
+
+checks:
+  deployment-target-specified:
+    kind: human
+    description: The operator has specified the release tag, environment, and confirmed the deployment window.
+  release-tag-exists:
+    kind: deterministic
+    description: The specified release tag exists in the repository.
+  github-release-published:
+    kind: deterministic
+    description: GitHub release is published against the tag.
+  github-release-asset-published:
+    kind: deterministic
+    description: Release executable is attached to the GitHub release.
+  ghcr-images-published:
+    kind: deterministic
+    description: Release-tagged container images exist in GHCR.
+  kubernetes-image-ready-signal-sent:
+    kind: deterministic
+    description: Kubernetes infrastructure has received the image-ready signal for this release.
+  kubernetes-cluster-reachable:
+    kind: deterministic
+    description: The Kubernetes API server is reachable and the cluster can accept workload changes.
+  kubernetes-cluster-healthy-for-upgrade:
+    kind: deterministic
+    description: All nodes are Ready, no critical workloads are degraded, and the cluster is in a state suitable for a rolling upgrade.
+  database-migrations-applied:
+    kind: deterministic
+  running-system-healthy-after-migrations:
+    kind: deterministic
+  frontend-rollout-complete:
+    kind: deterministic
+  running-system-healthy-after-frontend:
+    kind: deterministic
+  worker-rollout-complete:
+    kind: deterministic
+  running-system-healthy-after-workers:
+    kind: deterministic
+  static-web-rollout-complete:
+    kind: deterministic
+  running-system-healthy-after-static-web:
+    kind: deterministic
+
+agent_prompts:
+  deploy-orchestrator: |
+    Execute the current rollout phase in strict order (migrations → frontend → workers →
+    static-web). After each phase, verify the running system is healthy before proceeding.
+    Stop immediately and transition to blocked if any health check fails — do not proceed
+    to the next phase with a degraded system.
+
+github_actions:
+  proposed_required:
+    - workflow: .github/workflows/rollout-database.yml
+      workflow_name: Rollout Database
+      used_for:
+        - database-migrations-applied
+        - running-system-healthy-after-migrations
+      purpose: Apply production database migrations and verify post-migration health.
+    - workflow: .github/workflows/rollout-frontend.yml
+      workflow_name: Rollout Frontend
+      used_for:
+        - frontend-rollout-complete
+        - running-system-healthy-after-frontend
+      purpose: Roll out frontend application workloads and verify running health.
+    - workflow: .github/workflows/rollout-workers.yml
+      workflow_name: Rollout Workers
+      used_for:
+        - worker-rollout-complete
+        - running-system-healthy-after-workers
+      purpose: Roll out worker workloads and verify running health.
+    - workflow: .github/workflows/rollout-static-web.yml
+      workflow_name: Rollout Static Web
+      used_for:
+        - static-web-rollout-complete
+        - running-system-healthy-after-static-web
+      purpose: Roll out the static web tier last and verify end-to-end health.

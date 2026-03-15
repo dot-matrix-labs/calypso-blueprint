@@ -1,0 +1,159 @@
+version: 1
+name: calypso-orchestrator-startup
+initial_state: scan-work-queue
+
+states:
+  scan-work-queue:
+    kind: agent
+    role: orchestrator
+    cost: cheap
+    description: Evaluate all active work and select the highest-priority task to dispatch next.
+    prompt: |
+      Scan the project state and identify what work is pending across three categories in
+      priority order:
+        1. Planning tasks — features that have been requested but not yet broken into
+           implementation units or whose specification is incomplete.
+        2. Merge tasks — feature branches that are implementation-complete and are waiting
+           to land on main.
+        3. Development tasks — active feature branches that need to be started or resumed
+           from their current implementation state.
+      Report the full queue, select the single highest-priority item, and declare which
+      category it belongs to.
+    completion:
+      any_of:
+        - planning-task-identified
+        - merge-task-identified
+        - development-task-identified
+        - no-pending-tasks
+    next:
+      on:
+        planning-task-identified: dispatch-planning
+        merge-task-identified: dispatch-merge
+        development-task-identified: assign-phase-issues
+        no-pending-tasks: idle
+
+  dispatch-planning:
+    kind: workflow
+    workflow: calypso-planning
+    description: >
+      Run the full planning workflow — fetch open issues, reconcile the plan, reprioritize,
+      validate, and commit — starting from fetch-open-issues.
+    next:
+      on:
+        done: scan-work-queue
+        aborted: blocked
+
+  dispatch-merge:
+    kind: workflow
+    workflow: calypso-pr-review-merge
+    description: >
+      Run the full PR review and merge workflow — check feature completeness, CI, dependencies,
+      approval, queue position, and execute merge — starting from check-feature-completeness.
+    next:
+      on:
+        done: scan-work-queue
+        aborted: blocked
+
+  assign-phase-issues:
+    kind: agent
+    role: orchestrator
+    cost: cheap
+    description: >
+      Read docs/plan.md to identify the current active phase, then assign each
+      unstarted issue in that phase to a worker. Workers will each set up their
+      own local worktree via the feature development workflow.
+    prompt: |
+      Read docs/plan.md and determine the current active phase — the earliest phase
+      that has open, unstarted issues.
+
+      For each unstarted issue in that phase:
+        1. Assign it to an available worker via GitHub issue assignment.
+        2. Record the assignment (worker → issue number) so dispatch can fan out.
+
+      If only one worker is available, assign the single highest-priority issue.
+      If multiple workers are available, assign one issue per worker, respecting
+      dependency order (no issue may be assigned before its dependencies are merged).
+    completion:
+      all_of:
+        - active-phase-identified
+        - phase-issues-assigned-to-workers
+    next:
+      on_success: dispatch-development
+      on_failure: blocked
+
+  dispatch-development:
+    kind: workflow
+    workflow: calypso-default-feature-workflow
+    description: >
+      Run the feature development workflow — create or verify the worktree, then
+      progress through documentation, stubs, TDD, implementation, and save —
+      starting from create-worktree.
+    next:
+      on:
+        done: scan-work-queue
+        aborted: blocked
+
+  idle:
+    kind: human
+    role: operator
+    description: No pending work was found. Waiting for new tasks or an external trigger.
+    prompt: |
+      The orchestrator found no pending work. Wait for a new feature to be queued or for
+      an external trigger before resuming operations.
+    next:
+      on:
+        new-task-queued: scan-work-queue
+        shutdown-requested: done
+
+  blocked:
+    kind: human
+    role: operator-or-orchestrator
+    description: A dispatch encountered a blocking condition that requires human resolution.
+    prompt: |
+      A task dispatch encountered a blocking condition. Resolve the issue or redirect the
+      orchestrator to a different task.
+    next:
+      on:
+        issue-cleared: scan-work-queue
+        abort: done
+
+  done:
+    kind: terminal
+
+checks:
+  planning-task-identified:
+    kind: agent
+    role: orchestrator
+  merge-task-identified:
+    kind: agent
+    role: orchestrator
+  development-task-identified:
+    kind: agent
+    role: orchestrator
+  no-pending-tasks:
+    kind: agent
+    role: orchestrator
+  active-phase-identified:
+    kind: agent
+    role: orchestrator
+    description: The current active phase in docs/plan.md has been identified — the earliest phase with open, unstarted issues.
+  phase-issues-assigned-to-workers:
+    kind: agent
+    role: orchestrator
+    description: Each unstarted issue in the active phase has been assigned to a worker, respecting dependency order.
+
+agent_prompts:
+  orchestrator: |
+    You are the Calypso orchestrator. Maintain the health of the development process, scan
+    for pending work across all active features, and dispatch tasks in priority order:
+    planning first, merging second, development third.
+  planner: |
+    Refine and maintain the project feature plan. Ensure each feature is well-specified,
+    its GitHub issue is current, and the roadmap is accurate before engineering begins.
+  merge-queue: |
+    Manage the merge queue. Determine landing order across all merge-ready features, verify
+    all gates are satisfied, and execute merges for queue-head features.
+  engineer: |
+    Execute development tasks. Start new feature branches from the current main or resume
+    in-progress implementations from their current state, leaving each feature in a clean
+    committed and pushed state.

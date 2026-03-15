@@ -1,0 +1,389 @@
+version: 1
+name: calypso-release-request
+initial_state: tag-received
+
+# Trigger: a valid semver tag (v*) is pushed to main.
+# This workflow is event-driven — there is no human initiation step.
+# The tag push triggers .github/workflows/release.yml automatically.
+
+trigger:
+  event: git-tag-push
+  pattern: "v*"
+  branch_constraint: main
+  ci_entry: .github/workflows/release.yml
+
+states:
+  tag-received:
+    kind: deterministic
+    description: >
+      Validate that the pushed tag is a well-formed semver string and that it points
+      to a commit on main. Reject tags pushed to other branches.
+    checks:
+      - tag-is-semver
+      - tag-commit-is-on-main
+    next:
+      on_pass: release-quality
+      on_fail: blocked
+
+  release-quality:
+    kind: github
+    description: >
+      Run quality checks on the tagged commit. Maps to the `quality` job in
+      .github/workflows/release.yml, which runs in parallel with the test jobs.
+    ci_job:
+      workflow: .github/workflows/release.yml
+      job: quality
+      runs_on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: oven-sh/setup-bun@v2
+        - name: Install dependencies
+          run: bun install --frozen-lockfile --ignore-scripts
+        - name: Lint
+          run: bun run lint
+        - name: Format check
+          run: bun run format:check
+        - name: Build verification
+          run: bun run build
+    checks:
+      - release-lint-passing
+      - release-format-clean
+      - release-build-verification-passing
+    next:
+      on_pass: release-tests
+      on_fail: blocked
+
+  release-tests:
+    kind: github
+    description: >
+      Run the full test suite on the tagged commit. Maps to four parallel jobs in
+      .github/workflows/release.yml — all must pass before the build job runs.
+    ci_job:
+      workflow: .github/workflows/release.yml
+      jobs:
+        - job: unit-tests
+          runs_on: ubuntu-latest
+          steps:
+            - uses: actions/checkout@v4
+            - uses: oven-sh/setup-bun@v2
+            - name: Install dependencies
+              run: bun install --frozen-lockfile --ignore-scripts
+            - name: Run unit tests
+              run: bun --bun vitest run tests/unit apps/*/tests/unit
+        - job: api-tests
+          runs_on: ubuntu-latest
+          steps:
+            - uses: actions/checkout@v4
+            - uses: oven-sh/setup-bun@v2
+            - name: Install dependencies
+              run: bun install --frozen-lockfile --ignore-scripts
+            - name: Run API integration tests
+              run: bun run test:api
+        - job: component-tests
+          runs_on: ubuntu-latest
+          steps:
+            - uses: actions/checkout@v4
+            - uses: oven-sh/setup-bun@v2
+            - name: Install dependencies
+              run: bun install --frozen-lockfile --ignore-scripts
+            - name: Install Playwright Chromium
+              run: bunx playwright install --with-deps chromium
+            - name: Run component tests
+              run: bun --bun vitest run --config apps/web/vitest.browser.config.ts
+        - job: e2e-tests
+          runs_on: ubuntu-latest
+          steps:
+            - uses: actions/checkout@v4
+            - uses: oven-sh/setup-bun@v2
+            - name: Install dependencies
+              run: bun install --frozen-lockfile --ignore-scripts
+            - name: Install Playwright Chromium
+              run: bunx playwright install --with-deps chromium
+            - name: Run E2E tests
+              run: bun --bun vitest run --config tests/e2e/vitest.config.ts
+    checks:
+      - ci-unit-tests-green
+      - ci-api-tests-green
+      - ci-component-tests-green
+      - ci-e2e-tests-green
+    next:
+      on_pass: build-release-bundle
+      on_fail: blocked
+
+  build-release-bundle:
+    kind: github
+    description: >
+      Build the frontend in release mode, package it as a tarball, and create the
+      GitHub release with the asset attached. Maps to the `build-frontend` job in
+      .github/workflows/release.yml, which runs only after all test jobs pass.
+    ci_job:
+      workflow: .github/workflows/release.yml
+      job: build-frontend
+      needs: [quality, unit-tests, api-tests, component-tests, e2e-tests]
+      runs_on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v4
+        - uses: oven-sh/setup-bun@v2
+        - name: Install dependencies
+          run: bun install --frozen-lockfile --ignore-scripts
+        - name: Build frontend bundle
+          run: cd apps/web && bun --bun vite build
+        - name: Create release tarball
+          run: tar -czf web-dist.tar.gz -C apps/web/dist .
+        - name: Create GitHub release
+          env:
+            GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          run: >
+            gh release create "${{ github.ref_name }}" web-dist.tar.gz
+            --title "${{ github.ref_name }}" --generate-notes
+    checks:
+      - frontend-bundle-built
+      - release-tarball-created
+      - github-release-created
+      - github-release-asset-attached
+    next:
+      on_pass: build-container-image
+      on_fail: blocked
+
+  build-container-image:
+    kind: github
+    description: >
+      Build the Docker image for the release and push it to GHCR. Triggered
+      automatically when the GitHub release is published. Maps to
+      .github/workflows/release-ghcr-images.yml (proposed — to be created).
+    ci_job:
+      workflow: .github/workflows/release-ghcr-images.yml
+      status: proposed
+      trigger: github-release-published
+      jobs:
+        - job: build-and-push
+          runs_on: ubuntu-latest
+          steps:
+            - uses: actions/checkout@v4
+            - name: Log in to GHCR
+              uses: docker/login-action@v3
+              with:
+                registry: ghcr.io
+                username: ${{ github.actor }}
+                password: ${{ secrets.GITHUB_TOKEN }}
+            - name: Extract metadata
+              uses: docker/metadata-action@v5
+              with:
+                images: ghcr.io/${{ github.repository }}
+                tags: |
+                  type=semver,pattern={{version}}
+                  type=semver,pattern={{major}}.{{minor}}
+            - name: Build and push Docker image
+              uses: docker/build-push-action@v5
+              with:
+                context: .
+                push: true
+                tags: ${{ steps.meta.outputs.tags }}
+                labels: ${{ steps.meta.outputs.labels }}
+    checks:
+      - docker-image-built
+      - docker-image-pushed-to-ghcr
+      - ghcr-image-tag-matches-semver
+    next:
+      on_pass: smoke-test
+      on_fail: blocked
+
+  smoke-test:
+    kind: github
+    description: >
+      Run smoke tests against the published container image to verify the release
+      is deployable. Maps to .github/workflows/release-smoke-test.yml (TBD).
+    ci_job:
+      workflow: .github/workflows/release-smoke-test.yml
+      status: tbd
+      trigger: ghcr-image-published
+      jobs:
+        - job: smoke-test
+          runs_on: ubuntu-latest
+          steps:
+            - name: TBD — pull image and run smoke test suite against it
+    checks:
+      - smoke-test-passed
+    next:
+      on_pass: mark-latest
+      on_fail: blocked
+
+  mark-latest:
+    kind: github
+    role: release-manager
+    description: >
+      Mark the GitHub release and GHCR container image as "latest" now that the full
+      release bundle is verified — quality, tests, binary, container, and smoke test
+      all green.
+    prompt: |
+      Mark the release as latest:
+        1. Update the GitHub release to set it as the latest release:
+             gh release edit <tag> --latest
+        2. Re-tag the GHCR image with the `latest` tag using docker or the GitHub API.
+        3. Confirm both the release page and GHCR package page reflect "latest".
+    completion:
+      all_of:
+        - github-release-marked-latest
+        - ghcr-image-tagged-latest
+    next:
+      on_success: done
+      on_failure: blocked
+
+  done:
+    kind: terminal
+    description: Release bundle and container image are published and marked latest.
+
+  blocked:
+    kind: human
+    role: operator-or-orchestrator
+    description: A release step failed and requires human resolution.
+    prompt: |
+      Resolve the blocking release issue. Inspect the failed CI job, fix the root cause,
+      and re-push the tag or re-run the workflow as appropriate.
+    next:
+      on:
+        issue-cleared: tag-received
+        retry-quality: release-quality
+        retry-tests: release-tests
+        retry-build: build-release-bundle
+        retry-container: build-container-image
+        retry-smoke: smoke-test
+        abort: aborted
+
+  aborted:
+    kind: terminal
+
+checks:
+  tag-is-semver:
+    kind: deterministic
+    description: The pushed tag matches the semver pattern vMAJOR.MINOR.PATCH (plus optional pre-release/build metadata).
+  tag-commit-is-on-main:
+    kind: deterministic
+    description: The commit the tag points to exists on the main branch.
+  release-lint-passing:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/release.yml
+    job: quality
+    step: Lint
+    description: bun run lint passes on the tagged commit.
+  release-format-clean:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/release.yml
+    job: quality
+    step: Format check
+    description: bun run format:check passes on the tagged commit.
+  release-build-verification-passing:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/release.yml
+    job: quality
+    step: Build verification
+    description: bun run build succeeds on the tagged commit.
+  ci-unit-tests-green:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/release.yml
+    job: unit-tests
+    description: bun --bun vitest run tests/unit apps/*/tests/unit passes.
+  ci-api-tests-green:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/release.yml
+    job: api-tests
+    description: bun run test:api passes.
+  ci-component-tests-green:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/release.yml
+    job: component-tests
+    description: bun --bun vitest run --config apps/web/vitest.browser.config.ts passes.
+  ci-e2e-tests-green:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/release.yml
+    job: e2e-tests
+    description: bun --bun vitest run --config tests/e2e/vitest.config.ts passes.
+  frontend-bundle-built:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/release.yml
+    job: build-frontend
+    step: Build frontend bundle
+    description: cd apps/web && bun --bun vite build produces a dist directory.
+  release-tarball-created:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/release.yml
+    job: build-frontend
+    step: Create release tarball
+    description: web-dist.tar.gz is created from apps/web/dist.
+  github-release-created:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/release.yml
+    job: build-frontend
+    step: Create GitHub release
+    description: gh release create succeeded for the tag.
+  github-release-asset-attached:
+    kind: deterministic
+    description: web-dist.tar.gz is attached as an asset on the GitHub release.
+  docker-image-built:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/release-ghcr-images.yml
+    job: build-and-push
+    step: Build and push Docker image
+    description: Docker image built successfully for the release tag.
+  docker-image-pushed-to-ghcr:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/release-ghcr-images.yml
+    job: build-and-push
+    description: Image is available at ghcr.io/<repo>:<semver>.
+  ghcr-image-tag-matches-semver:
+    kind: deterministic
+    description: The GHCR image tag exactly matches the git semver tag.
+  smoke-test-passed:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/release-smoke-test.yml
+    job: smoke-test
+    description: Smoke test suite passed against the published container image. (TBD)
+  github-release-marked-latest:
+    kind: deterministic
+    description: The GitHub release page shows this release as "Latest release".
+  ghcr-image-tagged-latest:
+    kind: deterministic
+    description: The GHCR package has a `latest` tag pointing to this release image.
+
+agent_prompts:
+  release-manager: |
+    Manage the final step of the release process. Once all CI jobs are green and the
+    container is verified, mark the GitHub release and GHCR image as latest using the
+    gh CLI and docker/GitHub API respectively.
+
+github_actions:
+  current:
+    - workflow: .github/workflows/release.yml
+      trigger: "push: tags: v*"
+      jobs:
+        - quality
+        - unit-tests
+        - api-tests
+        - component-tests
+        - e2e-tests
+        - build-frontend
+  proposed:
+    - workflow: .github/workflows/release-ghcr-images.yml
+      trigger: github-release-published
+      purpose: Build and push the versioned Docker image to GHCR.
+      jobs:
+        - build-and-push
+    - workflow: .github/workflows/release-smoke-test.yml
+      trigger: ghcr-image-published
+      purpose: Run smoke tests against the published container to verify deployability.
+      status: tbd
+      jobs:
+        - smoke-test

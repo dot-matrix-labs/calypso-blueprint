@@ -1,0 +1,311 @@
+version: 1
+name: calypso-pr-review-merge
+initial_state: check-feature-completeness
+
+# Entry point: the orchestrator dispatches here after the feature workflow reaches done.
+# This is a separate state machine — development and review/merge are decoupled.
+#
+# Review gates (in order):
+#   a) feature complete  — all issue checkboxes checked
+#   b) tests pass        — CI green on the PR branch
+#   c) dependencies ready — any PRs this one depends on are merged or ready to merge
+#   d) mark mergeable    — merge agent submits the required approving review via gh (mandatory)
+#   e) merge queue       — use gh to assign a merge queue position among ready PRs
+#   f) execute merge     — merge when at queue head with all gates still satisfied
+
+states:
+  check-feature-completeness:
+    kind: agent
+    role: merge-queue
+    cost: guru
+    description: >
+      Read the linked GitHub issue and PR to verify all phase checkboxes are checked,
+      acceptance criteria are met, and the PR description is current.
+    prompt: |
+      Review this PR for feature completeness:
+        - All phase checkboxes on the linked issue are checked (documentation, stubs,
+          tdd, implementation, saved).
+        - All acceptance criteria listed in the issue are satisfied.
+        - The PR features checklist is fully checked.
+        - The PR test plan checklist is fully checked.
+        - The PR description accurately reflects the implemented scope.
+      If any item is incomplete, report exactly which ones are missing.
+    completion:
+      all_of:
+        - issue-all-phases-checked
+        - issue-acceptance-criteria-met
+        - pr-description-current
+        - pr-features-checklist-complete
+        - pr-test-plan-checklist-complete
+    next:
+      on_success: check-ci
+      on_failure: blocked
+
+  check-ci:
+    kind: github
+    description: All required CI checks are passing on the current PR branch commit.
+    checks:
+      - ci-quality-gate-green
+      - ci-unit-tests-green
+      - ci-api-tests-green
+      - ci-component-tests-green
+      - ci-e2e-tests-green
+      - ci-pg-container-tests-green
+    next:
+      on_pass: check-dependencies
+      on_fail: blocked
+
+  check-dependencies:
+    kind: agent
+    role: merge-queue
+    cost: cheap
+    description: >
+      Verify all PRs this feature depends on are either already merged into main
+      or are themselves ready to merge (CI green, feature complete, no outstanding blocks).
+    prompt: |
+      Inspect this PR for declared dependencies on other pull requests:
+        - Check the PR description and linked issues for "depends on" references.
+        - For each dependency, verify it is either:
+            a) Already merged into main, or
+            b) Ready to merge: CI green, feature complete, no open blocking conditions.
+        - If all dependencies are satisfied (or there are none), the check passes.
+        - If any dependency is still in progress or blocked, record which PR is blocking and why.
+    completion:
+      any_of:
+        - no-dependencies
+        - all-dependencies-satisfied
+        - dependencies-not-ready
+    next:
+      on:
+        no-dependencies: mark-mergeable
+        all-dependencies-satisfied: mark-mergeable
+        dependencies-not-ready: blocked
+
+  mark-mergeable:
+    kind: github
+    role: merge-queue
+    description: >
+      The merge agent submits the required approving review on the PR via the gh CLI.
+      PRs cannot be merged without at least one approval from the merge agent — this
+      state is the designated approval gate.
+    prompt: |
+      Submit the merge agent's approving review on this PR:
+        1. Un-draft the PR if it is still in draft state:
+             gh pr ready <number>
+        2. Submit the approving review:
+             gh pr review <number> --approve --body "Approved by merge agent: all gates satisfied."
+        3. Verify the review appears on the PR and the required-review count is satisfied.
+        4. Verify all required status checks are still passing after the review.
+      This approval is a hard requirement — the PR cannot enter the merge queue without it.
+    completion:
+      all_of:
+        - merge-agent-approval-submitted
+        - pr-not-draft
+        - required-checks-still-passing
+    next:
+      on_success: assign-merge-queue
+      on_failure: blocked
+
+  assign-merge-queue:
+    kind: github
+    role: merge-queue
+    description: >
+      Assign a merge queue position among all currently ready PRs using the gh CLI.
+    prompt: |
+      Assign this PR a position in the merge queue:
+        1. List all open PRs that also have the merge-agent approval and are CI-green.
+        2. Determine the correct landing order based on:
+             - Feature dependencies (a dependent must land after its requirement).
+             - PR age (older PRs generally land first, all else equal).
+             - Any explicit ordering declared in linked issues.
+        3. Record the queue position and the rationale in a PR comment.
+        4. If this PR is already at queue head, proceed to execute-merge immediately.
+        5. If other PRs are ahead, record this PR as waiting.
+    completion:
+      all_of:
+        - merge-queue-position-recorded
+        - merge-order-rationale-written
+      any_of:
+        - at-queue-head
+        - waiting-in-queue
+    next:
+      on:
+        at-queue-head: execute-merge
+        waiting-in-queue: waiting-for-queue-head
+
+  waiting-for-queue-head:
+    kind: human
+    role: operator-or-orchestrator
+    description: >
+      This PR is queued but not yet at the head. Wait for earlier PRs to merge before
+      proceeding.
+    prompt: |
+      This PR is waiting in the merge queue. Earlier PRs must merge first. When the PRs
+      ahead have landed, re-enter the queue check to re-evaluate position.
+    next:
+      on:
+        queue-position-advanced: assign-merge-queue
+        abort: aborted
+
+  execute-merge:
+    kind: github
+    role: merge-queue
+    description: Merge the PR now that it is at queue head and all gates still pass.
+    prompt: |
+      Execute the merge for this PR:
+        1. Re-verify all gates still hold: CI green, merge-agent approval present, no new conflicts.
+        2. Merge via: gh pr merge <number> --merge --delete-branch
+        3. Confirm the PR is closed and the branch is deleted.
+        4. Update the linked GitHub issue to "done".
+    completion:
+      all_of:
+        - pull-request-merged
+        - feature-branch-deleted
+        - issue-status-done
+    next:
+      on_success: done
+      on_failure: blocked
+
+  done:
+    kind: terminal
+    description: PR merged, branch deleted, issue closed.
+
+  blocked:
+    kind: human
+    role: operator-or-orchestrator
+    description: A review or merge gate failed and requires human resolution.
+    prompt: |
+      Resolve the blocking condition before the PR can proceed through review and merge.
+    next:
+      on:
+        issue-cleared: check-feature-completeness
+        skip-to-ci: check-ci
+        skip-to-dependencies: check-dependencies
+        abort: aborted
+
+  aborted:
+    kind: terminal
+
+checks:
+  issue-all-phases-checked:
+    kind: deterministic
+    description: All phase checkboxes (documentation, stubs, tdd, implementation, saved) are checked on the issue.
+  issue-acceptance-criteria-met:
+    kind: agent
+    role: merge-queue
+    description: All acceptance criteria listed in the GitHub issue are satisfied.
+  pr-description-current:
+    kind: agent
+    role: merge-queue
+    description: The PR description reflects the current implementation scope.
+  pr-features-checklist-complete:
+    kind: deterministic
+    description: All items in the PR features checklist are checked.
+  pr-test-plan-checklist-complete:
+    kind: deterministic
+    description: All items in the PR test plan checklist are checked.
+  ci-quality-gate-green:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/quality-gate.yml
+    workflow_name: Quality Gate
+  ci-unit-tests-green:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/test-unit.yml
+    workflow_name: Unit Tests
+  ci-api-tests-green:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/test-api.yml
+    workflow_name: API Integration Tests
+  ci-component-tests-green:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/test-component.yml
+    workflow_name: React Component Tests
+  ci-e2e-tests-green:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/test-e2e.yml
+    workflow_name: Full-Page User Story Tests
+  ci-pg-container-tests-green:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/test-pg-container.yml
+    workflow_name: PG Container Tests
+  no-dependencies:
+    kind: agent
+    role: merge-queue
+    description: The PR declares no dependencies on other PRs.
+  all-dependencies-satisfied:
+    kind: agent
+    role: merge-queue
+    description: All declared dependency PRs are either merged into main or ready to merge (CI green, feature complete, unblocked).
+  dependencies-not-ready:
+    kind: agent
+    role: merge-queue
+    description: One or more declared dependency PRs are still in progress or blocked and cannot yet be merged.
+  merge-agent-approval-submitted:
+    kind: github
+    description: >
+      The merge agent has submitted an approving review via gh pr review --approve.
+      This is the mandatory minimum-one-approval gate — the PR cannot be merged without it.
+  pr-not-draft:
+    kind: deterministic
+    description: The PR is not in draft state.
+  required-checks-still-passing:
+    kind: deterministic
+    description: All required status checks are still passing after the review was submitted.
+  merge-queue-position-recorded:
+    kind: agent
+    role: merge-queue
+    description: This PR's queue position is recorded in a PR comment.
+  merge-order-rationale-written:
+    kind: agent
+    role: merge-queue
+    description: The rationale for the queue ordering is written in the PR comment.
+  at-queue-head:
+    kind: agent
+    role: merge-queue
+    description: This PR is at the head of the merge queue and eligible to merge.
+  waiting-in-queue:
+    kind: agent
+    role: merge-queue
+    description: This PR is queued behind one or more other PRs.
+  pull-request-merged:
+    kind: deterministic
+  feature-branch-deleted:
+    kind: deterministic
+    description: The feature branch has been deleted from origin after merge.
+  issue-status-done:
+    kind: deterministic
+    description: The linked GitHub issue is closed and marked done.
+
+agent_prompts:
+  merge-queue: |
+    Manage PR review and merge. Verify feature completeness, check CI status, resolve
+    dependency ordering, approve reviews, assign queue positions, and execute merges at
+    queue head. Use the gh CLI for all GitHub operations. Record all queue decisions and
+    their rationale in PR comments.
+
+github_actions:
+  current_required:
+    - workflow: .github/workflows/quality-gate.yml
+      workflow_name: Quality Gate
+      used_for: [ci-quality-gate-green]
+    - workflow: .github/workflows/test-unit.yml
+      workflow_name: Unit Tests
+      used_for: [ci-unit-tests-green]
+    - workflow: .github/workflows/test-api.yml
+      workflow_name: API Integration Tests
+      used_for: [ci-api-tests-green]
+    - workflow: .github/workflows/test-component.yml
+      workflow_name: React Component Tests
+      used_for: [ci-component-tests-green]
+    - workflow: .github/workflows/test-e2e.yml
+      workflow_name: Full-Page User Story Tests
+      used_for: [ci-e2e-tests-green]
+    - workflow: .github/workflows/test-pg-container.yml
+      workflow_name: PG Container Tests
+      used_for: [ci-pg-container-tests-green]
