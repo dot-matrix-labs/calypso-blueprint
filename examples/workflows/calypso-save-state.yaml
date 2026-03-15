@@ -2,51 +2,14 @@ version: 1
 name: calypso-save-state
 initial_state: stage-changes
 
-# The save-state cycle is the pipeline that persists an implementation increment:
-# stage → commit → push → update issue → verify CI started → evaluate completeness.
+# Save-state pipeline: stage → commit → push → update issue → verify CI → evaluate completeness.
 #
-# Git hooks fire as part of git operations — they are not separate states but
-# they produce deterministic gate outcomes that the agent must respond to.
+# Hook chain:
+#   git commit: prepare-commit-msg (inject checklist), pre-commit (blocking gates + auto-fix),
+#               commit-msg (checklist + Git-Brain validation)
+#   git push:   pre-push (blueprint audit, lint/format/types blocking; PR size + tests advisory)
 #
-# Hook chain summary (see examples/githooks/ for the actual scripts):
-#
-#   git commit fires, in order:
-#     prepare-commit-msg  injects CALYPSO_CHECKLIST template into the message (always)
-#     pre-commit          three BLOCKING gates, one advisory, one auto-fix:
-#                           1. doc-merge-markers    — blocks if staged .md/.rst/.txt contain conflict markers
-#                           2. hard-violations      — blocks on: JS files (.js/.mjs), npm/yarn usage,
-#                                                     mock libraries, skipped tests, forbidden packages
-#                           3. planning-docs-staged — blocks if implementation-plan.md or next-prompt.md
-#                                                     are not staged (must update them before committing)
-#                           4. commit-size-advisory — warns (non-blocking) if >10 non-planning files staged;
-#                                                     appends warning to next-prompt.md
-#                           5. lint-format-autofix  — runs eslint --fix + prettier --write on staged files;
-#                                                     if files are modified agent must re-stage and retry;
-#                                                     unfixable issues are non-blocking but annotated to next-prompt.md
-#     commit-msg          three BLOCKING gates:
-#                           1. calypso-checklist    — blocks if any CALYPSO_CHECKLIST item is unchecked
-#                           2. git-brain-presence   — blocks if GIT_BRAIN_METADATA block is missing
-#                           3. git-brain-schema     — blocks if GIT_BRAIN_METADATA JSON is invalid
-#
-#   git push fires:
-#     pre-push            two BLOCKING gates, two WARNING-ONLY annotations:
-#                           1. blueprint-audit      — blocks on: JS files in apps/packages, forbidden packages
-#                           2. pr-size-advisory     — warns (non-blocking) if >20 files changed vs main;
-#                                                     appends warning to next-prompt.md
-#                           3. lint-format-types    — blocks on: eslint --max-warnings=0, prettier --check,
-#                                                     tsc --noEmit
-#                           4. test-suite           — WARNING ONLY: runs bun vitest; does NOT block push;
-#                                                     failures are appended to next-prompt.md for next commit
-#
-# Exit conditions:
-#   exit-complete      — all acceptance criteria satisfied, CI is running
-#   exit-incomplete    — work remains, CI is running; return to implementation-loop
-#   conflict-with-main — CI failed to start due to merge conflict with main
-#
-# Gate categories active in this workflow:
-#   git-hook — pre-commit, prepare-commit-msg, commit-msg, pre-push
-#   ci       — verify that CI jobs started on the pushed commit
-#   agent    — completeness evaluation
+# Exit: exit-complete | exit-incomplete | conflict-with-main
 
 states:
   stage-changes:
@@ -55,21 +18,12 @@ states:
     cost: cheap
     description: >
       Prepare and stage all changes for the commit. The pre-commit hook requires
-      docs/plans/implementation-plan.md and docs/plans/next-prompt.md to be staged
-      or it will block the commit — these must be updated here, before committing.
+      docs/plans/implementation-plan.md and docs/plans/next-prompt.md to be staged.
     prompt: |
-      Prepare and stage all changes for this implementation increment:
-        1. Update docs/plans/implementation-plan.md:
-             - Check off every task completed in this increment.
-             - Add any newly discovered tasks in their correct position.
-        2. Overwrite docs/plans/next-prompt.md with a complete, self-contained
-           prompt for the next commit — as if handing off to a fresh agent with
-           no prior context.
-        3. Stage all code changes relevant to this increment.
-        4. Stage docs/plans/implementation-plan.md and docs/plans/next-prompt.md.
-           The pre-commit hook will block the commit if either is not staged.
-        5. Do not stage unrelated files, build artifacts, or .env files.
-        6. Verify the staging area with git status before proceeding.
+      1. Update docs/plans/implementation-plan.md — check off completed tasks, add newly discovered tasks.
+      2. Overwrite docs/plans/next-prompt.md — self-contained prompt for a fresh agent with no prior context.
+      3. Stage code changes + both planning docs (pre-commit blocks if either missing).
+      4. No unrelated files, artifacts, or .env. Verify with `git status`.
     completion:
       all_of:
         - implementation-plan-updated
@@ -85,48 +39,15 @@ states:
     role: engineer
     cost: cheap
     description: >
-      Run git commit. Three hooks fire in sequence:
-        prepare-commit-msg injects the CALYPSO_CHECKLIST template into the message.
-        pre-commit runs three blocking gates (doc markers, hard violations, planning
-          docs staged) plus a commit-size advisory and lint/format auto-fix.
-        commit-msg runs three blocking gates (checklist complete, Git-Brain present,
-          Git-Brain schema valid).
+      Run git commit. Three hooks fire: prepare-commit-msg (inject checklist),
+      pre-commit (blocking gates + auto-fix), commit-msg (checklist + Git-Brain).
     prompt: |
-      Commit the staged changes:
-        1. Write a conventional commit message. The prepare-commit-msg hook will
-           inject a CALYPSO_CHECKLIST block — check every applicable item before
-           finalising the message.
-        2. Append a valid GIT_BRAIN_METADATA block to the commit message:
-             - retroactive_prompt: the specific instruction to reproduce this change
-             - outcome: observable, verifiable result
-             - context: architectural context not visible from the diff
-             - agent, session, hints fields as required
-
-        The pre-commit hook runs next. It will BLOCK and abort the commit if:
-          - Any staged .md/.rst/.txt file contains conflict markers (<<<<<<<, =======, >>>>>>>)
-          - Any staged file is a .js or .mjs logic file (TypeScript only)
-          - The staged diff introduces npm/npx/yarn usage (use bun/bunx)
-          - The staged diff introduces mock libraries (jest.mock, sinon, vi.mock, msw)
-          - The staged diff introduces skipped tests (.skip, .todo, xit, xdescribe)
-          - The staged diff adds a forbidden package (redux, zustand, mobx, prisma,
-            typeorm, drizzle-orm, @auth0/, @clerk/, mongoose)
-          - docs/plans/implementation-plan.md is not staged
-          - docs/plans/next-prompt.md is not staged
-        If any blocking gate fires: fix the violation and restart from stage-changes.
-
-        The pre-commit hook also runs lint/format auto-fix (non-blocking):
-          - Runs eslint --fix and prettier --write on staged files.
-          - If the hook modifies files: re-stage the modified files and retry git commit.
-          - Unfixable lint/format issues are annotated to next-prompt.md but do not block.
-          - Commits with >10 non-planning files trigger a size advisory appended to next-prompt.md.
-
-        The commit-msg hook runs next. It will BLOCK if:
-          - Any CALYPSO_CHECKLIST item is unchecked (- [ ] remains)
-          - The GIT_BRAIN_METADATA block is missing from the message
-          - The GIT_BRAIN_METADATA JSON fails schema validation
-        If blocked: fix the message and retry the commit.
-
-        Do not proceed to push until the commit is created successfully.
+      `git commit` with conventional commit message.
+      - prepare-commit-msg injects CALYPSO_CHECKLIST — check every item.
+      - Append GIT_BRAIN_METADATA: retroactive_prompt, outcome, context, agent, session, hints.
+      - pre-commit BLOCKS on: conflict markers in .md, .js files, npm/yarn, mock libs, skipped tests, forbidden packages, unstaged planning docs. Auto-fixes lint/format (re-stage if modified).
+      - commit-msg BLOCKS on: unchecked checklist, missing/invalid GIT_BRAIN_METADATA.
+      If blocked → fix, return to stage-changes.
     gates:
       - kind: git-hook
         hook: prepare-commit-msg
@@ -195,33 +116,13 @@ states:
     role: engineer
     cost: cheap
     description: >
-      Run git push. The pre-push hook runs two blocking gates (blueprint audit,
-      lint/format/types) and two warning-only annotations (PR size, test failures).
-      Note: test failures do NOT block the push — they are appended to next-prompt.md
-      and must be addressed in the next commit.
+      Run git push. pre-push blocks on blueprint audit + lint/format/types.
+      Test failures are advisory (logged to next-prompt.md, not blocking).
     prompt: |
-      Push the feature branch to origin:
-        1. Run git push origin <branch>.
-
-        The pre-push hook runs. It will BLOCK and reject the push if:
-          - Blueprint violations exist in the working tree:
-              - .js/.mjs logic files found under apps/ or packages/
-              - Forbidden packages (redux, zustand, mobx, prisma, typeorm,
-                drizzle-orm, @auth0/, @clerk/, mongoose) found in any package.json
-          - Lint errors: eslint --max-warnings=0 reports any warning or error
-          - Format errors: prettier --check reports any unformatted file
-          - Type errors: tsc --noEmit reports any TypeScript error
-        If the push is rejected: read the hook output, fix all reported violations,
-        and return to stage-changes to re-stage, recommit, and retry.
-
-        The pre-push hook also runs non-blocking checks:
-          - PR size advisory: if this PR changes >20 files vs main, a warning is
-            appended to next-prompt.md but the push is NOT blocked.
-          - Test suite: bun vitest runs in full. If tests fail, the failures are
-            appended to next-prompt.md but the push is NOT blocked. The agent must
-            address failing tests in the next commit — never ignore or skip them.
-
-        Do not proceed to update-issue until the push is accepted.
+      `git push origin <branch>`.
+      pre-push BLOCKS on: .js in apps/packages, forbidden packages, eslint errors, prettier errors, tsc errors.
+      Non-blocking: PR size >20 files (advisory), test failures (logged to next-prompt.md).
+      If rejected → fix violations, return to stage-changes.
     gates:
       - kind: git-hook
         hook: pre-push
@@ -264,14 +165,9 @@ states:
     role: engineer
     cost: cheap
     description: >
-      Update the GitHub issue to reflect the current implementation state:
-      check off completed phase checkboxes and post a status comment.
+      Update the GitHub issue to reflect the current implementation state.
     prompt: |
-      Update the GitHub issue for this feature:
-        - Check the "implementation" checkbox if all tests are passing.
-        - Update the status comment with: what was implemented, what tests now
-          pass, and what work (if any) remains.
-        - Do not check "saved" yet — that happens only after CI confirms green.
+      Update GitHub issue: check "implementation" checkbox if all tests pass. Post status comment (what was implemented, what passes, what remains). Do not check "saved" yet — that waits for CI green.
     completion:
       all_of:
         - issue-status-updated
@@ -282,18 +178,10 @@ states:
   verify-ci-started:
     kind: deterministic
     description: >
-      Confirm that CI jobs are running on the pushed commit. The agent must
-      not proceed until GitHub reports at least one workflow run has started
-      on the feature branch at the current commit SHA.
-      If no runs start within a reasonable wait window, treat it as a
-      CI-start failure and diagnose the cause.
+      Confirm that CI jobs are running on the pushed commit. Wait up to 60s
+      for at least one workflow run at the current commit SHA.
     prompt: |
-      Verify CI is running on the pushed commit:
-        1. Query GitHub for workflow runs on the feature branch.
-        2. Wait up to 60 seconds for at least one run to appear at the
-           current commit SHA.
-        3. If runs are found: proceed to evaluate-completeness.
-        4. If no runs appear after 60 seconds: proceed to diagnose-ci-start-failure.
+      Query GitHub for workflow runs on feature branch at current SHA. Wait up to 60s. Runs found → evaluate-completeness. No runs → diagnose-ci-start-failure.
     next:
       on:
         ci-started: evaluate-completeness
@@ -304,19 +192,9 @@ states:
     role: engineer
     cost: default
     description: >
-      Determine why CI failed to start. The most common cause is a merge
-      conflict with main that prevents the branch from being processed.
-      Less common: branch protection misconfiguration, GitHub Actions outage.
+      Determine why CI failed to start — most likely a merge conflict with main.
     prompt: |
-      Diagnose why CI did not start on the pushed commit:
-        1. Check whether the feature branch has a merge conflict with main:
-             - Run git fetch origin main.
-             - Run git merge-tree to detect conflicts without modifying the worktree.
-        2. If a merge conflict is detected: report conflict-with-main so the
-           caller can route back to the implementation loop.
-        3. If no conflict: check GitHub Actions status page and branch protection
-           rules for configuration issues. If the issue cannot be resolved
-           without operator input, transition to blocked.
+      `git fetch origin main` then `git merge-tree` to detect conflicts. Conflict → conflict-with-main. No conflict → check Actions status and branch protection. Unresolvable → blocked.
     completion:
       any_of:
         - conflict-with-main-detected
@@ -331,18 +209,10 @@ states:
     role: engineer
     cost: guru
     description: >
-      Determine whether the feature is fully complete. All acceptance criteria
-      on the GitHub issue must be satisfied and all phase checkboxes checked.
+      Determine whether the feature is fully complete — all acceptance criteria
+      satisfied and all phase checkboxes checked.
     prompt: |
-      Evaluate whether this feature is complete:
-        - Re-read the GitHub issue acceptance criteria.
-        - Confirm every criterion is satisfied by the current implementation.
-        - Check whether any phase checkboxes remain unchecked.
-        - If all criteria are met and all checkboxes are checked:
-            - Check the "saved" checkbox on the issue.
-            - Transition to exit-complete.
-        - If any criteria or checkboxes remain:
-            - Transition to exit-incomplete so work can continue.
+      Re-read issue acceptance criteria. All met + all checkboxes checked → check "saved" checkbox, exit-complete. Any remaining → exit-incomplete.
     completion:
       any_of:
         - feature-complete
@@ -356,20 +226,16 @@ states:
     kind: terminal
     description: >
       Feature is complete and saved. CI is running on the feature branch.
-      The feature workflow may transition to done.
 
   exit-incomplete:
     kind: terminal
     description: >
       Implementation progress saved and CI is running, but work remains.
-      The feature workflow should return to implementation-loop.
 
   conflict-with-main:
     kind: terminal
     description: >
-      CI failed to start because the feature branch has a merge conflict with
-      main. The feature workflow must route back to implementation-loop to
-      resolve the conflict, then re-enter save-state.
+      CI failed to start because the feature branch has a merge conflict with main.
 
   blocked:
     kind: human
@@ -416,29 +282,22 @@ checks:
     hook: pre-commit
     blocking: true
     description: >
-      No staged .md/.rst/.txt file contains git conflict markers
-      (<<<<<<<, =======, >>>>>>>). Pre-commit blocks if any are found.
+      No staged .md/.rst/.txt file contains git conflict markers.
   no-hard-violations:
     kind: git-hook
     hook: pre-commit
     blocking: true
     description: >
-      None of the following are present in the staged changes:
-        - .js/.mjs logic files (TypeScript only)
-        - npm/npx/yarn usage (use bun/bunx)
-        - mock libraries (jest.mock, sinon, vi.mock, msw)
-        - skipped tests (.skip, .todo, xit, xdescribe)
-        - forbidden packages (redux, zustand, mobx, prisma, typeorm,
-          drizzle-orm, @auth0/, @clerk/, mongoose)
+      None of the following are present in staged changes:
+      .js/.mjs files, npm/yarn usage, mock libraries, skipped tests, forbidden packages.
   lint-format-autofix-passed:
     kind: git-hook
     hook: pre-commit
     blocking: false
     behavior: auto-fix
     description: >
-      eslint --fix and prettier --write ran on staged files. Any auto-fixed
-      files were re-staged and the commit retried. Unfixable issues are
-      annotated to next-prompt.md but do not block the commit.
+      eslint --fix and prettier --write ran on staged files. Auto-fixed
+      files re-staged. Unfixable issues annotated to next-prompt.md.
 
   # ── commit: commit-msg hook ────────────────────────────────────────────────
   calypso-checklist-complete:
@@ -446,23 +305,20 @@ checks:
     hook: commit-msg
     blocking: true
     description: >
-      All items in the CALYPSO_CHECKLIST injected by prepare-commit-msg are
-      checked. The commit-msg hook blocks if any - [ ] items remain.
+      All CALYPSO_CHECKLIST items are checked. Blocks if any - [ ] remains.
   git-brain-metadata-present:
     kind: git-hook
     hook: commit-msg
     blocking: true
     description: >
       The commit message contains a GIT_BRAIN_METADATA HTML comment block.
-      The commit-msg hook blocks if the block is absent.
   git-brain-metadata-valid:
     kind: git-hook
     hook: commit-msg
     blocking: true
     description: >
-      The GIT_BRAIN_METADATA JSON passes schema validation via
-      validate-commit-metadata.sh. Required fields: retroactive_prompt,
-      outcome, context, agent, session, hints.
+      The GIT_BRAIN_METADATA JSON passes schema validation. Required:
+      retroactive_prompt, outcome, context, agent, session, hints.
   commit-created:
     kind: deterministic
     description: git log confirms a new commit was created on the feature branch.
@@ -473,8 +329,7 @@ checks:
     hook: pre-push
     blocking: true
     description: >
-      Blueprint audit passed: no .js/.mjs logic files in apps/ or packages/,
-      and no forbidden packages in any package.json.
+      No .js/.mjs files in apps/packages, no forbidden packages in package.json.
   lint-clean:
     kind: git-hook
     hook: pre-push
@@ -515,8 +370,8 @@ checks:
   conflict-with-main-detected:
     kind: deterministic
     description: >
-      git merge-tree (or equivalent) detected a merge conflict between the
-      feature branch and origin/main.
+      git merge-tree detected a merge conflict between the feature branch
+      and origin/main.
 
   ci-start-failure-unresolvable:
     kind: agent

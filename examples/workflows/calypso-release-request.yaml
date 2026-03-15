@@ -3,8 +3,7 @@ name: calypso-release-request
 initial_state: tag-received
 
 # Trigger: a valid semver tag (v*) is pushed to main.
-# This workflow is event-driven — there is no human initiation step.
-# The tag push triggers .github/workflows/release.yml automatically.
+# Event-driven — no human initiation step.
 
 trigger:
   event: git-tag-push
@@ -16,8 +15,7 @@ states:
   tag-received:
     kind: deterministic
     description: >
-      Validate that the pushed tag is a well-formed semver string and that it points
-      to a commit on main. Reject tags pushed to other branches.
+      Validate that the pushed tag is well-formed semver pointing to a commit on main.
     checks:
       - tag-is-semver
       - tag-commit-is-on-main
@@ -28,8 +26,7 @@ states:
   release-quality:
     kind: github
     description: >
-      Run quality checks on the tagged commit. Maps to the `quality` job in
-      .github/workflows/release.yml, which runs in parallel with the test jobs.
+      Run quality checks on the tagged commit (quality job in release.yml).
     ci_job:
       workflow: .github/workflows/release.yml
       job: quality
@@ -56,8 +53,7 @@ states:
   release-tests:
     kind: github
     description: >
-      Run the full test suite on the tagged commit. Maps to four parallel jobs in
-      .github/workflows/release.yml — all must pass before the build job runs.
+      Run full test suite on the tagged commit (four parallel jobs in release.yml).
     ci_job:
       workflow: .github/workflows/release.yml
       jobs:
@@ -113,9 +109,7 @@ states:
   build-release-bundle:
     kind: github
     description: >
-      Build the frontend in release mode, package it as a tarball, and create the
-      GitHub release with the asset attached. Maps to the `build-frontend` job in
-      .github/workflows/release.yml, which runs only after all test jobs pass.
+      Build frontend, package tarball, create GitHub release with asset.
     ci_job:
       workflow: .github/workflows/release.yml
       job: build-frontend
@@ -148,9 +142,7 @@ states:
   build-container-image:
     kind: github
     description: >
-      Build the Docker image for the release and push it to GHCR. Triggered
-      automatically when the GitHub release is published. Maps to
-      .github/workflows/release-ghcr-images.yml (proposed — to be created).
+      Build Docker image and push to GHCR.
     ci_job:
       workflow: .github/workflows/release-ghcr-images.yml
       status: proposed
@@ -191,8 +183,7 @@ states:
   smoke-test:
     kind: github
     description: >
-      Run smoke tests against the published container image to verify the release
-      is deployable. Maps to .github/workflows/release-smoke-test.yml (TBD).
+      Run smoke tests against the published container image.
     ci_job:
       workflow: .github/workflows/release-smoke-test.yml
       status: tbd
@@ -212,15 +203,11 @@ states:
     kind: github
     role: release-manager
     description: >
-      Mark the GitHub release and GHCR container image as "latest" now that the full
-      release bundle is verified — quality, tests, binary, container, and smoke test
-      all green.
+      Mark GitHub release and GHCR image as "latest" after full verification.
     prompt: |
-      Mark the release as latest:
-        1. Update the GitHub release to set it as the latest release:
-             gh release edit <tag> --latest
-        2. Re-tag the GHCR image with the `latest` tag using docker or the GitHub API.
-        3. Confirm both the release page and GHCR package page reflect "latest".
+      1. `gh release edit <tag> --latest`
+      2. Re-tag GHCR image with `latest`.
+      3. Confirm both release page and GHCR package reflect "latest".
     completion:
       all_of:
         - github-release-marked-latest
@@ -238,8 +225,7 @@ states:
     role: operator-or-orchestrator
     description: A release step failed and requires human resolution.
     prompt: |
-      Resolve the blocking release issue. Inspect the failed CI job, fix the root cause,
-      and re-push the tag or re-run the workflow as appropriate.
+      Inspect the failed CI job, fix root cause, re-push tag or re-run workflow.
     next:
       on:
         issue-cleared: tag-received
@@ -360,9 +346,7 @@ checks:
 
 agent_prompts:
   release-manager: |
-    Manage the final step of the release process. Once all CI jobs are green and the
-    container is verified, mark the GitHub release and GHCR image as latest using the
-    gh CLI and docker/GitHub API respectively.
+    Once all CI jobs green and container verified, mark GitHub release and GHCR image as latest via gh CLI and docker/GitHub API.
 
 github_actions:
   current:

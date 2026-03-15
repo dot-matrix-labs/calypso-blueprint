@@ -8,10 +8,7 @@ states:
     role: feature-requester
     description: Human submits a feature request with motivation, intended experience, and constraints.
     prompt: |
-      Describe the feature you want to add. Include:
-        - Motivation: why this feature is needed and what problem it solves.
-        - Intended experience: what the user will be able to do.
-        - Known constraints: anything that limits scope or implementation approach.
+      Describe the feature: motivation (why needed), intended experience (what user can do), known constraints (scope/approach limits).
     completion:
       all_of:
         - feature-request-submitted
@@ -24,13 +21,7 @@ states:
     cost: guru
     description: Evaluate whether the request is architecturally clear and safe to implement.
     prompt: |
-      Evaluate the feature request against the current architecture. Assess:
-        - Feasibility: can this be built within the current architecture without breaking invariants?
-        - Clarity: is the request specific enough to become an implementation unit?
-        - Risk: are there architectural conflicts, data model implications, or cross-cutting concerns?
-      If the request is clear and feasible, approve it. If it needs clarification, identify
-      exactly what is missing and send it back to intake. If it conflicts with the architecture,
-      document the conflict and the reason it cannot proceed.
+      Evaluate against current architecture. Feasibility (invariants preserved?), clarity (specific enough to implement?), risk (conflicts, data model impact, cross-cutting concerns?). Clear+feasible → approve. Unclear → return to intake with specifics. Conflict → block with rationale.
     completion:
       any_of:
         - architecture-clear
@@ -48,13 +39,7 @@ states:
     cost: default
     description: Create a well-structured GitHub issue capturing the approved feature.
     prompt: |
-      Create a GitHub issue for the approved feature. The issue must include:
-        - A clear title.
-        - Motivation section.
-        - Intended scope and acceptance criteria.
-        - Architectural notes from the evaluation.
-        - Links to any relevant planning or PRD documents.
-      Apply the appropriate labels.
+      Create GitHub issue: clear title, motivation, scope + acceptance criteria, architectural notes from evaluation, relevant doc links. Apply appropriate labels.
     completion:
       all_of:
         - github-issue-created
@@ -70,11 +55,7 @@ states:
     cost: default
     description: Record the new feature in the project plan with its issue reference and priority.
     prompt: |
-      Add the new feature to the project plan. Record:
-        - The GitHub issue reference.
-        - Priority relative to other planned features.
-        - Known dependencies on other features or infrastructure.
-        - Any phasing or milestone constraints.
+      Add feature to docs/plan.md: GitHub issue reference, relative priority, known dependencies, phasing constraints.
     completion:
       all_of:
         - plan-updated
@@ -144,12 +125,8 @@ checks:
 
 agent_prompts:
   architect: |
-    Evaluate feature requests against the current architecture. Assess feasibility, identify
-    risks, and determine whether the request is specific enough to become an implementation
-    unit. When clarification is needed, state exactly what is missing.
+    Evaluate feature requests against current architecture. Assess feasibility, identify risks, determine if specific enough to implement. State exactly what is missing when clarification needed.
   feature-definer: |
-    Create well-structured GitHub issues from approved feature requests, capturing motivation,
-    scope, acceptance criteria, and architectural context.
+    Create well-structured GitHub issues from approved feature requests: motivation, scope, acceptance criteria, architectural context.
   planner: |
-    Maintain the project feature plan. Record each new feature with its GitHub issue reference,
-    priority, and dependencies so the orchestrator can dispatch work in the correct order.
+    Record new features in the plan with issue reference, priority, and dependencies so the orchestrator dispatches work correctly.
