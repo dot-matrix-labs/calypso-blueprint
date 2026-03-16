@@ -29,7 +29,7 @@ states:
       Run quality checks on the tagged commit via release-cli.yml.
     ci_job:
       workflow: .github/workflows/release-cli.yml
-      job: quality
+      job: build
       steps:
         - uses: actions/checkout@v5
         - uses: dtolnay/rust-toolchain@stable
@@ -53,25 +53,16 @@ states:
       Run full Rust test suite on the tagged commit.
     ci_job:
       workflow: .github/workflows/release-cli.yml
-      jobs:
-        - job: unit-tests
-          steps:
-            - uses: actions/checkout@v5
-            - uses: dtolnay/rust-toolchain@stable
-            - name: Run unit tests
-              run: cargo test --lib --workspace
-        - job: integration-tests
-          steps:
-            - uses: actions/checkout@v5
-            - uses: dtolnay/rust-toolchain@stable
-            - name: Run integration tests
-              run: cargo test --test '*' --workspace
-        - job: e2e-tests
-          steps:
-            - uses: actions/checkout@v5
-            - uses: dtolnay/rust-toolchain@stable
-            - name: Run e2e tests
-              run: cargo test -p calypso-cli --test '*'
+      job: build
+      steps:
+        - uses: actions/checkout@v5
+        - uses: dtolnay/rust-toolchain@stable
+        - name: Run unit tests
+          run: cargo test --lib --workspace
+        - name: Run integration tests
+          run: cargo test --test '*' --workspace
+        - name: Run e2e tests
+          run: cargo test -p calypso-cli --test '*'
     checks:
       - ci-unit-tests-green
       - ci-integration-tests-green
@@ -87,7 +78,7 @@ states:
     ci_job:
       workflow: .github/workflows/release-cli.yml
       job: publish
-      needs: [quality, unit-tests, integration-tests, e2e-tests]
+      needs: [build]
       steps:
         - uses: actions/checkout@v5
         - uses: dtolnay/rust-toolchain@stable
@@ -218,79 +209,65 @@ checks:
     kind: deterministic
     source: ci
     workflow: .github/workflows/release-cli.yml
-    job: quality
-    step: Clippy
     description: cargo clippy --all-targets -- -D warnings passes on tagged commit.
   release-format-clean:
     kind: deterministic
     source: ci
     workflow: .github/workflows/release-cli.yml
-    job: quality
-    step: Format check
     description: cargo fmt --all -- --check passes on the tagged commit.
   release-build-verification-passing:
     kind: deterministic
     source: ci
     workflow: .github/workflows/release-cli.yml
-    job: quality
-    step: Build
     description: cargo build --release succeeds on the tagged commit.
   ci-unit-tests-green:
     kind: deterministic
     source: ci
     workflow: .github/workflows/release-cli.yml
-    job: unit-tests
     description: cargo test --lib --workspace passes.
   ci-integration-tests-green:
     kind: deterministic
     source: ci
     workflow: .github/workflows/release-cli.yml
-    job: integration-tests
     description: cargo test --test '*' --workspace passes.
   ci-e2e-tests-green:
     kind: deterministic
     source: ci
     workflow: .github/workflows/release-cli.yml
-    job: e2e-tests
     description: cargo test -p calypso-cli --test '*' passes.
   cli-binary-built:
     kind: deterministic
     source: ci
     workflow: .github/workflows/release-cli.yml
-    job: publish
-    step: Build release binary
     description: cargo build --release produces target/release/calypso.
   github-release-created:
     kind: deterministic
     source: ci
     workflow: .github/workflows/release-cli.yml
-    job: publish
-    step: Create GitHub release
     description: gh release create succeeded for the tag.
   github-release-asset-attached:
     kind: deterministic
     description: target/release/calypso is attached as an asset on the GitHub release.
   docker-image-built:
     kind: deterministic
+    status: proposed
     source: ci
     workflow: .github/workflows/release-ghcr-images.yml
-    job: build-and-push
-    step: Build and push Docker image
     description: Docker image built successfully for the release tag.
   docker-image-pushed-to-ghcr:
     kind: deterministic
+    status: proposed
     source: ci
     workflow: .github/workflows/release-ghcr-images.yml
-    job: build-and-push
     description: Image is available at ghcr.io/<repo>:<semver>.
   ghcr-image-tag-matches-semver:
     kind: deterministic
     description: The GHCR image tag exactly matches the git semver tag.
   smoke-test-passed:
     kind: deterministic
+    status: proposed
     source: ci
     workflow: .github/workflows/release-smoke-test.yml
-    job: smoke-test
     description: Smoke test suite passed against the published container image. (TBD)
   github-release-marked-latest:
     kind: deterministic
@@ -308,10 +285,7 @@ github_actions:
     - workflow: .github/workflows/release-cli.yml
       trigger: "push: tags: v*"
       jobs:
-        - quality
-        - unit-tests
-        - integration-tests
-        - e2e-tests
+        - build
         - publish
   proposed:
     - workflow: .github/workflows/release-ghcr-images.yml
