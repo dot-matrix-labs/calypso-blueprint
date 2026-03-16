@@ -32,10 +32,9 @@ states:
       - main-commit-selected
       - ci-quality-gate-green
       - ci-unit-tests-green
-      - ci-api-tests-green
-      - ci-component-tests-green
+      - ci-integration-tests-green
       - ci-e2e-tests-green
-      - ci-pg-container-tests-green
+      - ci-coverage-green
     next:
       on_pass: tag-release
       on_fail: blocked
@@ -158,33 +157,23 @@ checks:
   ci-quality-gate-green:
     kind: deterministic
     source: ci
-    workflow: .github/workflows/quality-gate.yml
-    workflow_name: Quality Gate
+    workflow: .github/workflows/rust-quality.yml
   ci-unit-tests-green:
     kind: deterministic
     source: ci
-    workflow: .github/workflows/test-unit.yml
-    workflow_name: Unit Tests
-  ci-api-tests-green:
+    workflow: .github/workflows/rust-unit.yml
+  ci-integration-tests-green:
     kind: deterministic
     source: ci
-    workflow: .github/workflows/test-api.yml
-    workflow_name: API Integration Tests
-  ci-component-tests-green:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/test-component.yml
-    workflow_name: React Component Tests
+    workflow: .github/workflows/rust-integration.yml
   ci-e2e-tests-green:
     kind: deterministic
     source: ci
-    workflow: .github/workflows/test-e2e.yml
-    workflow_name: Full-Page User Story Tests
-  ci-pg-container-tests-green:
+    workflow: .github/workflows/rust-e2e.yml
+  ci-coverage-green:
     kind: deterministic
     source: ci
-    workflow: .github/workflows/test-pg-container.yml
-    workflow_name: PG Container Tests
+    workflow: .github/workflows/rust-coverage.yml
   release-tag-created:
     kind: deterministic
   release-tag-format-valid:
@@ -231,69 +220,52 @@ agent_prompts:
 
 github_actions:
   current_required:
-    - workflow: .github/workflows/quality-gate.yml
-      workflow_name: Quality Gate
+    - workflow: .github/workflows/rust-quality.yml
       used_for:
         - ci-quality-gate-green
-    - workflow: .github/workflows/test-unit.yml
-      workflow_name: Unit Tests
+    - workflow: .github/workflows/rust-unit.yml
       used_for:
         - ci-unit-tests-green
-    - workflow: .github/workflows/test-api.yml
-      workflow_name: API Integration Tests
+    - workflow: .github/workflows/rust-integration.yml
       used_for:
-        - ci-api-tests-green
-    - workflow: .github/workflows/test-component.yml
-      workflow_name: React Component Tests
-      used_for:
-        - ci-component-tests-green
-    - workflow: .github/workflows/test-e2e.yml
-      workflow_name: Full-Page User Story Tests
+        - ci-integration-tests-green
+    - workflow: .github/workflows/rust-e2e.yml
       used_for:
         - ci-e2e-tests-green
-    - workflow: .github/workflows/test-pg-container.yml
-      workflow_name: PG Container Tests
+    - workflow: .github/workflows/rust-coverage.yml
       used_for:
-        - ci-pg-container-tests-green
+        - ci-coverage-green
   proposed_required:
     - workflow: .github/workflows/test-schema-upgrade-compatibility.yml
-      workflow_name: Schema Upgrade Compatibility
       purpose: Validate new application code against both previous and new schema versions using plausible fixtures.
     - workflow: .github/workflows/release-cli.yml
-      workflow_name: Release CLI
       used_for:
         - github-release-asset-published
       purpose: Build the release executable and attach it to the GitHub release for the tagged main commit.
     - workflow: .github/workflows/release-ghcr-images.yml
-      workflow_name: Release GHCR Images
       used_for:
         - ghcr-images-published
       purpose: Build and publish release-tagged deployment images to GHCR.
     - workflow: .github/workflows/signal-k8s-images-ready.yml
-      workflow_name: Signal K8s Images Ready
       used_for:
         - kubernetes-image-ready-signal-sent
       purpose: Notify Kubernetes infrastructure that release images are ready for rollout.
     - workflow: .github/workflows/rollout-database.yml
-      workflow_name: Rollout Database
       used_for:
         - database-migrations-applied
         - running-system-healthy-after-migrations
       purpose: Apply production database migrations and verify post-migration health.
     - workflow: .github/workflows/rollout-frontend.yml
-      workflow_name: Rollout Frontend
       used_for:
         - frontend-rollout-complete
         - running-system-healthy-after-frontend
       purpose: Roll out frontend application workloads and verify running health.
     - workflow: .github/workflows/rollout-workers.yml
-      workflow_name: Rollout Workers
       used_for:
         - worker-rollout-complete
         - running-system-healthy-after-workers
       purpose: Roll out worker workloads and verify running health.
     - workflow: .github/workflows/rollout-static-web.yml
-      workflow_name: Rollout Static Web
       used_for:
         - static-web-rollout-complete
         - running-system-healthy-after-static-web

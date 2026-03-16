@@ -1,6 +1,9 @@
 version: 1
 name: calypso-orchestrator-startup
 initial_state: scan-work-queue
+schedule:
+  cron: "0 */5 * * * *"
+  description: Poll for pending work every 5 minutes.
 
 states:
   scan-work-queue:
