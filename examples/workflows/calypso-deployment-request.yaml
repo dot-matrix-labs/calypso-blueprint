@@ -173,25 +173,21 @@ agent_prompts:
 github_actions:
   proposed_required:
     - workflow: .github/workflows/rollout-database.yml
-      workflow_name: Rollout Database
       used_for:
         - database-migrations-applied
         - running-system-healthy-after-migrations
       purpose: Apply production database migrations and verify post-migration health.
     - workflow: .github/workflows/rollout-frontend.yml
-      workflow_name: Rollout Frontend
       used_for:
         - frontend-rollout-complete
         - running-system-healthy-after-frontend
       purpose: Roll out frontend application workloads and verify running health.
     - workflow: .github/workflows/rollout-workers.yml
-      workflow_name: Rollout Workers
       used_for:
         - worker-rollout-complete
         - running-system-healthy-after-workers
       purpose: Roll out worker workloads and verify running health.
     - workflow: .github/workflows/rollout-static-web.yml
-      workflow_name: Rollout Static Web
       used_for:
         - static-web-rollout-complete
         - running-system-healthy-after-static-web

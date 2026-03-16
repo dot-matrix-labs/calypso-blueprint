@@ -37,10 +37,9 @@ states:
     checks:
       - ci-quality-gate-green
       - ci-unit-tests-green
-      - ci-api-tests-green
-      - ci-component-tests-green
+      - ci-integration-tests-green
       - ci-e2e-tests-green
-      - ci-pg-container-tests-green
+      - ci-coverage-green
     next:
       on_pass: check-dependencies
       on_fail: blocked
@@ -169,33 +168,23 @@ checks:
   ci-quality-gate-green:
     kind: deterministic
     source: ci
-    workflow: .github/workflows/quality-gate.yml
-    workflow_name: Quality Gate
+    workflow: .github/workflows/rust-quality.yml
   ci-unit-tests-green:
     kind: deterministic
     source: ci
-    workflow: .github/workflows/test-unit.yml
-    workflow_name: Unit Tests
-  ci-api-tests-green:
+    workflow: .github/workflows/rust-unit.yml
+  ci-integration-tests-green:
     kind: deterministic
     source: ci
-    workflow: .github/workflows/test-api.yml
-    workflow_name: API Integration Tests
-  ci-component-tests-green:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/test-component.yml
-    workflow_name: React Component Tests
+    workflow: .github/workflows/rust-integration.yml
   ci-e2e-tests-green:
     kind: deterministic
     source: ci
-    workflow: .github/workflows/test-e2e.yml
-    workflow_name: Full-Page User Story Tests
-  ci-pg-container-tests-green:
+    workflow: .github/workflows/rust-e2e.yml
+  ci-coverage-green:
     kind: deterministic
     source: ci
-    workflow: .github/workflows/test-pg-container.yml
-    workflow_name: PG Container Tests
+    workflow: .github/workflows/rust-coverage.yml
   no-dependencies:
     kind: agent
     role: merge-queue
@@ -249,21 +238,13 @@ agent_prompts:
 
 github_actions:
   current_required:
-    - workflow: .github/workflows/quality-gate.yml
-      workflow_name: Quality Gate
+    - workflow: .github/workflows/rust-quality.yml
       used_for: [ci-quality-gate-green]
-    - workflow: .github/workflows/test-unit.yml
-      workflow_name: Unit Tests
+    - workflow: .github/workflows/rust-unit.yml
       used_for: [ci-unit-tests-green]
-    - workflow: .github/workflows/test-api.yml
-      workflow_name: API Integration Tests
-      used_for: [ci-api-tests-green]
-    - workflow: .github/workflows/test-component.yml
-      workflow_name: React Component Tests
-      used_for: [ci-component-tests-green]
-    - workflow: .github/workflows/test-e2e.yml
-      workflow_name: Full-Page User Story Tests
+    - workflow: .github/workflows/rust-integration.yml
+      used_for: [ci-integration-tests-green]
+    - workflow: .github/workflows/rust-e2e.yml
       used_for: [ci-e2e-tests-green]
-    - workflow: .github/workflows/test-pg-container.yml
-      workflow_name: PG Container Tests
-      used_for: [ci-pg-container-tests-green]
+    - workflow: .github/workflows/rust-coverage.yml
+      used_for: [ci-coverage-green]
