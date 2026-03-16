@@ -22,7 +22,8 @@
           {"context": "integration"},
           {"context": "e2e"},
           {"context": "coverage"},
-          {"context": "checklist"}
+          {"context": "checklist"},
+          {"context": "merge-queue"}
         ]
       }
     },
