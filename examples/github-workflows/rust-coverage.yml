@@ -1,0 +1,9 @@
+name: Rust coverage
+on:
+  push:
+  pull_request:
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "scaffold placeholder — replace with real CI implementation"
