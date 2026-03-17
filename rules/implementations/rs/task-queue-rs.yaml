@@ -1,0 +1,209 @@
+meta:
+  domain: IMPL-TQ-RS
+  title: Task Queue - Rust Implementation
+  implements: TASK-QUEUE
+  version: 1
+
+rules:
+  # ── Async Runtime & Polling ────────────────────────────────────────────────
+
+  - number: IMPL-TQ-RS-001
+    hash: 7ee624329725
+    name: tokio-postgres-async-poll
+    type: implementation
+    description: >
+      Worker polls its per-type view using tokio-postgres async queries. The
+      connection also drives an async LISTEN/NOTIFY stream on the channel
+      task_queue_<agent_type>. A tokio::select! branch wakes the poll loop on
+      either a notification or a poll-interval timeout, whichever comes first.
+      Explicit SQL strings only — no ORM, no query builder.
+    links:
+      - {target: 869d373d9461, rel: implements}  # TQ-D-005 listen-notify-wake
+      - {target: 8660c94a5a85, rel: implements}  # TQ-D-001 postgres-queue-table
+      - {target: b878cdfcea39, rel: implements}  # IMPL-WORKER-RS-002 tokio-task-loop
+    deprecated: false
+
+  # ── Bounded Concurrency ────────────────────────────────────────────────────
+
+  - number: IMPL-TQ-RS-002
+    hash: fc2ce2f78070
+    name: bounded-concurrency-semaphore
+    type: implementation
+    description: >
+      A Tokio Semaphore with MAX_CONCURRENT_TASKS permits (configurable via
+      environment, default 4) gates the claim loop. The loop acquires a permit
+      before polling; if all permits are held, the loop blocks until an
+      in-flight task completes. This prevents a single replica from claiming
+      more work than it can supervise. Compute-bound agent types (future
+      CPU/GPU inference) set this to 1.
+    links:
+      - {target: c838af843858, rel: implements}  # TQ-P-001 atomic-claim-exactly-one-winner
+      - {target: b878cdfcea39, rel: implements}  # IMPL-WORKER-RS-002 tokio-task-loop
+    deprecated: false
+
+  - number: IMPL-TQ-RS-003
+    hash: e3d7f2989fd1
+    name: joinset-task-reaping
+    type: implementation
+    description: >
+      Each claimed task is spawned into a tokio::task::JoinSet. The main
+      select! loop reaps completed tasks from the JoinSet, logging panics and
+      ensuring semaphore permits are released on both success and failure.
+      Panicked tasks release their permit via Drop; the underlying queue task
+      is recovered by stale claim expiry.
+    links:
+      - {target: 0a1dff1eb92b, rel: implements}  # TQ-D-003 stale-claim-recovery
+      - {target: b878cdfcea39, rel: implements}  # IMPL-WORKER-RS-002 tokio-task-loop
+    deprecated: false
+
+  # ── Subprocess Execution ───────────────────────────────────────────────────
+
+  - number: IMPL-TQ-RS-004
+    hash: 470feb8b598a
+    name: subprocess-array-spawn
+    type: implementation
+    description: >
+      Vendor CLI binaries (claude-code, codex, gemini-cli) are invoked via
+      tokio::process::Command using array-form arguments. Input via stdin,
+      output captured on stdout/stderr. No shell interpreter involved. While
+      a subprocess runs (seconds to minutes), the Tokio executor is free to
+      poll for new tasks, submit results from other completed tasks, and
+      respond to shutdown signals. This is the primary reason for async — a
+      single replica can babysit multiple long-running CLI processes
+      concurrently.
+    links:
+      - {target: 7d926de66aa0, rel: implements}  # IMPL-WORKER-RS-006 command-array-spawn
+      - {target: 6a55cc478eca, rel: implements}  # WORKER-D-004 vendor-binary-process-spawn
+    deprecated: false
+
+  # ── API Client ─────────────────────────────────────────────────────────────
+
+  - number: IMPL-TQ-RS-005
+    hash: fa2afaf6c599
+    name: reqwest-api-client
+    type: implementation
+    description: >
+      All task claims and result submissions are sent to the API gateway via
+      reqwest (async, connection-pooled). A single reqwest::Client is created
+      at startup and shared across all spawned task futures. Claims use the
+      worker service token; result submissions use the single-use delegated
+      token from the claim response. The client sets correlation-id,
+      worker-instance, and idempotency-key headers on every request.
+    links:
+      - {target: 5ba8a85a0819, rel: implements}  # IMPL-WORKER-RS-004 writes-through-reqwest-api
+      - {target: 04607753d09a, rel: implements}  # WORKER-P-002 writes-through-authenticated-api
+    deprecated: false
+
+  # ── Startup Verification ───────────────────────────────────────────────────
+
+  - number: IMPL-TQ-RS-006
+    hash: c19537090360
+    name: startup-role-verification
+    type: implementation
+    description: >
+      On startup, before entering the main loop, the worker attempts an INSERT
+      against the task_queue table. If the INSERT succeeds, the worker panics
+      immediately — the database role is misconfigured with write access. If
+      the INSERT returns a permission-denied error, startup continues. Any
+      other error is also a panic. This is a fail-closed safety check: a
+      worker with write access to the queue table must never run.
+    links:
+      - {target: bf1a6505c990, rel: implements}  # IMPL-WORKER-RS-003 select-only-db-role
+      - {target: 828eead860c0, rel: implements}  # WORKER-P-001 read-only-database-access
+    deprecated: false
+
+  - number: IMPL-TQ-RS-007
+    hash: a308d2105df5
+    name: select-only-poll-query
+    type: implementation
+    description: >
+      The worker crate contains only SELECT statements as SQL strings. No
+      INSERT, UPDATE, or DELETE SQL exists anywhere in the crate. All
+      mutations are performed via the reqwest API client. A CI lint step
+      greps for mutation keywords in the worker crate's .rs files and fails
+      if any are found.
+    links:
+      - {target: bf1a6505c990, rel: implements}  # IMPL-WORKER-RS-003 select-only-db-role
+      - {target: 45be317d2e76, rel: implements}  # IMPL-WORKER-RS-011 anti-direct-db-writes
+    deprecated: false
+
+  # ── Graceful Shutdown ──────────────────────────────────────────────────────
+
+  - number: IMPL-TQ-RS-008
+    hash: 9f59d621b537
+    name: graceful-shutdown-drain
+    type: implementation
+    description: >
+      On SIGTERM/SIGINT (via tokio::signal), the worker stops claiming new
+      tasks and waits for in-flight tasks in the JoinSet to complete within
+      a bounded grace period. Tasks that cannot complete in time have their
+      child processes killed (child.kill()). No partial results are submitted.
+      Uncompleted tasks are recovered via stale claim expiry. Database
+      connections and the HTTP client are closed before exit.
+    links:
+      - {target: 0a1dff1eb92b, rel: implements}  # TQ-D-003 stale-claim-recovery
+      - {target: b878cdfcea39, rel: implements}  # IMPL-WORKER-RS-002 tokio-task-loop
+    deprecated: false
+
+  # ── Crate Structure ────────────────────────────────────────────────────────
+
+  - number: IMPL-TQ-RS-009
+    hash: d2437d5007c1
+    name: explicit-sql-no-orm
+    type: implementation
+    description: >
+      All database queries are explicit SQL string constants. No ORM (diesel,
+      sea-orm), no query builder (sqlx macros in query-builder mode). The
+      worker crate depends on tokio-postgres for async queries. SQL is
+      readable, auditable, and greppable. Parameterized queries prevent SQL
+      injection. Minimal dependencies: tokio, tokio-postgres, reqwest, serde,
+      serde_json, uuid, sha2, tracing, tracing-subscriber.
+    links:
+      - {target: 8660c94a5a85, rel: implements}  # TQ-D-001 postgres-queue-table
+    deprecated: false
+
+  - number: IMPL-TQ-RS-010
+    hash: 1d2ab9eea175
+    name: worker-crate-no-db-write-dep
+    type: implementation
+    description: >
+      The crates/worker Cargo.toml must not depend on crates/db (the write
+      layer). If a developer adds that dependency, the Cargo workspace
+      dependency graph check in CI fails. The worker binary physically
+      cannot call database write functions because the code is not linked.
+      Compile-time enforcement via Cargo dependency graph.
+    links:
+      - {target: 45be317d2e76, rel: implements}  # IMPL-WORKER-RS-011 anti-direct-db-writes
+      - {target: 828eead860c0, rel: implements}  # WORKER-P-001 read-only-database-access
+    deprecated: false
+
+  # ── Antipatterns (Rust-Specific) ───────────────────────────────────────────
+
+  - number: IMPL-TQ-RS-011
+    hash: d3c3f329cfac
+    name: anti-sync-blocking-in-async
+    type: implementation
+    description: >
+      Do not use std::thread::sleep, synchronous I/O (std::fs, ureq,
+      postgres crate), or other blocking calls inside async task futures.
+      Blocking a Tokio worker thread stalls all tasks multiplexed on that
+      thread. Use tokio::time::sleep, tokio::fs, reqwest, and
+      tokio-postgres respectively. If a blocking operation is unavoidable,
+      wrap it in tokio::task::spawn_blocking.
+    links:
+      - {target: b878cdfcea39, rel: implements}  # IMPL-WORKER-RS-002 tokio-task-loop
+    deprecated: false
+
+  - number: IMPL-TQ-RS-012
+    hash: c7e7338e85eb
+    name: anti-unbounded-concurrency
+    type: implementation
+    description: >
+      Do not spawn unbounded task futures without a semaphore or concurrency
+      limit. A worker that claims and spawns tasks as fast as the database
+      returns them will exhaust memory, file descriptors, and vendor API rate
+      limits. The Semaphore with MAX_CONCURRENT_TASKS is mandatory. Removing
+      or bypassing it is a defect.
+    links:
+      - {target: fc2ce2f78070, rel: implements}  # IMPL-TQ-RS-002 bounded-concurrency-semaphore
+    deprecated: false

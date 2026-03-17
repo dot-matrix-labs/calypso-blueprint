@@ -1,0 +1,573 @@
+meta:
+  domain: TASK-QUEUE
+  title: Task Queue Blueprint
+  version: 1
+  requires:
+    - WORKER
+    - DATA
+    - AUTH
+  vision: |
+    A task queue is the contract between the platform and its workers. It defines what work exists,
+    who may claim it, how claims are arbitrated, and what happens when claims fail. If the queue is
+    poorly designed, every downstream guarantee — audit attribution, retry safety, dead-letter
+    visibility — collapses regardless of how well the workers behave.
+
+    The queue must enforce three invariants without relying on worker cooperation. First, exactly one
+    worker wins each claim — concurrent claim attempts must produce exactly one winner and N-1 losers,
+    arbitrated by the database, not by application-level locking. Second, no task is silently lost — a
+    claimed task whose worker dies must return to claimable status within a bounded timeout. Third,
+    payloads carry references, never business data — the queue is a routing surface, not a data store,
+    and any business content in a payload is a data leak waiting for a log aggregator to expose it.
+
+    PostgreSQL is the queue backend because it is already the system's transactional store. Adding a
+    separate message broker (Redis, RabbitMQ, SQS) introduces a second consistency domain, a second
+    failure mode, and a second credential surface for no benefit at the task volumes this system
+    targets. A single-table queue with advisory locks or atomic UPDATE ... RETURNING provides the
+    concurrency guarantees the workload requires. If throughput eventually demands a dedicated broker,
+    the queue table's schema and the worker's claim-execute-submit lifecycle remain unchanged — only
+    the transport layer swaps.
+
+    User stories that motivate this design:
+
+    PRIMARY — AI Agent CLI Orchestration: Workers spawn and babysit long-running AI CLI processes
+    (claude-code, codex, gemini-cli). Tasks like code review, code generation, and analysis run
+    concurrently within a single worker replica. A single replica must supervise multiple in-flight
+    CLI processes without blocking the claim loop.
+
+    PRIMARY — API-Mediated Task Execution: Workers respond to tasks by making authenticated HTTP
+    calls to external APIs (AI vendor APIs, internal microservices). The platform orchestrates
+    multi-step workflows where each step is an API call with structured input/output.
+
+    SECONDARY — Batch and Analytical Workloads: Analytical tasks (summarization, classification,
+    embedding generation) process batches of records by reference, flowing through the same audited,
+    access-controlled pipeline as interactive tasks.
+
+    FUTURE — Streaming and Incremental Results: Users watching long-running tasks see incremental
+    progress (streaming CLI output, partial results) without waiting for full completion. The async
+    foundation must not preclude multiplexing subprocess output with delivery to the API gateway.
+
+    FUTURE — CPU/GPU Inference: The task queue model supports a future where some agent types run
+    local inference (CPU or GPU) rather than calling external vendor APIs. The security model, queue
+    schema, audit trail, and API-mediated write path remain unchanged regardless of whether AI work
+    happens locally or remotely. Compute-bound workers would run fewer concurrent tasks (potentially
+    one) but use the identical claim-execute-submit lifecycle. GPU scheduling and resource limits are
+    handled at the Kubernetes level, not in the worker binary. This user story is explicitly distant
+    future — no design decisions should optimize for it today.
+
+rules:
+  # ── Threats ──
+
+  - number: TQ-T-001
+    hash: 0d888d484349
+    name: stale-claim-allows-duplicate-execution
+    type: threat
+    description: >
+      A worker crashes after claiming a task but before submitting a result. If the claim is not
+      recovered, the task is stuck forever. If recovery is too aggressive, a slow worker and the
+      recovery mechanism both execute the same task. Stale claim recovery must use a bounded timeout
+      and the delegated token's single-use semantics must prevent duplicate result submission.
+    links:
+      - {target: c838af843858, rel: depends_on}  # TQ-P-001 atomic-claim-exactly-one-winner
+      - {target: 0a1dff1eb92b, rel: depends_on}  # TQ-D-003 stale-claim-recovery
+    deprecated: false
+
+  - number: TQ-T-002
+    hash: 292704cdc7cb
+    name: payload-leaks-business-data
+    type: threat
+    description: >
+      Queue payloads containing business data (names, amounts, content) leak through log aggregators,
+      monitoring dashboards, error reporters, and dead-letter inspection tools. Payloads must contain
+      only opaque resource IDs and routing metadata. Workers fetch business data through authenticated
+      API read endpoints at execution time.
+    links:
+      - {target: dae3a050b125, rel: depends_on}  # TQ-P-002 opaque-reference-payloads
+      - {target: 95ded67ad0b9, rel: depends_on}  # TQ-X-002 business-data-in-payload
+    deprecated: false
+
+  - number: TQ-T-003
+    hash: 2f4b118a2686
+    name: unbounded-retry-amplifies-failure
+    type: threat
+    description: >
+      A task that fails on every attempt retries indefinitely, consuming worker capacity and
+      amplifying the original failure. Retries must be bounded with exponential backoff, and
+      exhausted tasks must transition to a dead-letter status visible to operators.
+    links:
+      - {target: 989f89ed43f6, rel: depends_on}  # TQ-P-004 bounded-retry-with-dead-letter
+      - {target: 2db711f071fb, rel: depends_on}  # TQ-X-003 retry-without-limit
+    deprecated: false
+
+  - number: TQ-T-004
+    hash: 194e91ebc876
+    name: notification-missed-causes-stuck-task
+    type: threat
+    description: >
+      A LISTEN/NOTIFY notification is missed (worker reconnecting, channel buffer full, network
+      partition) and the worker never polls for the task. Notifications must be treated as
+      optimization hints only. The polling loop with a bounded interval is the source of truth;
+      notifications reduce latency but their loss must not cause task starvation.
+    links:
+      - {target: d3356916c05d, rel: depends_on}  # TQ-P-005 notification-assists-polling-not-replaces
+      - {target: 0718a9a15e3f, rel: depends_on}  # TQ-X-004 notification-as-sole-trigger
+    deprecated: false
+
+  - number: TQ-T-005
+    hash: 2d7e6121eb16
+    name: priority-inversion-starves-tasks
+    type: threat
+    description: >
+      A continuous stream of high-priority tasks starves lower-priority tasks indefinitely.
+      Priority ordering should be combined with age-based escalation or bounded priority bands
+      to prevent indefinite starvation of any enqueued task. Until starvation is observed in
+      practice, FIFO within priority bands is sufficient — age-based escalation can be added
+      as a scheduled job without schema changes.
+    links:
+      - {target: 2e8c0bffa8d2, rel: depends_on}  # TQ-D-006 priority-ordered-fifo
+    deprecated: false
+
+  - number: TQ-T-006
+    hash: e60631246a79
+    name: duplicate-task-execution
+    type: threat
+    description: >
+      A retried API call, webhook redelivery, or user double-click creates a second task for the same
+      logical work unit. Both tasks are claimed and executed, producing duplicate side effects (duplicate
+      API calls, duplicate subprocess invocations, duplicate result submissions). Without idempotent
+      task creation, every retry-safe caller must implement its own deduplication.
+    links:
+      - {target: 97b19238b1d6, rel: depends_on}  # TQ-P-003 idempotent-task-creation
+    deprecated: false
+
+  # ── Principles ──
+
+  - number: TQ-P-001
+    hash: c838af843858
+    name: atomic-claim-exactly-one-winner
+    type: principle
+    description: >
+      Task claims are arbitrated by the database using an atomic UPDATE ... WHERE status = 'pending'
+      RETURNING. Concurrent claim attempts for the same task produce exactly one winner. The loser
+      receives zero rows and retries on the next poll. No application-level locking, no distributed
+      lock service, no optimistic-concurrency version checks. The database's row-level lock during
+      UPDATE is the sole arbitration mechanism.
+    links:
+      - {target: 0d888d484349, rel: mitigates}  # TQ-T-001 stale-claim-allows-duplicate-execution
+      - {target: ab32dbdcf326, rel: refines}     # WORKER-C-003 atomic-task-claim
+    deprecated: false
+
+  - number: TQ-P-002
+    hash: dae3a050b125
+    name: opaque-reference-payloads
+    type: principle
+    description: >
+      Queue payloads contain only opaque resource identifiers (UUIDs, entity IDs), routing metadata
+      (job type, correlation ID), and action descriptors. No personally identifiable information, no
+      business content, no credentials. Workers resolve references to business data by calling
+      authenticated API read endpoints at execution time. This ensures the queue table, its indexes,
+      its logs, and its dead-letter rows never contain data subject to privacy regulation.
+    links:
+      - {target: 292704cdc7cb, rel: mitigates}  # TQ-T-002 payload-leaks-business-data
+    deprecated: false
+
+  - number: TQ-P-003
+    hash: 97b19238b1d6
+    name: idempotent-task-creation
+    type: principle
+    description: >
+      Every task carries a caller-supplied idempotency key. Duplicate creation requests with the
+      same key return the existing task rather than creating a second one. This prevents duplicate
+      work from retried API calls, webhook redelivery, or user double-clicks. The idempotency key
+      has a UNIQUE constraint at the database level.
+    links:
+      - {target: e60631246a79, rel: mitigates}  # TQ-T-006 duplicate-task-execution
+    deprecated: false
+
+  - number: TQ-P-004
+    hash: 989f89ed43f6
+    name: bounded-retry-with-dead-letter
+    type: principle
+    description: >
+      Failed tasks are retried with exponential backoff up to a configurable maximum attempt count.
+      After exhausting retries, the task transitions to a terminal dead-letter status. Dead-lettered
+      tasks remain in the queue table for inspection and manual remediation. They are never silently
+      deleted. Business-rule violations (HTTP 422) are terminal on first attempt — retrying cannot
+      fix a policy rejection.
+    links:
+      - {target: 2f4b118a2686, rel: mitigates}  # TQ-T-003 unbounded-retry-amplifies-failure
+    deprecated: false
+
+  - number: TQ-P-005
+    hash: d3356916c05d
+    name: notification-assists-polling-not-replaces
+    type: principle
+    description: >
+      PostgreSQL LISTEN/NOTIFY reduces poll latency by waking workers when new tasks are inserted.
+      Notifications are best-effort delivery hints. The polling loop with a bounded interval is the
+      authoritative discovery mechanism. A worker that misses every notification must still discover
+      and claim tasks within one poll interval. The queue table is the source of truth; the
+      notification channel is an optimization.
+    links:
+      - {target: 194e91ebc876, rel: mitigates}  # TQ-T-004 notification-missed-causes-stuck-task
+    deprecated: false
+
+  # ── Design Patterns ──
+
+  - number: TQ-D-001
+    hash: 8660c94a5a85
+    name: postgres-queue-table
+    type: design_pattern
+    description: >
+      A single PostgreSQL table serves as the task queue. Columns include: id (UUID PK),
+      idempotency_key (UNIQUE), agent_type, job_type, status (CHECK constraint), payload (JSONB,
+      references only), attribution (created_by, correlation_id, claimed_by, claimed_at),
+      delegated_token, result (JSONB), error_message, retry state (attempt, max_attempts,
+      next_retry_at), claim_expires_at, timestamps (created_at, updated_at), and priority.
+    problem: |
+      Workers need a durable, concurrent-safe, transactionally consistent source of work items.
+      The system already uses PostgreSQL for business data.
+    solution: |
+      A single task_queue table in PostgreSQL. No separate message broker. The table's indexes,
+      constraints, and row-level security provide the concurrency, durability, and isolation
+      guarantees the workload requires. A partial index on (agent_type, status, priority, created_at)
+      WHERE status = 'pending' makes poll queries efficient. A partial index on (status,
+      claim_expires_at) WHERE status = 'claimed' supports stale claim recovery.
+    tradeoffs: |
+      PostgreSQL is not a purpose-built message broker. At very high task volumes (thousands per
+      second), a dedicated broker may be needed. At the volumes this system targets (tens to low
+      hundreds per minute), PostgreSQL is simpler, has fewer failure modes, and requires no
+      additional infrastructure. The schema is portable — swapping the transport layer later does
+      not change the worker lifecycle.
+    links:
+      - {target: c838af843858, rel: refines}     # TQ-P-001 atomic-claim-exactly-one-winner
+      - {target: fec546a4edeb, rel: refines}     # WORKER-D-001 task-queue-read-only-view
+    deprecated: false
+
+  - number: TQ-D-002
+    hash: 7801939f0c57
+    name: status-lifecycle-machine
+    type: design_pattern
+    description: >
+      Task status follows a strict state machine: pending → claimed → running → submitting →
+      completed | failed | dead. Transitions are enforced by the API gateway (the sole writer).
+      The CHECK constraint on the status column limits values to the defined set. Invalid
+      transitions (e.g., pending → completed, dead → pending) are rejected by the API.
+    problem: |
+      Without a defined status lifecycle, tasks can end up in inconsistent states that stall the
+      queue or produce duplicate work.
+    solution: |
+      A TEXT column with a CHECK constraint defines the allowed statuses. The API gateway enforces
+      valid transitions. Workers observe status through read-only views and cannot modify it
+      directly. The status machine is: pending (awaiting claim) → claimed (worker acquired) →
+      running (execution in progress) → submitting (result being sent) → completed (success) |
+      failed (terminal business error) | dead (retries exhausted). Stale claim recovery returns
+      claimed tasks to pending.
+    tradeoffs: |
+      The status machine is enforced in application code (API gateway), not in database triggers.
+      A database trigger could enforce valid transitions more strictly but adds procedural logic
+      to the database layer. Application enforcement is sufficient given that only the API gateway
+      writes to the table. No cancellation states (cancelling, cancelled) are included — task
+      cancellation is deferred until an operational need is observed. Adding it later requires a
+      new status value and transition rules but no schema migration.
+    links:
+      - {target: c838af843858, rel: refines}     # TQ-P-001 atomic-claim-exactly-one-winner
+      - {target: 989f89ed43f6, rel: refines}     # TQ-P-004 bounded-retry-with-dead-letter
+    deprecated: false
+
+  - number: TQ-D-003
+    hash: 0a1dff1eb92b
+    name: stale-claim-recovery
+    type: design_pattern
+    description: >
+      The API gateway runs a scheduled background job (tokio cron task or pg_cron) that scans for
+      tasks in claimed status whose claim_expires_at has passed. Tasks below max_attempts are reset to pending with exponential
+      backoff (next_retry_at = now + 2^attempt seconds). Tasks at or above max_attempts transition
+      to dead status. Each recovery is logged to the audit table.
+    problem: |
+      A worker that crashes after claiming a task leaves the task in claimed status indefinitely.
+      Without recovery, these tasks are permanently stuck.
+    solution: |
+      Each claim sets a claim_expires_at timestamp. A scheduled recovery query resets expired claims:
+      UPDATE task_queue SET status = CASE WHEN attempt >= max_attempts THEN 'dead' ELSE 'pending'
+      END ... WHERE status = 'claimed' AND claim_expires_at < now(). A partial index on (status,
+      claim_expires_at) WHERE status = 'claimed' keeps this query efficient.
+    tradeoffs: |
+      Recovery granularity is bounded by the scheduled interval (default 60s). A task stuck in
+      claimed status is not recovered until the next sweep after its expiry. This latency is
+      acceptable — recovery is a safety net, not a fast path.
+    links:
+      - {target: 0d888d484349, rel: mitigates}  # TQ-T-001 stale-claim-allows-duplicate-execution
+      - {target: 989f89ed43f6, rel: refines}     # TQ-P-004 bounded-retry-with-dead-letter
+      - {target: 56ad6f7154f6, rel: refines}     # WORKER-C-016 task-retry-after-crash
+    deprecated: false
+
+  - number: TQ-D-004
+    hash: e9256535c69a
+    name: per-type-filtered-views
+    type: design_pattern
+    description: >
+      Each agent type reads from a dedicated PostgreSQL view (task_queue_view_<type>) that filters
+      by agent_type and exposes only the columns the worker needs (id, job_type, status, payload,
+      correlation_id, priority, created_at, attempt, max_attempts). Sensitive columns (delegated_token,
+      created_by, result, error_message) are excluded from views. Workers receive delegated tokens
+      only through the claim API response.
+    problem: |
+      Workers must discover tasks for their type without seeing other types' tasks or sensitive
+      columns they should not access.
+    solution: |
+      Per-type views filter rows by agent_type and project only non-sensitive columns. Combined
+      with per-agent-type database roles (WORKER-D-007) and row-level security, a worker can only
+      see its own pending and claimed tasks and only the columns needed to decide whether to claim.
+    tradeoffs: |
+      Each new agent type requires a new view definition. This is intentional overhead — adding an
+      agent type is an architectural decision.
+    links:
+      - {target: dae3a050b125, rel: refines}     # TQ-P-002 opaque-reference-payloads
+      - {target: cebee7387f5b, rel: refines}     # WORKER-D-007 per-agent-type-database-role
+      - {target: fec546a4edeb, rel: refines}     # WORKER-D-001 task-queue-read-only-view
+    deprecated: false
+
+  - number: TQ-D-005
+    hash: 869d373d9461
+    name: listen-notify-wake
+    type: design_pattern
+    description: >
+      A PostgreSQL AFTER INSERT trigger calls pg_notify('task_queue_<agent_type>', task_id) on each
+      new task insertion. Workers LISTEN on their type-specific channel and wake immediately on
+      notification rather than waiting for the next poll interval. The poll loop remains the
+      authoritative discovery mechanism; notifications only reduce latency.
+    problem: |
+      Polling on a fixed interval introduces latency equal to half the interval on average. For
+      interactive tasks (user waiting for a code review), this latency is noticeable.
+    solution: |
+      A trigger-based pg_notify wakes listening workers immediately. Workers use a select/poll
+      pattern: wake on notification OR wake on poll interval timeout, whichever comes first.
+    tradeoffs: |
+      LISTEN/NOTIFY is best-effort within PostgreSQL — notifications can be lost during connection
+      interruptions. This is acceptable because the poll interval provides guaranteed discovery.
+    links:
+      - {target: d3356916c05d, rel: refines}     # TQ-P-005 notification-assists-polling-not-replaces
+    deprecated: false
+
+  - number: TQ-D-006
+    hash: 2e8c0bffa8d2
+    name: priority-ordered-fifo
+    type: design_pattern
+    description: >
+      Tasks are ordered by priority (ascending — lower number = higher priority) then by created_at
+      (ascending — older first within same priority). The poll query uses ORDER BY priority ASC,
+      created_at ASC LIMIT N. This provides priority scheduling with FIFO ordering within each
+      priority band, preventing starvation of same-priority tasks.
+    problem: |
+      Some tasks are more urgent than others, but strict priority ordering can starve low-priority
+      tasks indefinitely.
+    solution: |
+      Priority bands with FIFO within each band. The partial index on (agent_type, status, priority,
+      created_at) WHERE status = 'pending' makes this ordering efficient.
+    tradeoffs: |
+      No built-in age-based priority escalation. If starvation becomes a problem, a scheduled job
+      can increment priority for tasks older than a threshold. This is deferred until observed.
+    links:
+      - {target: 2d7e6121eb16, rel: mitigates}  # TQ-T-005 priority-inversion-starves-tasks
+    deprecated: false
+
+  # ── Architectures ──
+
+  - number: TQ-A-001
+    hash: 9a4beaec3954
+    name: single-table-postgres-queue
+    type: architecture
+    description: >
+      A single task_queue table in the application's PostgreSQL instance serves as the queue for
+      all agent types. Per-type views and row-level security isolate agent types from each other.
+      The API gateway is the sole writer. Workers poll views and claim via API. No external message
+      broker. Appropriate for task volumes up to low hundreds per minute. If throughput exceeds
+      PostgreSQL's capacity, the queue table schema and worker lifecycle remain unchanged — only the
+      transport layer (read path) would swap to a dedicated broker.
+    diagram: |
+      ┌──────────────────────────────────────────────────────────────────┐
+      │  PostgreSQL                                                      │
+      │                                                                  │
+      │  ┌────────────────────────────────────────────────────────────┐  │
+      │  │  task_queue (single table, all agent types)                │  │
+      │  │                                                            │  │
+      │  │  Indexes:                                                  │  │
+      │  │    idx_poll    (agent_type, status, priority, created_at)  │  │
+      │  │    idx_stale   (status, claim_expires_at)                  │  │
+      │  │    idx_idempotency (idempotency_key)                       │  │
+      │  │                                                            │  │
+      │  │  RLS policies: one per agent type                          │  │
+      │  └────────────────────────────────────────────────────────────┘  │
+      │                                                                  │
+      │  ┌───────────────────────┐  ┌───────────────────────┐          │
+      │  │ view: _coding         │  │ view: _analysis        │          │
+      │  │ (agent_coding role)   │  │ (agent_analysis role)  │          │
+      │  └───────────┬───────────┘  └───────────┬────────────┘          │
+      │              │ SELECT only               │ SELECT only           │
+      └──────────────┼──────────────────────────┼───────────────────────┘
+                     ▼                          ▼
+      ┌──────────────────────┐  ┌──────────────────────────┐
+      │  Worker: coding (×N) │  │  Worker: analysis (×M)   │
+      │  claims via API      │  │  claims via API          │
+      └──────────────────────┘  └──────────────────────────┘
+    when_appropriate: |
+      Single PostgreSQL instance, task volumes up to low hundreds per minute, all agent types
+      sharing the same database. This is the starting architecture for any Calypso deployment.
+    tradeoffs: |
+      PostgreSQL is not a purpose-built message broker. Poll queries add load proportional to the
+      number of worker replicas times the poll frequency. At high scale, a dedicated broker or
+      partitioned queue may be needed. The worker lifecycle and security model are transport-agnostic.
+    links:
+      - {target: 8660c94a5a85, rel: refines}     # TQ-D-001 postgres-queue-table
+      - {target: 293e98fe383a, rel: refines}     # WORKER-A-001 single-agent-single-replica
+      - {target: fee38de47d57, rel: refines}     # WORKER-A-002 multi-agent-concurrent-replicas
+    deprecated: false
+
+  # ── Checklist ──
+
+  - number: TQ-C-001
+    hash: 8beca431f24a
+    name: claim-atomicity-tested
+    type: checklist
+    description: >
+      Concurrent claim of the same task by two workers results in exactly one success and one 409.
+      Tested under load with multiple replicas.
+    links:
+      - {target: c838af843858, rel: verifies}    # TQ-P-001 atomic-claim-exactly-one-winner
+      - {target: ab32dbdcf326, rel: verifies}    # WORKER-C-003 atomic-task-claim
+    deprecated: false
+
+  - number: TQ-C-002
+    hash: cbde8bbe3fe7
+    name: stale-recovery-tested
+    type: checklist
+    description: >
+      Stale claim recovery tested: worker claims task, is killed, task re-enters pending status
+      after claim_expires_at, new worker claims and completes successfully.
+    links:
+      - {target: 0a1dff1eb92b, rel: verifies}   # TQ-D-003 stale-claim-recovery
+      - {target: 56ad6f7154f6, rel: verifies}   # WORKER-C-016 task-retry-after-crash
+    deprecated: false
+
+  - number: TQ-C-003
+    hash: 49b11cf06a35
+    name: dead-letter-threshold-alerted
+    type: checklist
+    description: >
+      Dead-letter queue depth monitored. Alert fires when task_queue_dead_total exceeds configured
+      threshold per agent_type and job_type.
+    links:
+      - {target: 989f89ed43f6, rel: verifies}   # TQ-P-004 bounded-retry-with-dead-letter
+    deprecated: false
+
+  - number: TQ-C-004
+    hash: 1e0b4ada6054
+    name: payload-contains-no-pii
+    type: checklist
+    description: >
+      Queue payload validation rejects task creation if payload JSONB contains keys from a
+      denylist (email, name, address, phone, ssn, content, body, message). Only opaque IDs and
+      routing metadata are permitted.
+    links:
+      - {target: dae3a050b125, rel: verifies}   # TQ-P-002 opaque-reference-payloads
+    deprecated: false
+
+  - number: TQ-C-005
+    hash: 27665f1d78de
+    name: idempotency-key-enforced
+    type: checklist
+    description: >
+      Duplicate task creation with the same idempotency_key returns the existing task (200) rather
+      than creating a second one. UNIQUE constraint violation handled gracefully.
+    links:
+      - {target: 97b19238b1d6, rel: verifies}   # TQ-P-003 idempotent-task-creation
+    deprecated: false
+
+  - number: TQ-C-006
+    hash: add350cf11b9
+    name: notification-channel-per-type
+    type: checklist
+    description: >
+      LISTEN/NOTIFY channels are per agent type (task_queue_coding, task_queue_analysis). A
+      notification on one channel does not wake workers of a different type. Trigger function
+      verified to use NEW.agent_type in the channel name.
+    links:
+      - {target: 869d373d9461, rel: verifies}   # TQ-D-005 listen-notify-wake
+    deprecated: false
+
+  - number: TQ-C-007
+    hash: 39230fd6f00e
+    name: priority-ordering-verified
+    type: checklist
+    description: >
+      Poll query returns tasks in priority ASC, created_at ASC order. Tested with mixed-priority
+      insertions to verify correct ordering.
+    links:
+      - {target: 2e8c0bffa8d2, rel: verifies}  # TQ-D-006 priority-ordered-fifo
+    deprecated: false
+
+  - number: TQ-C-008
+    hash: 9110f8b7a172
+    name: startup-role-verification-tested
+    type: checklist
+    description: >
+      Worker startup with a write-capable database role panics before entering the main loop.
+      Tested by provisioning a role with INSERT on task_queue and verifying the worker exits
+      with a non-zero status and a logged permission error.
+    links:
+      - {target: c19537090360, rel: verifies}   # IMPL-TQ-RS-006 startup-role-verification
+    deprecated: false
+
+  # ── Antipatterns ──
+
+  - number: TQ-X-001
+    hash: 4573785143b4
+    name: polling-without-backoff
+    type: antipattern
+    description: >
+      A worker that polls in a tight loop with no interval or backoff when the queue is empty
+      wastes database connections, CPU, and I/O. The poll loop must sleep for a configurable
+      interval (default: seconds, not milliseconds) when no tasks are found, and notifications
+      should reduce effective latency without tight polling.
+    links:
+      - {target: d3356916c05d, rel: contradicts}  # TQ-P-005 notification-assists-polling-not-replaces
+    deprecated: false
+
+  - number: TQ-X-002
+    hash: 95ded67ad0b9
+    name: business-data-in-payload
+    type: antipattern
+    description: >
+      Embedding user content, financial amounts, email addresses, or any business data in the
+      queue payload. The payload JSONB is visible in database logs, monitoring tools, error
+      reporters, and dead-letter inspection. Every field in the payload is a field that can leak
+      through infrastructure tooling that was never designed for PII handling.
+    links:
+      - {target: dae3a050b125, rel: contradicts}  # TQ-P-002 opaque-reference-payloads
+    deprecated: false
+
+  - number: TQ-X-003
+    hash: 2db711f071fb
+    name: retry-without-limit
+    type: antipattern
+    description: >
+      A task that retries indefinitely consumes worker capacity on every attempt and never
+      surfaces the underlying failure to an operator. Unbounded retry transforms a transient
+      failure into a permanent resource drain. Retries must be bounded with a maximum attempt
+      count and a dead-letter terminal state.
+    links:
+      - {target: 989f89ed43f6, rel: contradicts}  # TQ-P-004 bounded-retry-with-dead-letter
+    deprecated: false
+
+  - number: TQ-X-004
+    hash: 0718a9a15e3f
+    name: notification-as-sole-trigger
+    type: antipattern
+    description: >
+      Relying on LISTEN/NOTIFY as the sole mechanism for task discovery. Notifications are
+      best-effort — they are lost during connection interruptions, channel buffer overflows, and
+      worker restarts. A worker that only wakes on notification will miss tasks inserted while it
+      was disconnected. The polling loop is mandatory; notifications are supplementary.
+    links:
+      - {target: d3356916c05d, rel: contradicts}  # TQ-P-005 notification-assists-polling-not-replaces
+    deprecated: false
