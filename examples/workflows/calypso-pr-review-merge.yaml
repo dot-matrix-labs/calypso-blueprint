@@ -1,16 +1,31 @@
 version: 1
 name: calypso-pr-review-merge
-initial_state: check-feature-completeness
+initial_state: check-pr-structure
 
 # Review gates (in order):
-#   a) feature complete  — all issue checkboxes checked
-#   b) tests pass        — CI green on the PR branch
-#   c) dependencies ready — dependent PRs merged or ready
-#   d) mark mergeable    — merge agent submits approving review (mandatory)
-#   e) merge queue       — assign position among ready PRs
-#   f) execute merge     — merge at queue head with all gates still satisfied
+#   a) pr structure      — single issue ref, no conflicts, issue tasks complete
+#   b) feature complete  — all issue checkboxes checked, acceptance criteria met
+#   c) tests pass        — CI green on the PR branch
+#   d) dependencies ready — dependent PRs merged or ready
+#   e) mark mergeable    — merge agent submits approving review (mandatory)
+#   f) merge queue       — assign position among ready PRs
+#   g) execute merge     — merge at queue head with all gates still satisfied
 
 states:
+  check-pr-structure:
+    kind: github
+    description: >
+      Verify PR structural invariants before any agent work begins: exactly
+      one closing issue reference, no merge conflicts, and the linked issue
+      has no unchecked tasks.
+    checks:
+      - pr-single-issue-enforced
+      - pr-no-conflicts
+      - pr-issue-tasks-complete
+    next:
+      on_pass: check-feature-completeness
+      on_fail: blocked
+
   check-feature-completeness:
     kind: agent
     role: merge-queue
@@ -139,7 +154,8 @@ states:
       Resolve the blocking condition before the PR can proceed.
     next:
       on:
-        issue-cleared: check-feature-completeness
+        issue-cleared: check-pr-structure
+        skip-to-completeness: check-feature-completeness
         skip-to-ci: check-ci
         skip-to-dependencies: check-dependencies
         abort: aborted
@@ -148,6 +164,26 @@ states:
     kind: terminal
 
 checks:
+  pr-single-issue-enforced:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/pr-single-issue.yml
+    description: >
+      PR body contains exactly one closing issue reference (Closes/Fixes/Resolves #N)
+      and no bare #N references. Enforces the 1:1:1 invariant.
+  pr-no-conflicts:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/pr-conflicts.yml
+    description: >
+      PR branch has no merge conflicts with the base branch.
+  pr-issue-tasks-complete:
+    kind: deterministic
+    source: ci
+    workflow: .github/workflows/pr-issue-checklist.yml
+    description: >
+      All task items (- [ ]) in the linked issue body are checked. Confirms
+      acceptance criteria and test plan are complete before review begins.
   issue-all-phases-checked:
     kind: deterministic
     description: All phase checkboxes (documentation, stubs, tdd, implementation, saved) are checked on the issue.
@@ -238,6 +274,12 @@ agent_prompts:
 
 github_actions:
   current_required:
+    - workflow: .github/workflows/pr-single-issue.yml
+      used_for: [pr-single-issue-enforced]
+    - workflow: .github/workflows/pr-conflicts.yml
+      used_for: [pr-no-conflicts]
+    - workflow: .github/workflows/pr-issue-checklist.yml
+      used_for: [pr-issue-tasks-complete]
     - workflow: .github/workflows/rust-quality.yml
       used_for: [ci-quality-gate-green]
     - workflow: .github/workflows/rust-unit.yml
