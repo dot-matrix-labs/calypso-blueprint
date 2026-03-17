@@ -1,6 +1,6 @@
 corpus_version: 1
 generated: '2026-03-14T00:00:00Z'
-rule_count: 1025
+rule_count: 1027
 nodes:
   8a4c23247926: [ARCH-T-001, server-code-in-browser-bundle, threat, ARCH, blueprints/arch]
   13b949d1669d: [ARCH-T-002, browser-code-on-server, threat, ARCH, blueprints/arch]
@@ -398,6 +398,7 @@ nodes:
   2f4b118a2686: [TQ-T-003, unbounded-retry-amplifies-failure, threat, TASK-QUEUE, blueprints/task-queue]
   194e91ebc876: [TQ-T-004, notification-missed-causes-stuck-task, threat, TASK-QUEUE, blueprints/task-queue]
   2d7e6121eb16: [TQ-T-005, priority-inversion-starves-tasks, threat, TASK-QUEUE, blueprints/task-queue]
+  e60631246a79: [TQ-T-006, duplicate-task-execution, threat, TASK-QUEUE, blueprints/task-queue]
   c838af843858: [TQ-P-001, atomic-claim-exactly-one-winner, principle, TASK-QUEUE, blueprints/task-queue]
   dae3a050b125: [TQ-P-002, opaque-reference-payloads, principle, TASK-QUEUE, blueprints/task-queue]
   97b19238b1d6: [TQ-P-003, idempotent-task-creation, principle, TASK-QUEUE, blueprints/task-queue]
@@ -417,6 +418,7 @@ nodes:
   27665f1d78de: [TQ-C-005, idempotency-key-enforced, checklist, TASK-QUEUE, blueprints/task-queue]
   add350cf11b9: [TQ-C-006, notification-channel-per-type, checklist, TASK-QUEUE, blueprints/task-queue]
   39230fd6f00e: [TQ-C-007, priority-ordering-verified, checklist, TASK-QUEUE, blueprints/task-queue]
+  9110f8b7a172: [TQ-C-008, startup-role-verification-tested, checklist, TASK-QUEUE, blueprints/task-queue]
   4573785143b4: [TQ-X-001, polling-without-backoff, antipattern, TASK-QUEUE, blueprints/task-queue]
   95ded67ad0b9: [TQ-X-002, business-data-in-payload, antipattern, TASK-QUEUE, blueprints/task-queue]
   2db711f071fb: [TQ-X-003, retry-without-limit, antipattern, TASK-QUEUE, blueprints/task-queue]
@@ -1763,10 +1765,11 @@ edges:
 - [194e91ebc876, depends_on, d3356916c05d]
 - [194e91ebc876, depends_on, 0718a9a15e3f]
 - [2d7e6121eb16, depends_on, 2e8c0bffa8d2]
+- [e60631246a79, depends_on, 97b19238b1d6]
 - [c838af843858, mitigates, 0d888d484349]
 - [c838af843858, refines, ab32dbdcf326]
 - [dae3a050b125, mitigates, 292704cdc7cb]
-- [97b19238b1d6, mitigates, 292704cdc7cb]
+- [97b19238b1d6, mitigates, e60631246a79]
 - [989f89ed43f6, mitigates, 2f4b118a2686]
 - [d3356916c05d, mitigates, 194e91ebc876]
 - [8660c94a5a85, refines, c838af843858]
@@ -1793,6 +1796,7 @@ edges:
 - [27665f1d78de, verifies, 97b19238b1d6]
 - [add350cf11b9, verifies, 869d373d9461]
 - [39230fd6f00e, verifies, 2e8c0bffa8d2]
+- [9110f8b7a172, verifies, c19537090360]
 - [4573785143b4, contradicts, d3356916c05d]
 - [95ded67ad0b9, contradicts, dae3a050b125]
 - [2db711f071fb, contradicts, 989f89ed43f6]

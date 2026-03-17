@@ -118,10 +118,25 @@ rules:
     type: threat
     description: >
       A continuous stream of high-priority tasks starves lower-priority tasks indefinitely.
-      Priority ordering must be combined with age-based escalation or bounded priority bands
-      to prevent indefinite starvation of any enqueued task.
+      Priority ordering should be combined with age-based escalation or bounded priority bands
+      to prevent indefinite starvation of any enqueued task. Until starvation is observed in
+      practice, FIFO within priority bands is sufficient — age-based escalation can be added
+      as a scheduled job without schema changes.
     links:
       - {target: 2e8c0bffa8d2, rel: depends_on}  # TQ-D-006 priority-ordered-fifo
+    deprecated: false
+
+  - number: TQ-T-006
+    hash: e60631246a79
+    name: duplicate-task-execution
+    type: threat
+    description: >
+      A retried API call, webhook redelivery, or user double-click creates a second task for the same
+      logical work unit. Both tasks are claimed and executed, producing duplicate side effects (duplicate
+      API calls, duplicate subprocess invocations, duplicate result submissions). Without idempotent
+      task creation, every retry-safe caller must implement its own deduplication.
+    links:
+      - {target: 97b19238b1d6, rel: depends_on}  # TQ-P-003 idempotent-task-creation
     deprecated: false
 
   # ── Principles ──
@@ -165,7 +180,7 @@ rules:
       work from retried API calls, webhook redelivery, or user double-clicks. The idempotency key
       has a UNIQUE constraint at the database level.
     links:
-      - {target: 292704cdc7cb, rel: mitigates}  # TQ-T-002 (indirectly — fewer duplicate tasks = fewer payload exposures)
+      - {target: e60631246a79, rel: mitigates}  # TQ-T-006 duplicate-task-execution
     deprecated: false
 
   - number: TQ-P-004
@@ -251,7 +266,9 @@ rules:
       The status machine is enforced in application code (API gateway), not in database triggers.
       A database trigger could enforce valid transitions more strictly but adds procedural logic
       to the database layer. Application enforcement is sufficient given that only the API gateway
-      writes to the table.
+      writes to the table. No cancellation states (cancelling, cancelled) are included — task
+      cancellation is deferred until an operational need is observed. Adding it later requires a
+      new status value and transition rules but no schema migration.
     links:
       - {target: c838af843858, rel: refines}     # TQ-P-001 atomic-claim-exactly-one-winner
       - {target: 989f89ed43f6, rel: refines}     # TQ-P-004 bounded-retry-with-dead-letter
@@ -262,8 +279,8 @@ rules:
     name: stale-claim-recovery
     type: design_pattern
     description: >
-      A scheduled process (system timer or pg_cron) scans for tasks in claimed status whose
-      claim_expires_at has passed. Tasks below max_attempts are reset to pending with exponential
+      The API gateway runs a scheduled background job (tokio cron task or pg_cron) that scans for
+      tasks in claimed status whose claim_expires_at has passed. Tasks below max_attempts are reset to pending with exponential
       backoff (next_retry_at = now + 2^attempt seconds). Tasks at or above max_attempts transition
       to dead status. Each recovery is logged to the audit table.
     problem: |
@@ -487,6 +504,18 @@ rules:
       insertions to verify correct ordering.
     links:
       - {target: 2e8c0bffa8d2, rel: verifies}  # TQ-D-006 priority-ordered-fifo
+    deprecated: false
+
+  - number: TQ-C-008
+    hash: 9110f8b7a172
+    name: startup-role-verification-tested
+    type: checklist
+    description: >
+      Worker startup with a write-capable database role panics before entering the main loop.
+      Tested by provisioning a role with INSERT on task_queue and verifying the worker exits
+      with a non-zero status and a logged permission error.
+    links:
+      - {target: c19537090360, rel: verifies}   # IMPL-TQ-RS-006 startup-role-verification
     deprecated: false
 
   # ── Antipatterns ──
