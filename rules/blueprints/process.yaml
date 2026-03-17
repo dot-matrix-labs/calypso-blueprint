@@ -653,14 +653,17 @@ rules:
     description: >
       Apply a GitHub repository ruleset immediately after the first push.
       The ruleset targets ~DEFAULT_BRANCH, sets bypass_actors to [], and
-      requires nine named status checks before merge: build, lint, format,
-      unit, integration, e2e, coverage, checklist, and depends-on. A
-      pr-checklist.yml workflow enforces all PR task items are checked; a
-      pr-depends-on.yml workflow blocks merge until any declared `Depends-on:
-      #N` predecessor PR is merged. Because these checks only appear as known
-      check names after the first PR that triggers them, a dummy PR or
-      workflow_dispatch run must be used to pre-register each check name
-      immediately after setup.
+      requires twelve named status checks before merge: build, lint, format,
+      unit, integration, e2e, coverage, checklist, depends-on,
+      issue-checklist, conflicts, and single-issue. The pr-checklist.yml
+      workflow enforces all PR task items are checked; pr-depends-on.yml
+      blocks merge until any declared `Depends-on: #N` predecessor PR is
+      merged; pr-issue-checklist.yml blocks merge if the linked issue has
+      unchecked tasks; pr-conflicts.yml fails when the branch has merge
+      conflicts; pr-single-issue.yml enforces exactly one closing issue
+      reference. Because these checks only appear as known check names after
+      the first PR that triggers them, a dummy PR or workflow_dispatch run
+      must be used to pre-register each check name immediately after setup.
     problem: |
       Without enforced branch protection, any actor — including admins — can
       merge a PR with failing tests, incomplete checklist items, or no CI run
@@ -709,6 +712,97 @@ rules:
       - {target: 6fab3fb9c823, rel: refines}   # PROCESS-P-008
       - {target: 309a8b908fc1, rel: refines}   # PROCESS-D-006
       - {target: b4e71d903a28, rel: refines}   # PROCESS-D-011
+    deprecated: false
+
+  - number: PROCESS-D-013
+    hash: "e3a7f1c09b24"
+    name: pr-issue-completeness-gate
+    type: design_pattern
+    description: >
+      Block PR merge if the linked GitHub issue has any unchecked task items,
+      enforced by a GitHub Actions workflow that parses the issue body.
+    problem: |
+      A PR can be merged while its acceptance criteria or test plan items are
+      still unchecked on the linked issue. The issue-level checklist is the
+      contract between what was planned and what was delivered; merging before
+      it is complete silently ignores unfinished work and makes the issue
+      unreliable as a record of completion.
+    solution: |
+      Add `.github/workflows/pr-issue-checklist.yml` (see examples/). The
+      workflow parses all `Closes/Fixes/Resolves #N` references from the PR
+      body, fetches each linked issue via the GitHub REST API, and fails the
+      `issue-checklist` status check if any `- [ ]` items remain in the issue
+      body. Register `issue-checklist` as a required status check in the
+      branch protection ruleset so merge is physically blocked.
+    tradeoffs: |
+      Requires the PR body to use closing keywords at the start of a line
+      (`Closes #N`) for GitHub's auto-close to work and for the check to find
+      the issue. PRs that do not close an issue pass the check automatically.
+    links:
+      - {target: b4e71d903a28, rel: refines}   # PROCESS-D-011
+      - {target: 3d643a9a5413, rel: refines}
+    deprecated: false
+
+  - number: PROCESS-D-014
+    hash: "a2d8e5f3c107"
+    name: pr-conflict-visibility-gate
+    type: design_pattern
+    description: >
+      Surface merge conflicts as an explicit CI failure on the PR, with
+      actionable rebase instructions, rather than relying on GitHub's passive
+      merge-conflict banner which agents routinely overlook.
+    problem: |
+      GitHub marks conflicted PRs with a UI banner but does not fail any
+      required status check. Agents working headlessly or scanning CI output
+      do not see the banner and proceed as if the PR is ready to merge,
+      leading to repeated rebase loops that are only discovered at merge time.
+    solution: |
+      Add `.github/workflows/pr-conflicts.yml` (see examples/). The workflow
+      fetches the PR's `mergeable` field from the GitHub API on every push and
+      fails the `conflicts` status check with explicit `git rebase` fix
+      instructions when conflicts are detected. A 30-minute cron also scans
+      all open non-draft PRs so conflicts are surfaced even when main moves
+      after a PR was last pushed. Register `conflicts` as a required status
+      check in the branch protection ruleset.
+    tradeoffs: |
+      GitHub computes `mergeable` asynchronously; the workflow polls once
+      after a short delay. Conflicts introduced by main moving are only
+      detected on the next cron run (up to 30 minutes later), not instantly.
+    links:
+      - {target: b4e71d903a28, rel: refines}   # PROCESS-D-011
+      - {target: 8f6e7b3a1ff9, rel: mitigates}
+    deprecated: false
+
+  - number: PROCESS-D-015
+    hash: "c9b4f2e70a31"
+    name: pr-single-issue-invariant
+    type: design_pattern
+    description: >
+      Enforce the 1:1:1 invariant at the PR level: each PR must close exactly
+      one issue using a GitHub closing keyword, and must not reference any
+      other issues.
+    problem: |
+      Without machine enforcement, PRs accumulate scope and close multiple
+      issues, or reference issues without closing them, breaking the
+      one-issue:one-branch:one-PR invariant. This makes history hard to trace,
+      causes issues to auto-close unexpectedly, and makes dependency ordering
+      ambiguous.
+    solution: |
+      Add `.github/workflows/pr-single-issue.yml` (see examples/). The
+      workflow scans the PR body for `Closes/Fixes/Resolves #N` patterns and
+      fails the `single-issue` status check if: (a) no closing reference is
+      found, (b) more than one closing reference is found, or (c) any bare
+      `#N` reference that is not a closing keyword is found. Register
+      `single-issue` as a required status check.
+    tradeoffs: |
+      Closing keywords must appear at the start of a line (GitHub requirement
+      for auto-close). PRs that intentionally reference related issues without
+      closing them must move those references to issue comments or PR comments
+      instead of the PR description.
+    links:
+      - {target: b4e71d903a28, rel: refines}   # PROCESS-D-011
+      - {target: 4a9c2e7d1b83, rel: refines}   # PROCESS-D-010
+      - {target: f67b4697ac23, rel: refines}
     deprecated: false
 
   # ── Architectures ────────────────────────────────────────────────────────────
@@ -1311,6 +1405,46 @@ rules:
     links:
       - {target: 7d2a9f1e50c3, rel: verifies}
       - {target: b4e71d903a28, rel: verifies}
+    deprecated: false
+
+  - number: PROCESS-C-028
+    hash: "f4b1d9e20c73"
+    name: pr-issue-checklist-workflow-deployed
+    type: checklist
+    description: >
+      `.github/workflows/pr-issue-checklist.yml` is present in the repository,
+      runs on pull_request events, and the `issue-checklist` status check is
+      registered as a required check in the branch protection ruleset.
+    links:
+      - {target: e3a7f1c09b24, rel: verifies}   # PROCESS-D-013
+      - {target: b4e71d903a28, rel: verifies}   # PROCESS-D-011
+    deprecated: false
+
+  - number: PROCESS-C-029
+    hash: "b7e3a0f18d52"
+    name: pr-conflicts-workflow-deployed
+    type: checklist
+    description: >
+      `.github/workflows/pr-conflicts.yml` is present in the repository, runs
+      on pull_request events and on a 30-minute schedule, and the `conflicts`
+      status check is registered as a required check in the branch protection
+      ruleset.
+    links:
+      - {target: a2d8e5f3c107, rel: verifies}   # PROCESS-D-014
+      - {target: b4e71d903a28, rel: verifies}   # PROCESS-D-011
+    deprecated: false
+
+  - number: PROCESS-C-030
+    hash: "d5c2e9a14f86"
+    name: pr-single-issue-workflow-deployed
+    type: checklist
+    description: >
+      `.github/workflows/pr-single-issue.yml` is present in the repository,
+      runs on pull_request events, and the `single-issue` status check is
+      registered as a required check in the branch protection ruleset.
+    links:
+      - {target: c9b4f2e70a31, rel: verifies}   # PROCESS-D-015
+      - {target: b4e71d903a28, rel: verifies}   # PROCESS-D-011
     deprecated: false
 
 repo_standards:
