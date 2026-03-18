@@ -63,9 +63,9 @@ rules:
     name: dev-environment-docker-compose
     type: implementation
     description: >
-      Docker Compose starts PostgreSQL (distroless image) and Vault (dev mode).
-      An init.sql script creates the three databases and three roles on first
-      container start. bun run dev requires both services running.
+      Docker Compose starts PostgreSQL (distroless image). An init.sql script
+      creates the three databases and three roles on first container start.
+      Secrets passed as environment variables via Docker Compose.
     links:
       - {target: 6452802894f9, rel: implements}  # DATA-C-004 local-dev-containerized
     deprecated: false
@@ -359,8 +359,8 @@ rules:
     type: implementation
     description: >
       KMSClient interface with encrypt(plaintext, keyId), decrypt(ciphertext,
-      keyId), and rotateKey(keyId) methods. Abstracts over Vault, AWS KMS,
-      GCP KMS.
+      keyId), and rotateKey(keyId) methods. Reads encryption keys from
+      environment variables injected by scoped k8s Secrets.
     links:
       - {target: ed6163ae0eaf, rel: implements}  # DATA-P-007 keys-separate-from-data
       - {target: e1be2f2f1847, rel: implements}  # DATA-C-007 kms-integrated-no-config-keys
@@ -472,8 +472,9 @@ rules:
     name: kms-sdk-buy-when-needed
     type: implementation
     description: >
-      Use official thin KMS SDK client for the target provider (AWS, GCP,
-      Vault). Buy-when-needed decision.
+      KMS SDK not needed — k3s encrypts Secrets at rest via
+      EncryptionConfiguration; application reads secrets from environment
+      variables injected by k8s.
     links:
       - {target: ed6163ae0eaf, rel: implements}  # DATA-P-007 keys-separate-from-data
     deprecated: false
@@ -530,9 +531,9 @@ rules:
     name: antipattern-env-var-keys
     type: implementation
     description: >
-      Do not store encryption keys in environment variables. Keys in .env are
-      readable by any process on the host and often committed accidentally.
-      Use a KMS client.
+      Encryption keys must only exist inside the containers that need them,
+      injected via scoped k8s Secrets. The ENCRYPTION_MASTER_KEY is mounted
+      only on database pods — never on API or worker pods.
     links:
       - {target: ed6163ae0eaf, rel: implements}  # DATA-P-007 keys-separate-from-data
       - {target: 3f2840ae0508, rel: implements}  # DATA-X-006 keys-alongside-data

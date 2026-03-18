@@ -66,10 +66,10 @@ rules:
     name: production-env-gitignored
     type: implementation
     description: >
-      .env file contains production secrets and is .gitignored. Configuration
-      loaded via envy or dotenvy crate for structured deserialization into a
-      typed Config struct. Missing required config is a compile-time error
-      via serde's deny_unknown_fields.
+      All secrets stored as scoped Kubernetes Secrets, encrypted at rest by
+      KMS. No .env files. Configuration loaded via envy crate from environment
+      variables injected by k8s Secrets into pods. Missing required config is
+      a compile-time error via serde's deny_unknown_fields.
     links:
       - {target: 584e64645b8f, rel: implements}  # DEPLOY-P-009 secrets-are-runtime-configuration
       - {target: 3f7f5f443afe, rel: implements}  # DEPLOY-C-003 secrets-injected-securely
@@ -80,8 +80,8 @@ rules:
     name: test-env-committed
     type: implementation
     description: >
-      .env.test file contains test-only credentials and fixture paths and is
-      committed to version control.
+      Test credentials in CI passed as inline environment variables in workflow
+      definitions. No .env.test file.
     links:
       - {target: 584e64645b8f, rel: implements}  # DEPLOY-P-009 secrets-are-runtime-configuration
       - {target: 5286b4639f51, rel: implements}  # DEPLOY-C-004 test-env-committed

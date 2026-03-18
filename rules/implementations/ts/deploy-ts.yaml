@@ -65,8 +65,9 @@ rules:
     name: production-env-gitignored
     type: implementation
     description: >
-      .env file contains production secrets (API keys, DB passwords, signing
-      keys) and is .gitignored. Never committed to version control.
+      All secrets stored as scoped Kubernetes Secrets, encrypted at rest by
+      KMS. No .env files. Each workload (db, api, worker) mounts only its own
+      Secret object.
     links:
       - {target: "584e64645b8f", rel: implements}  # DEPLOY-P-009 secrets-are-runtime-configuration
       - {target: "3f7f5f443afe", rel: implements}  # DEPLOY-C-003 secrets-injected-securely
@@ -77,8 +78,8 @@ rules:
     name: test-env-committed
     type: implementation
     description: >
-      .env.test file contains test-only credentials and fixture paths and is
-      committed to version control.
+      Test credentials in CI passed as inline environment variables in workflow
+      definitions. No .env.test file.
     links:
       - {target: "584e64645b8f", rel: implements}  # DEPLOY-P-009 secrets-are-runtime-configuration
       - {target: "5286b4639f51", rel: implements}  # DEPLOY-C-004 test-env-committed
@@ -271,11 +272,12 @@ rules:
   # ---------------------------------------------------------------------------
   - number: IMPL-DEPLOY-021
     hash: "3ebf2cc8637b"
-    name: kubernetes-buy
+    name: k3s-self-hosted
     type: implementation
     description: >
-      Kubernetes adopted as managed service for universal container
-      orchestration required for enterprise deployments.
+      k3s adopted as lightweight, CNCF-certified Kubernetes distribution.
+      Single-binary orchestration with built-in containerd, CNI, and KMS
+      support. Self-hosted on single-node clusters.
     links:
       - {target: "e889c6c25ede", rel: implements}  # DEPLOY-A-002 kubernetes-enterprise-deployment
     deprecated: false

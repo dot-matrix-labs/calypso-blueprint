@@ -363,14 +363,19 @@ rules:
     description: >
       The container orchestration service must operate its own key management
       system (KMS), used to encrypt secrets at rest within the cluster. The KMS
-      is seeded with a root key during initial cluster bootstrapping. This
-      bootstrapping step is the one legitimate use of direct SSH access to the
-      orchestration host; all subsequent operations must use the orchestration
-      control API and no SSH access is required or permitted. The private
-      container image registry credential (organization key) is also provisioned
-      into the orchestration service at this initialization step so that
-      workload containers can pull images from the private registry without
-      embedding credentials in image definitions.
+      root key is derived from a mnemonic word list that the administrator holds
+      offline — one per environment (demo, stage, prod). This mnemonic is the
+      recovery material for the environment; it is never stored on the host.
+      During initial cluster bootstrapping (the one permitted SSH step), the
+      administrator derives the root key from the mnemonic and provisions it
+      into the k3s EncryptionConfiguration. All Kubernetes Secrets are encrypted
+      at rest using this key. All subsequent operations use the orchestration
+      control API — no SSH access is required or permitted. The private container
+      image registry credential (organization key) is also provisioned as a
+      Kubernetes Secret at this initialization step. The reference orchestration
+      service is k3s — a lightweight, CNCF-certified Kubernetes distribution
+      that ships as a single binary with built-in containerd, networking, and
+      storage.
     links:
       - {target: 584e64645b8f, rel: refines}
       - {target: bd28ad6f0308, rel: refines}
@@ -499,10 +504,13 @@ rules:
     name: secrets-are-runtime-configuration
     type: principle
     description: >
-      Environment variables containing secrets are injected at runtime from
-      files on the host that are not in version control. Test-only
-      environment variables may be committed. If a value would be dangerous
-      in a public repository, it does not go in version control.
+      Secrets are stored as Kubernetes Secrets, encrypted at rest by the cluster
+      KMS, and injected into containers as environment variables at pod startup.
+      Secrets are scoped per workload — each deployment mounts only the Secret
+      object it needs. Database containers receive encryption keys but not API
+      keys; API containers receive API keys and connection strings but not
+      encryption master keys. No .env files are used in any environment. Test
+      credentials in CI use inline environment variables in workflow definitions.
     links:
       - {target: cccd2dd3451e, rel: mitigates}
       - {target: 3f7f5f443afe, rel: refines}
@@ -714,7 +722,7 @@ rules:
     description: >
       A single immutable app container runs on the development host via
       Docker or Podman, serving both API routes and built static assets. Logs
-      go to stdout/stderr. Secrets are injected from a .env file at container
+      go to stdout/stderr. Secrets are injected from k8s Secrets at pod
       start. Appropriate for local dev and preview environments. Slightly
       slower iteration but guarantees production-identical packaging.
     diagram: |
@@ -733,8 +741,7 @@ rules:
       │  │  └─────────────────────────────────┘  │  │
       │  └───────────────────────────────────────┘  │
       │                                             │
-      │  .env        ← injected at container start  │
-      │  .env.test   ← test credentials (committed) │
+      │  Secrets ← k8s Secrets (env vars at pod start) │
       │  Container Logs ← stdout/stderr             │
       └─────────────────────────────────────────────┘
     when_appropriate: |
@@ -892,8 +899,8 @@ rules:
     name: secrets-injected-securely
     type: checklist
     description: >
-      Secrets injected into container securely at runtime, not baked into
-      the image.
+      Secrets injected via scoped k8s Secrets (not baked into image, no .env
+      files). Each workload mounts only its own Secret object.
     links:
       - {target: cccd2dd3451e, rel: verifies}
       - {target: 584e64645b8f, rel: verifies}
@@ -904,7 +911,9 @@ rules:
     name: test-env-committed
     type: checklist
     description: >
-      .env.test committed with test-only credentials (no production secrets).
+      No .env files used; all secrets managed via scoped k8s Secrets encrypted
+      at rest by KMS. Test credentials in CI passed as inline environment
+      variables.
     links:
       - {target: 584e64645b8f, rel: verifies}
     deprecated: false

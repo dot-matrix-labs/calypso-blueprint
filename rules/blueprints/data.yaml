@@ -754,8 +754,8 @@ rules:
       connection pools and roles (app_rw, analytics_w, audit_w). KMS runs as a
       separate process. Analytics events flow through an in-process pipeline
       that pseudonymizes before writing. Local development uses Kubernetes or
-      Docker Compose to deploy the application container alongside PostgreSQL
-      and Vault. Acceptable for pre-production; replaced by independent managed
+      Docker Compose to deploy the application container alongside PostgreSQL.
+      Acceptable for pre-production; replaced by independent managed
       databases when availability SLAs require it.
     diagram: |
       ┌──────────────────────────────────────────────────┐
@@ -768,7 +768,7 @@ rules:
       │         │                       │                │
       │  ┌──────▼──────┐   ┌────────────▼─────────────┐  │
       │  │  Event      │   │    KMS Client             │  │
-      │  │  Pipeline   │   │    (Vault / AWS / GCP)    │  │
+      │  │  Pipeline   │   │    (k8s Secrets / KMS)    │  │
       │  │  (pseudonym)│   └──────────────────────────┘  │
       │  └──────┬──────┘                                 │
       └─────────┼────────────────────────────────────────┘
@@ -785,15 +785,14 @@ rules:
                 ▼
       ┌──────────────────┐
       │  KMS             │
-      │  (Vault local /  │
-      │   cloud KMS)     │
+      │  (k3s KMS —      │
+      │   k8s Secrets)   │
       └──────────────────┘
     when_appropriate: |
       The baseline architecture from the first commit. A single PostgreSQL instance hosts three
       databases: calypso_app (transactional), calypso_analytics (analytics events), calypso_audit
       (audit log). The application server holds three separate connection pools with three separate
-      database roles. The KMS runs as a separate process (local Vault in development via Docker
-      Compose, cloud KMS in production). Analytics events flow from the application through an
+      database roles. Secrets are managed via k8s Secrets encrypted at rest by the KMS root key. Analytics events flow from the application through an
       in-process event pipeline that pseudonymizes before writing to calypso_analytics.
     tradeoffs: |
       All three databases share one PostgreSQL instance — an instance-level failure takes down all
@@ -923,7 +922,7 @@ rules:
     type: checklist
     description: >
       Local development environment deploys application containers, PostgreSQL,
-      and Vault uniformly via Kubernetes (kind) or Docker Compose. Application
+      uniformly via Kubernetes (kind) or Docker Compose. Application
       does not run directly on the host.
     links:
       - {target: e58dde384025, rel: verifies}
