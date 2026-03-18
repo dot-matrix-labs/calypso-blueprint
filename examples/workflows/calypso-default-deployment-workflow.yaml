@@ -2,6 +2,11 @@ version: 1
 name: calypso-default-deployment-workflow
 initial_state: release-candidate
 
+# The full release-to-production lifecycle.
+# Artifact pipeline → stage auto-deploy → soak → human prod approval → prod rollout.
+# Demo is a separate flow (see calypso-demo-rollout.yaml) because demo deploys
+# from development branches, not release candidates.
+
 release_requirements:
   source_branch: main
   tag_required: true
@@ -17,7 +22,31 @@ artifact_requirements:
   github_release_required: true
   github_release_asset_required: true
   ghcr_images_required: true
-  kubernetes-image-ready-signal_required: true
+  image_signature_required: true
+
+environments:
+  demo:
+    trigger: development-branch-push
+    rollout: automated-ci
+    human_gate: false
+    description: >
+      Verifies current development work runs end-to-end. Deployed
+      automatically on any development branch push. May be unstable.
+  stage:
+    trigger: release-candidate-tag-push
+    rollout: automated-ci
+    human_gate: false
+    description: >
+      Validates the upcoming production release under realistic conditions.
+      Deployed automatically when a release candidate tag is pushed to main.
+      Soak period before production promotion.
+  production:
+    trigger: human-operator-api-patch
+    rollout: human-triggered
+    human_gate: true
+    description: >
+      Stable operating environment. Deployed only when a human operator
+      issues an authenticated control API patch. CI may never target production.
 
 rollout_order:
   - database-migrations
@@ -25,7 +54,26 @@ rollout_order:
   - workers
   - static-web
 
+health_check_types:
+  liveness:
+    description: Is the process alive? Binary signal. Does not check dependencies.
+    consumer: orchestrator-restart
+    failure_action: restart-container
+  readiness:
+    description: Can the process accept traffic? Startup complete, ready to serve.
+    consumer: orchestrator-load-balancer
+    failure_action: remove-from-traffic-rotation
+  deep_health:
+    description: Are all transitive dependencies healthy? DB, queues, external APIs.
+    consumer: rollout-health-gate
+    failure_action: eager-rollback
+  smoke:
+    description: Does a representative user flow succeed end-to-end?
+    consumer: rollout-verification
+    failure_action: eager-rollback
+
 states:
+  # ── Phase 1: Release qualification ──────────────────────────────────────
   release-candidate:
     kind: deterministic
     checks:
@@ -44,7 +92,8 @@ states:
     role: release-manager
     cost: cheap
     prompt: |
-      Tag the main commit with semver + 6-digit PR hash suffix (e.g. v1.2.3+abc123). Verify commit is on main and all required CI passed on that exact commit.
+      Tag the main commit with semver + 6-digit PR hash suffix (e.g. v1.2.3+abc123).
+      Verify commit is on main and all required CI passed on that exact commit.
     completion:
       all_of:
         - release-tag-created
@@ -55,84 +104,230 @@ states:
       on_success: publish-release
       on_failure: blocked
 
+  # ── Phase 2: Artifact publishing ────────────────────────────────────────
   publish-release:
     kind: deterministic
     checks:
       - github-release-published
       - github-release-asset-published
       - ghcr-images-published
-      - kubernetes-image-ready-signal-sent
+      - ghcr-images-signed
     next:
-      on_pass: wait-for-rollout-approval
+      on_pass: stage-auto-rollout
       on_fail: blocked
 
-  wait-for-rollout-approval:
+  # ── Phase 3: Stage auto-deployment ──────────────────────────────────────
+  stage-auto-rollout:
+    kind: deterministic
+    description: >
+      CI workflow automatically deploys the release candidate to stage.
+      No human gate. This is triggered by the release publication event.
+    checks:
+      - stage-cluster-reachable
+      - stage-cluster-healthy-for-upgrade
+    next:
+      on_pass: stage-dr-snapshot
+      on_fail: blocked
+
+  stage-dr-snapshot:
+    kind: deterministic
+    description: >
+      Take a labeled database snapshot of the stage environment before
+      applying migrations. Belt and suspenders with managed service backups.
+    checks:
+      - stage-dr-snapshot-taken
+      - stage-dr-snapshot-accessible
+    next:
+      on_pass: stage-database-migrations
+      on_fail: blocked
+
+  stage-database-migrations:
+    kind: agent
+    role: deploy-orchestrator
+    cost: default
+    prompt: |
+      Apply migrations to stage. Verify system health. Confirm new app
+      compatible with both old and new schema.
+    completion:
+      all_of:
+        - stage-migrations-applied
+        - stage-healthy-after-migrations
+    next:
+      on_success: stage-workload-rollout
+      on_failure: stage-eager-rollback
+
+  stage-workload-rollout:
+    kind: agent
+    role: deploy-orchestrator
+    cost: default
+    prompt: |
+      Roll out frontend, then workers, then static-web to stage. Verify
+      deep health and smoke tests after each phase. Stop on any failure.
+    completion:
+      all_of:
+        - stage-frontend-rollout-complete
+        - stage-healthy-after-frontend
+        - stage-worker-rollout-complete
+        - stage-healthy-after-workers
+        - stage-static-web-rollout-complete
+        - stage-healthy-after-static-web
+        - stage-smoke-tests-passed
+    next:
+      on_success: stage-record-deployment
+      on_failure: stage-eager-rollback
+
+  stage-eager-rollback:
+    kind: deterministic
+    description: >
+      Automatically restore previous workload revisions on stage.
+      Rollback happens immediately — before any human is notified.
+    checks:
+      - stage-previous-revision-restored
+      - stage-healthy-after-rollback
+    next:
+      on_pass: stage-record-deployment
+      on_fail: blocked
+
+  stage-record-deployment:
+    kind: deterministic
+    description: >
+      Write structured audit record for the stage deployment event
+      (success or rollback) to deployments.jsonl.
+    checks:
+      - stage-deployment-audit-written
+    next:
+      on_pass: wait-for-prod-approval
+      on_fail: blocked
+
+  # ── Phase 4: Production human gate ──────────────────────────────────────
+  wait-for-prod-approval:
     kind: human
     role: operator
     prompt: |
-      Confirm rollout may begin for the prepared release artifacts.
+      Stage rollout is complete. Review stage health and soak metrics.
+      When ready, issue an authenticated control API patch to begin
+      production rollout. Specify: deployment window confirmation and
+      on-call coverage.
     completion:
       all_of:
-        - rollout-approved
+        - prod-rollout-approved
+        - prod-deployment-window-confirmed
     next:
-      on_success: database-migrations
+      on_success: prod-preflight
 
-  database-migrations:
+  # ── Phase 5: Production rollout ─────────────────────────────────────────
+  prod-preflight:
+    kind: deterministic
+    description: >
+      Verify production cluster is reachable and healthy. Verify image
+      signature is valid for the release being deployed.
+    checks:
+      - prod-cluster-reachable
+      - prod-cluster-healthy-for-upgrade
+      - prod-image-signature-verified
+    next:
+      on_pass: prod-dr-snapshot
+      on_fail: blocked
+
+  prod-dr-snapshot:
+    kind: deterministic
+    description: >
+      Take a labeled database snapshot of production before applying
+      migrations. Independent of managed service continuous backup.
+      Labeled with release tag and "production".
+    checks:
+      - prod-dr-snapshot-taken
+      - prod-dr-snapshot-accessible
+    next:
+      on_pass: prod-database-migrations
+      on_fail: blocked
+
+  prod-database-migrations:
     kind: agent
     role: deploy-orchestrator
     cost: default
     prompt: |
-      Apply migrations. Verify system health. Confirm new app compatible with both old and new schema.
+      Apply migrations to production. Verify system health. Confirm
+      new app compatible with both old and new schema.
     completion:
       all_of:
-        - database-migrations-applied
-        - running-system-healthy-after-migrations
+        - prod-migrations-applied
+        - prod-healthy-after-migrations
     next:
-      on_success: frontend-rollout
-      on_failure: blocked
+      on_success: prod-frontend-rollout
+      on_failure: prod-eager-rollback
 
-  frontend-rollout:
+  prod-frontend-rollout:
     kind: agent
     role: deploy-orchestrator
     cost: default
     prompt: |
-      Roll out frontend. Verify system healthy before proceeding.
+      Roll out frontend to production. Verify deep health and readiness
+      before proceeding.
     completion:
       all_of:
-        - frontend-rollout-complete
-        - running-system-healthy-after-frontend
+        - prod-frontend-rollout-complete
+        - prod-healthy-after-frontend
     next:
-      on_success: worker-rollout
-      on_failure: blocked
+      on_success: prod-worker-rollout
+      on_failure: prod-eager-rollback
 
-  worker-rollout:
+  prod-worker-rollout:
     kind: agent
     role: deploy-orchestrator
     cost: default
     prompt: |
-      Roll out workers. Verify system healthy before proceeding.
+      Roll out workers to production. Verify deep health before proceeding.
     completion:
       all_of:
-        - worker-rollout-complete
-        - running-system-healthy-after-workers
+        - prod-worker-rollout-complete
+        - prod-healthy-after-workers
     next:
-      on_success: static-web-rollout
-      on_failure: blocked
+      on_success: prod-static-web-rollout
+      on_failure: prod-eager-rollback
 
-  static-web-rollout:
+  prod-static-web-rollout:
     kind: agent
     role: deploy-orchestrator
     cost: default
     prompt: |
-      Roll out static web (final phase). Verify end-to-end health.
+      Roll out static web to production (final phase). Verify end-to-end
+      health and run smoke tests.
     completion:
       all_of:
-        - static-web-rollout-complete
-        - running-system-healthy-after-static-web
+        - prod-static-web-rollout-complete
+        - prod-healthy-after-static-web
+        - prod-smoke-tests-passed
     next:
-      on_success: done
-      on_failure: blocked
+      on_success: prod-record-deployment
+      on_failure: prod-eager-rollback
 
+  prod-eager-rollback:
+    kind: deterministic
+    description: >
+      Automatically restore previous workload revisions on production.
+      Rollback happens immediately — before any human is notified.
+      After health is restored, enters blocked state for investigation.
+    checks:
+      - prod-previous-revision-restored
+      - prod-healthy-after-rollback
+    next:
+      on_pass: prod-record-deployment
+      on_fail: critical-blocked
+
+  prod-record-deployment:
+    kind: deterministic
+    description: >
+      Write structured audit record for the production deployment event
+      (success or rollback) to deployments.jsonl and deployment_audit table
+      (if database exists).
+    checks:
+      - prod-deployment-audit-written
+    next:
+      on_pass: done
+      on_fail: blocked
+
+  # ── Terminal states ─────────────────────────────────────────────────────
   done:
     kind: terminal
 
@@ -140,17 +335,34 @@ states:
     kind: human
     role: operator-or-orchestrator
     prompt: |
-      Resolve the blocking release issue or abort.
+      A non-critical phase failed. Investigate root cause. The system
+      has been eagerly rolled back if applicable.
     next:
       on:
         issue-cleared: release-candidate
-        resume-rollout: database-migrations
+        resume-stage: stage-auto-rollout
+        resume-prod: wait-for-prod-approval
+        abort: aborted
+
+  critical-blocked:
+    kind: human
+    role: operator
+    prompt: |
+      CRITICAL: Eager rollback failed — the previous revision is also
+      unhealthy. Production may be degraded. Immediate human intervention
+      required. Consider restoring from DR snapshot.
+    next:
+      on:
+        issue-cleared: prod-preflight
+        restore-from-snapshot: prod-dr-snapshot
         abort: aborted
 
   aborted:
     kind: terminal
 
+# ── Checks ────────────────────────────────────────────────────────────────
 checks:
+  # Release qualification
   main-commit-selected:
     kind: deterministic
     description: Release candidate commit exists on main.
@@ -182,6 +394,8 @@ checks:
     kind: deterministic
   all-required-ci-green-on-tagged-commit:
     kind: deterministic
+
+  # Artifact publishing
   github-release-published:
     kind: deterministic
   github-release-asset-published:
@@ -189,34 +403,118 @@ checks:
     description: Release executable is published to GitHub.
   ghcr-images-published:
     kind: deterministic
-    description: New release images are built and pushed to GHCR.
-  kubernetes-image-ready-signal-sent:
+    description: Release-tagged container images exist in GHCR.
+  ghcr-images-signed:
     kind: deterministic
-    description: Kubernetes deployment infrastructure is notified that the release images are ready.
-  rollout-approved:
+    description: Container images are cryptographically signed at build time.
+
+  # Stage environment
+  stage-cluster-reachable:
+    kind: deterministic
+    description: Stage cluster API is reachable.
+  stage-cluster-healthy-for-upgrade:
+    kind: deterministic
+    description: Stage cluster nodes healthy, workloads stable.
+  stage-dr-snapshot-taken:
+    kind: deterministic
+    description: Database snapshot taken and labeled with release tag + "stage".
+  stage-dr-snapshot-accessible:
+    kind: deterministic
+    description: Snapshot is verified accessible and restorable.
+  stage-migrations-applied:
+    kind: deterministic
+  stage-healthy-after-migrations:
+    kind: deterministic
+    description: Deep health check passes after stage migrations.
+  stage-frontend-rollout-complete:
+    kind: deterministic
+  stage-healthy-after-frontend:
+    kind: deterministic
+  stage-worker-rollout-complete:
+    kind: deterministic
+  stage-healthy-after-workers:
+    kind: deterministic
+  stage-static-web-rollout-complete:
+    kind: deterministic
+  stage-healthy-after-static-web:
+    kind: deterministic
+  stage-smoke-tests-passed:
+    kind: deterministic
+    description: Smoke test suite passes end-to-end on stage.
+  stage-previous-revision-restored:
+    kind: deterministic
+    description: Previous workload revision restored on stage after rollback.
+  stage-healthy-after-rollback:
+    kind: deterministic
+    description: Deep health passes after stage rollback.
+  stage-deployment-audit-written:
+    kind: deterministic
+    description: Structured deployment record written to deployments.jsonl.
+
+  # Production environment
+  prod-rollout-approved:
     kind: human
-  database-migrations-applied:
+    description: Human operator has approved production rollout.
+  prod-deployment-window-confirmed:
+    kind: human
+    description: Operator confirms deployment window and on-call coverage.
+  prod-cluster-reachable:
     kind: deterministic
-  running-system-healthy-after-migrations:
+    description: Production cluster API is reachable.
+  prod-cluster-healthy-for-upgrade:
     kind: deterministic
-  frontend-rollout-complete:
+    description: Production cluster nodes healthy, workloads stable.
+  prod-image-signature-verified:
     kind: deterministic
-  running-system-healthy-after-frontend:
+    description: Container image signature verified against project signing key.
+  prod-dr-snapshot-taken:
     kind: deterministic
-  worker-rollout-complete:
+    description: Database snapshot taken and labeled with release tag + "production".
+  prod-dr-snapshot-accessible:
     kind: deterministic
-  running-system-healthy-after-workers:
+    description: Snapshot is verified accessible and restorable.
+  prod-migrations-applied:
     kind: deterministic
-  static-web-rollout-complete:
+  prod-healthy-after-migrations:
     kind: deterministic
-  running-system-healthy-after-static-web:
+    description: Deep health check passes after production migrations.
+  prod-frontend-rollout-complete:
     kind: deterministic
+  prod-healthy-after-frontend:
+    kind: deterministic
+    description: Deep health + readiness pass after frontend rollout.
+  prod-worker-rollout-complete:
+    kind: deterministic
+  prod-healthy-after-workers:
+    kind: deterministic
+  prod-static-web-rollout-complete:
+    kind: deterministic
+  prod-healthy-after-static-web:
+    kind: deterministic
+  prod-smoke-tests-passed:
+    kind: deterministic
+    description: Smoke test suite passes end-to-end on production.
+  prod-previous-revision-restored:
+    kind: deterministic
+    description: Previous workload revision restored on production after rollback.
+  prod-healthy-after-rollback:
+    kind: deterministic
+    description: Deep health passes after production rollback.
+  prod-deployment-audit-written:
+    kind: deterministic
+    description: Structured deployment record written to deployments.jsonl and deployment_audit table.
 
 agent_prompts:
   release-manager: |
-    Tag main commit with semver + 6-digit PR hash. Do not proceed unless all required CI passed on that exact commit.
+    Tag main commit with semver + 6-digit PR hash. Do not proceed unless
+    all required CI passed on that exact commit.
   deploy-orchestrator: |
-    Execute rollout phases in order. Verify health after each. Stop immediately on health check failure.
+    Execute rollout phases in order: migrations → frontend → workers →
+    static-web. After each phase, verify all four health check types:
+    liveness (process alive), readiness (accepting traffic), deep health
+    (all dependencies connected), and smoke (representative user flow
+    succeeds). Stop immediately on any health check failure — the
+    orchestration service will eagerly roll back automatically.
 
 github_actions:
   current_required:
@@ -237,36 +535,55 @@ github_actions:
         - ci-coverage-green
   proposed_required:
     - workflow: .github/workflows/test-schema-upgrade-compatibility.yml
-      purpose: Validate new application code against both previous and new schema versions using plausible fixtures.
+      purpose: >
+        Validate new application code against both previous and new schema
+        versions using plausible fixtures.
     - workflow: .github/workflows/release-cli.yml
       used_for:
         - github-release-asset-published
-      purpose: Build the release executable and attach it to the GitHub release for the tagged main commit.
+      purpose: >
+        Build the release executable and attach it to the GitHub release
+        for the tagged main commit.
     - workflow: .github/workflows/release-ghcr-images.yml
       used_for:
         - ghcr-images-published
-      purpose: Build and publish release-tagged deployment images to GHCR.
-    - workflow: .github/workflows/signal-k8s-images-ready.yml
+        - ghcr-images-signed
+      purpose: >
+        Build, sign, and push release-tagged deployment images to GHCR.
+    - workflow: .github/workflows/deploy-stage.yml
       used_for:
-        - kubernetes-image-ready-signal-sent
-      purpose: Notify Kubernetes infrastructure that release images are ready for rollout.
-    - workflow: .github/workflows/rollout-database.yml
+        - stage-migrations-applied
+        - stage-healthy-after-migrations
+        - stage-frontend-rollout-complete
+        - stage-healthy-after-frontend
+        - stage-worker-rollout-complete
+        - stage-healthy-after-workers
+        - stage-static-web-rollout-complete
+        - stage-healthy-after-static-web
+        - stage-smoke-tests-passed
+      purpose: >
+        Automated rollout to stage on release publication. Triggered by
+        GitHub release event. Takes DR snapshot, applies migrations, rolls
+        out all workload phases with health verification.
+    - workflow: .github/workflows/deploy-demo.yml
+      used_for: []
+      purpose: >
+        Automated rollout to demo on development branch push. Builds
+        branch-tagged image, deploys to demo namespace. See
+        calypso-demo-rollout.yaml.
+    - workflow: .github/workflows/rollout-production.yml
       used_for:
-        - database-migrations-applied
-        - running-system-healthy-after-migrations
-      purpose: Apply production database migrations and verify post-migration health.
-    - workflow: .github/workflows/rollout-frontend.yml
-      used_for:
-        - frontend-rollout-complete
-        - running-system-healthy-after-frontend
-      purpose: Roll out frontend application workloads and verify running health.
-    - workflow: .github/workflows/rollout-workers.yml
-      used_for:
-        - worker-rollout-complete
-        - running-system-healthy-after-workers
-      purpose: Roll out worker workloads and verify running health.
-    - workflow: .github/workflows/rollout-static-web.yml
-      used_for:
-        - static-web-rollout-complete
-        - running-system-healthy-after-static-web
-      purpose: Roll out the static web tier last and verify end-to-end health.
+        - prod-migrations-applied
+        - prod-healthy-after-migrations
+        - prod-frontend-rollout-complete
+        - prod-healthy-after-frontend
+        - prod-worker-rollout-complete
+        - prod-healthy-after-workers
+        - prod-static-web-rollout-complete
+        - prod-healthy-after-static-web
+        - prod-smoke-tests-passed
+      purpose: >
+        Production rollout phases. Triggered manually by operator via
+        workflow_dispatch. Never triggered by CI events. Takes DR snapshot,
+        applies migrations, rolls out all workload phases with health
+        verification and eager rollback.

@@ -1,0 +1,172 @@
+version: 1
+name: calypso-demo-rollout
+initial_state: branch-push-received
+
+# Automated demo environment rollout.
+# Triggered by any development branch push (not main).
+# Zero human gates. Fully CI-driven.
+#
+# Demo exists to verify current development work runs end-to-end.
+# It may be unstable. If health checks fail, eager rollback restores
+# the previous state and the developer is notified.
+#
+# Vendor-opinionated: Kubernetes via kubectl.
+
+trigger:
+  event: push
+  branch_constraint: "!main"
+  ci_entry: .github/workflows/deploy-demo.yml
+
+states:
+  branch-push-received:
+    kind: deterministic
+    description: >
+      A push to a development branch has been received. Build a
+      branch-tagged container image and push to GHCR.
+    checks:
+      - branch-image-built
+      - branch-image-pushed-to-ghcr
+    next:
+      on_pass: demo-preflight
+      on_fail: notify-failure
+
+  demo-preflight:
+    kind: deterministic
+    description: >
+      Verify the Kubernetes cluster is reachable and the demo namespace
+      is healthy enough to accept a deployment.
+    checks:
+      - kubernetes-api-reachable
+      - demo-namespace-exists
+      - demo-namespace-stable
+    next:
+      on_pass: demo-dr-snapshot
+      on_fail: notify-failure
+
+  demo-dr-snapshot:
+    kind: agent
+    role: deploy-orchestrator
+    cost: cheap
+    description: >
+      Lightweight database snapshot for demo. Labeled with branch name
+      and commit SHA.
+    prompt: |
+      Take a lightweight database snapshot of the demo environment.
+      Label with branch name and short commit SHA. Verify accessible.
+    completion:
+      all_of:
+        - demo-snapshot-taken
+    next:
+      on_success: demo-database-migrations
+      on_failure: notify-failure
+
+  demo-database-migrations:
+    kind: agent
+    role: deploy-orchestrator
+    cost: default
+    prompt: |
+      Apply pending migrations to demo. Verify liveness, readiness, and
+      deep health after migration.
+    completion:
+      all_of:
+        - demo-migrations-applied
+        - demo-healthy-after-migrations
+    next:
+      on_success: demo-workload-rollout
+      on_failure: demo-eager-rollback
+
+  demo-workload-rollout:
+    kind: agent
+    role: deploy-orchestrator
+    cost: default
+    prompt: |
+      kubectl set image for frontend, workers, and static-web in the demo
+      namespace using the branch-tagged image digest. Verify health after
+      each phase.
+    completion:
+      all_of:
+        - demo-frontend-rollout-complete
+        - demo-worker-rollout-complete
+        - demo-static-web-rollout-complete
+        - demo-smoke-tests-passed
+    next:
+      on_success: record-deployment
+      on_failure: demo-eager-rollback
+
+  demo-eager-rollback:
+    kind: deterministic
+    description: >
+      kubectl rollout undo for all affected deployments in demo namespace.
+      Automatic. No human gate.
+    checks:
+      - demo-previous-revision-restored
+      - demo-healthy-after-rollback
+    next:
+      on_pass: record-deployment
+      on_fail: notify-failure
+
+  record-deployment:
+    kind: deterministic
+    checks:
+      - demo-deployment-audit-written
+    next:
+      on_pass: done
+      on_fail: done
+
+  done:
+    kind: terminal
+
+  notify-failure:
+    kind: terminal
+    description: >
+      Deployment to demo failed and could not be recovered. Developer
+      is notified via CI job failure status. No escalation — demo is
+      non-critical.
+
+checks:
+  branch-image-built:
+    kind: deterministic
+    description: Container image built from branch commit.
+  branch-image-pushed-to-ghcr:
+    kind: deterministic
+    description: Branch-tagged image available in GHCR.
+  kubernetes-api-reachable:
+    kind: deterministic
+  demo-namespace-exists:
+    kind: deterministic
+  demo-namespace-stable:
+    kind: deterministic
+  demo-snapshot-taken:
+    kind: deterministic
+  demo-migrations-applied:
+    kind: deterministic
+  demo-healthy-after-migrations:
+    kind: deterministic
+    description: Liveness + readiness + deep health pass after migration.
+  demo-frontend-rollout-complete:
+    kind: deterministic
+  demo-worker-rollout-complete:
+    kind: deterministic
+  demo-static-web-rollout-complete:
+    kind: deterministic
+  demo-smoke-tests-passed:
+    kind: deterministic
+  demo-previous-revision-restored:
+    kind: deterministic
+  demo-healthy-after-rollback:
+    kind: deterministic
+  demo-deployment-audit-written:
+    kind: deterministic
+
+github_actions:
+  proposed_required:
+    - workflow: .github/workflows/deploy-demo.yml
+      trigger: "push: branches (excluding main)"
+      purpose: >
+        Build branch-tagged image, push to GHCR, deploy to demo Kubernetes
+        namespace. Fully automated. Uses KUBE_CONFIG_DEMO secret with
+        credentials scoped to demo namespace only.
+      jobs:
+        - build-branch-image
+        - deploy-to-demo
+        - smoke-test

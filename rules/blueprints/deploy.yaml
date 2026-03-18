@@ -153,6 +153,22 @@ rules:
       - {target: 30358b6f4470, rel: depends_on}
     deprecated: false
 
+  - number: DEPLOY-T-010
+    hash: "a1b2c3d4e5f6"
+    name: migration-applied-rollback-destroys-data
+    type: threat
+    description: >
+      A database migration has been applied to an environment. Rolling back the
+      application to a prior image does not undo the schema change. If the prior
+      code is incompatible with the new schema, the system is broken. If a
+      destructive down-migration is run to undo the schema, data may be lost.
+      Rollback capability depends entirely on schema forward-compatibility being
+      verified before the release was promoted.
+    links:
+      - {target: 7c658e789c07, rel: depends_on}
+      - {target: b1d2e3f4a5c6, rel: depends_on}
+    deprecated: false
+
   # ---------------------------------------------------------------------------
   # Principles
   # ---------------------------------------------------------------------------
@@ -162,10 +178,13 @@ rules:
     type: principle
     description: >
       All application processes must be packaged as immutable container images,
-      deployed to an orchestrator, and restarted on crash. Containers are used
-      exclusively across dev, test, and production. Production containers must
-      be distroless, stripped of package managers, shells, and all OS-level
-      tools not required to run the application.
+      deployed to a container orchestrator, and restarted on crash. Containers
+      are used exclusively across dev, test, and all runtime environments.
+      Production containers must be distroless, stripped of package managers,
+      shells, and all OS-level tools not required to run the application. The
+      choice of orchestration vendor (or DIY orchestration) is an implementation
+      detail; what matters is the capability: automatic restart, health-gated
+      rollout, environment-isolated rollback, and declarative configuration.
     links:
       - {target: cebbff0e956c, rel: refines}
       - {target: 95e47760b8bd, rel: mitigates}
@@ -270,11 +289,209 @@ rules:
       Once a release is built and published, rollout follows a strict
       sequence: database migrations, frontend rollout, worker rollout, static
       web rollout last. Each phase must prove health before the next begins.
-      A failed phase blocks the release rather than logging a warning.
+      A failed phase triggers an eager automatic rollback of that phase's
+      workloads to the previous image revision before entering a blocked
+      state for human review. Rollback is the default response to any health
+      check failure — the system must never remain in a degraded state while
+      waiting for human intervention.
     links:
       - {target: 7c658e789c07, rel: depends_on}
       - {target: b08792cb7a13, rel: mitigates}
       - {target: 98a04633e13c, rel: refines}
+      - {target: 1a2b3c4d5e6f, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-010
+    hash: "b2c3d4e5f6a1"
+    name: migrations-are-forward-only
+    type: principle
+    description: >
+      Database migrations are irreversible operations. Once a migration is
+      applied to an environment, the schema cannot be automatically reverted by
+      a container rollback. Rolling back the application image to a prior
+      version is only safe if the prior code was proven compatible with the new
+      schema before promotion (see DEPLOY-P-007). Destructive down-migrations
+      that discard data are never run as part of an automated rollback.
+      If a migration makes rollback impossible, the release must be corrected
+      forward with a new migration, not reverted.
+    links:
+      - {target: a1b2c3d4e5f6, rel: mitigates}
+      - {target: 7c658e789c07, rel: refines}
+      - {target: 4913a0616eea, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-011
+    hash: "c3d4e5f6a1b2"
+    name: three-environment-promotion-model
+    type: principle
+    description: >
+      Every project operates three runtime environments with identical container
+      topology but distinct promotion semantics. Demo receives automated
+      rollouts from active development branches and exists to verify that
+      current work runs end-to-end. Stage receives automated rollouts from
+      release-candidate tags and exists to validate the upcoming production
+      release under realistic conditions. Production is the stable operating
+      environment and receives only human-triggered rollouts. The codebase and
+      container images are identical across environments; only secrets,
+      configuration, and the rollout trigger differ.
+    links:
+      - {target: e6f7a2b3c4d5, rel: refines}
+      - {target: d4e5f6a1b2c3, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-012
+    hash: "d4e5f6a1b2c3"
+    name: production-deployments-are-human-triggered
+    type: principle
+    description: >
+      No automated system may initiate a rollout to the production environment.
+      A production deployment is triggered exclusively by a human operator
+      issuing an authenticated request — typically a configuration patch or
+      workload spec update — to the orchestration service's control API. CI
+      pipelines may prepare and validate release artifacts but must never
+      directly apply them to production. This preserves a mandatory human
+      decision point between a verified artifact and a live production change.
+    links:
+      - {target: 5a00e2a1d857, rel: refines}
+      - {target: c3d4e5f6a1b2, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-013
+    hash: "e5f6a1b2c3d4"
+    name: orchestration-service-has-kms
+    type: principle
+    description: >
+      The container orchestration service must operate its own key management
+      system (KMS), used to encrypt secrets at rest within the cluster. The KMS
+      is seeded with a root key during initial cluster bootstrapping. This
+      bootstrapping step is the one legitimate use of direct SSH access to the
+      orchestration host; all subsequent operations must use the orchestration
+      control API and no SSH access is required or permitted. The private
+      container image registry credential (organization key) is also provisioned
+      into the orchestration service at this initialization step so that
+      workload containers can pull images from the private registry without
+      embedding credentials in image definitions.
+    links:
+      - {target: 584e64645b8f, rel: refines}
+      - {target: bd28ad6f0308, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-014
+    hash: "f6a1b2c3d4e5"
+    name: rollbacks-are-environment-isolated
+    type: principle
+    description: >
+      A rollback in one environment has no effect on any other environment.
+      Each environment — demo, stage, production — maintains its own workload
+      state independently. Rolling back stage to a prior image version does not
+      alter the production deployment, and vice versa. The orchestration service
+      enforces this through environment-scoped namespaces or equivalent
+      isolation primitives. This also means the rollback target (prior image
+      digest) must be available in the registry for that specific environment;
+      purging old images from the registry removes the rollback option.
+    links:
+      - {target: b08792cb7a13, rel: mitigates}
+      - {target: 4913a0616eea, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-015
+    hash: "1a2b3c4d5e6f"
+    name: health-check-taxonomy
+    type: principle
+    description: >
+      Health checks are not a single concept. Every deployed workload must
+      implement four distinct health check types, each serving a different
+      consumer and failure mode:
+
+      Liveness — is the process alive? A binary signal consumed by the
+      orchestrator. Failure means the process has crashed or deadlocked and
+      must be restarted. Implementation: a lightweight endpoint or signal
+      that confirms the process event loop is responsive. Must not check
+      dependencies.
+
+      Readiness — can the process accept traffic? Consumed by the
+      orchestrator's load balancer to include or exclude the workload from
+      the service mesh. Failure removes the workload from traffic rotation
+      but does not restart it. Implementation: confirms the process has
+      completed startup, loaded configuration, and is prepared to serve.
+
+      Deep health — are all transitive dependencies healthy? Consumed by
+      monitoring and by the rollout health gate. Checks database
+      connectivity, queue connectivity, external API reachability, and any
+      other dependency the workload requires to function correctly. Failure
+      during a rollout triggers eager rollback.
+
+      Smoke — does a representative user flow succeed end-to-end? Consumed
+      by the rollout verification step after all workloads in a phase are
+      updated. Exercises real application behavior: HTTP request → server
+      handler → database query → response. Failure triggers eager rollback.
+    links:
+      - {target: 4913a0616eea, rel: refines}
+      - {target: 98a04633e13c, rel: refines}
+      - {target: d65e70a5425b, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-016
+    hash: "2b3c4d5e6f1a"
+    name: eager-rollback-is-default
+    type: principle
+    description: >
+      When any health check fails during a rollout phase, the orchestration
+      service must immediately and automatically restore the previous workload
+      revision for that phase. This happens before any human is notified, before
+      any blocked state is entered, and without waiting for operator approval.
+      The rollback is the first response, not the last resort. After the
+      rollback completes and health is restored, the system enters a blocked
+      state for human investigation. If the rollback itself fails (previous
+      revision also unhealthy), the system enters a critical blocked state
+      requiring immediate human intervention. Eager rollback protects
+      production availability at the cost of rolling back changes that might
+      have eventually stabilized — this trade-off is deliberate.
+    links:
+      - {target: 4913a0616eea, rel: refines}
+      - {target: b08792cb7a13, rel: mitigates}
+      - {target: 1a2b3c4d5e6f, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-P-017
+    hash: "3c4d5e6f1a2b"
+    name: disaster-recovery-snapshot-at-release
+    type: principle
+    description: >
+      Before any migration is applied to any environment, a point-in-time
+      snapshot of the database is taken and labeled with the release tag and
+      environment name. This snapshot is independent of the managed database
+      service's continuous backup — it is an explicit, labeled recovery point
+      that the team can restore to without navigating a managed service's
+      point-in-time recovery interface under pressure. Belt and suspenders:
+      the managed service backup covers continuous recovery, the explicit
+      snapshot covers discrete release recovery. The snapshot is verified
+      accessible before the migration proceeds.
+    links:
+      - {target: b2c3d4e5f6a1, rel: refines}
+      - {target: a1b2c3d4e5f6, rel: mitigates}
+      - {target: b08792cb7a13, rel: mitigates}
+    deprecated: false
+
+  - number: DEPLOY-P-018
+    hash: "4d5e6f1a2b3c"
+    name: image-signing-and-verification
+    type: principle
+    description: >
+      Every container image published by the release pipeline must be
+      cryptographically signed at build time. The orchestration service must
+      enforce a policy that only images with a valid signature from the
+      project's signing key may be admitted to run. An unsigned or
+      tampered image is rejected before it starts, regardless of whether
+      its digest matches a known value. This protects against a compromised
+      registry serving malicious images and against supply chain attacks
+      that substitute images between build and deploy. The signing key is
+      stored in CI secrets and the verification key is provisioned into the
+      orchestration service at initialization alongside the KMS root key
+      and registry credential.
+    links:
+      - {target: e5f6a1b2c3d4, rel: refines}
+      - {target: e0bfaa2d54c3, rel: refines}
     deprecated: false
 
   - number: DEPLOY-P-009
@@ -420,6 +637,73 @@ rules:
       - {target: 5ead7b43c21d, rel: refines}
     deprecated: false
 
+  - number: DEPLOY-D-006
+    hash: "5e6f1a2b3c4d"
+    name: deployment-audit-record
+    type: design_pattern
+    description: >
+      Every deployment event — rollout, rollback, migration, abort — produces
+      a structured audit record. The minimum record contains: timestamp,
+      operator identity (human or CI service account), release tag, target
+      environment, phase, outcome (success/failure/rollback), duration, and
+      image digest. Trade-off: extra write per deployment event, trivial
+      cost for complete accountability.
+    problem: |
+      Enterprise compliance requires answering: who deployed what version, to
+      which environment, at what time, and what was the outcome. Application
+      logs capture runtime behavior but not the deployment act itself.
+    solution: |
+      Every deployment event writes a structured JSON record to an append-only
+      file at a well-known path (deployments.jsonl). This file is the
+      always-available source of truth — it exists from the first deployment
+      and does not depend on the application database. When the application
+      database exists, the record is dual-written to a deployment_audit table
+      for query convenience. The file is authoritative; the table is a
+      materialized view.
+    tradeoffs: |
+      Early-stage projects have no database to query audit records from. The
+      file-based approach works from day one and requires no infrastructure.
+      The database dual-write is added when the DATA blueprint is implemented,
+      not before.
+    links:
+      - {target: 4913a0616eea, rel: refines}
+      - {target: 123eab1a292b, rel: refines}
+    deprecated: false
+
+  - number: DEPLOY-D-005
+    hash: "a2b3c4d5e6f7"
+    name: automated-ci-rollouts-to-non-production
+    type: design_pattern
+    description: >
+      CI workflows may automatically trigger rollouts to demo and stage based
+      on branch name or tag name patterns. Demo receives a rollout on push to
+      any active development branch. Stage receives a rollout when a
+      release-candidate tag is pushed. Production never receives an automated
+      rollout — the CI workflow must explicitly exclude production as a valid
+      target. This pattern provides continuous environment feedback without
+      removing the mandatory human gate before production. Trade-off: demo
+      and stage are noisier and may be temporarily broken; this is by design.
+    problem: |
+      Development feedback loops require that recent code is visible in a running
+      environment quickly. Requiring a manual deployment step for every branch
+      push creates friction and delays defect discovery.
+    solution: |
+      Define two CI trigger patterns: one that deploys to demo on any development
+      branch push, and one that deploys to stage on release-candidate tag push.
+      Both use the same CI pipeline as production but target different environment
+      namespaces. The CI credential for these workflows is scoped to demo and
+      stage namespaces only — it cannot reach the production namespace.
+    tradeoffs: |
+      Demo may be deployed to frequently and may be unstable; this is acceptable
+      because demo exists for verification, not reliability. Stage is more
+      controlled but can still be automatically overwritten. Production is
+      completely insulated from automated changes.
+    links:
+      - {target: c3d4e5f6a1b2, rel: refines}
+      - {target: d4e5f6a1b2c3, rel: refines}
+      - {target: 765231ae4d6c, rel: refines}
+    deprecated: false
+
   # ---------------------------------------------------------------------------
   # Architectures
   # ---------------------------------------------------------------------------
@@ -467,84 +751,104 @@ rules:
 
   - number: DEPLOY-A-002
     hash: "e889c6c25ede"
-    name: kubernetes-enterprise-deployment
+    name: multi-environment-container-orchestration
     type: architecture
     description: >
-      Kubernetes cluster with ingress controller for TLS and routing, app
-      pods managed by ReplicaSet behind a ClusterIP service, and secrets
-      injected via ConfigMaps/Secrets. Appropriate for any enterprise-grade
-      deployment. Provides declarative infrastructure APIs ideal for agent
-      operation. Trade-off: cluster operational overhead, justified by
-      universal orchestration, replication, and self-healing.
+      A container orchestration service manages three isolated environments
+      (demo, stage, production), each with its own namespace or equivalent
+      isolation boundary, its own secrets, and its own workload state. The
+      orchestration service provides: TLS-terminating ingress, workload
+      replication, automatic restart on crash, health-gated rolling updates,
+      per-environment rollback, and a KMS for secrets at rest. The specific
+      orchestration vendor (or DIY equivalent) is an implementation choice;
+      the required capabilities are vendor-independent. See implementation
+      docs for vendor-specific configuration. Trade-off: orchestration service
+      operational overhead, justified by declarative APIs that agents can
+      operate without SSH access after initialization.
     diagram: |
-      ┌──────────────────────────────────────────────────┐
-      │  Kubernetes Cluster                              │
-      │                                                  │
-      │  ┌────────────────────────────────────────────┐  │
-      │  │  Ingress Controller (TLS, routing)         │  │
-      │  │                                            │  │
-      │  │  ┌──────────────┐  ┌───────────────────┐  │  │
-      │  │  │ App Service  │  │ App Pods          │  │  │
-      │  │  │ (ClusterIP)  │──│ (ReplicaSet)      │  │  │
-      │  │  │              │  │                   │  │  │
-      │  │  └──────────────┘  └───────────────────┘  │  │
-      │  └────────────────────────────────────────────┘  │
-      │                                                  │
-      │  ConfigMaps/Secrets ← injected securely          │
-      └──────────────────────────────────────────────────┘
+      ┌──────────────────────────────────────────────────────────┐
+      │  Container Orchestration Service                         │
+      │                                                          │
+      │  ┌─────────────┐  ┌─────────────┐  ┌────────────────┐  │
+      │  │  demo ns    │  │  stage ns   │  │  production ns │  │
+      │  │  auto-roll  │  │  auto-roll  │  │  human-trigger │  │
+      │  └─────────────┘  └─────────────┘  └────────────────┘  │
+      │                                                          │
+      │  ┌──────────────────────────────────────────────────┐   │
+      │  │  Ingress (TLS + routing)                         │   │
+      │  └──────────────────────────────────────────────────┘   │
+      │                                                          │
+      │  KMS (seeded at init via SSH)                           │
+      │  Registry credential (org key, provisioned at init)     │
+      └──────────────────────────────────────────────────────────┘
     when_appropriate: |
-      Any enterprise-grade deployment. Kubernetes acts as the universal orchestrator for routing,
-      replication, and self-healing.
+      Any multi-environment deployment. Each namespace is independently
+      rollable and rollback-capable. The orchestration service is the only
+      system that may apply workload changes; agents and CI interact with it
+      exclusively through its control API.
     tradeoffs: |
-      Adds Kubernetes cluster operational overhead. Justified because Kubernetes is the most
-      credible architecture for enterprise deployments and provides declarative infrastructure APIs
-      perfect for agents.
+      Orchestration service adds operational overhead. The initialization
+      step requires SSH to seed the KMS and provision registry credentials.
+      All subsequent operations are API-driven and require no SSH access.
     links:
       - {target: f4deae0ff5d3, rel: refines}
       - {target: 765231ae4d6c, rel: refines}
+      - {target: c3d4e5f6a1b2, rel: refines}
+      - {target: e5f6a1b2c3d4, rel: refines}
+      - {target: f6a1b2c3d4e5, rel: refines}
     deprecated: false
 
   - number: DEPLOY-A-003
     hash: "765231ae4d6c"
-    name: ci-driven-deploy-pipeline
+    name: ci-driven-container-deploy-pipeline
     type: architecture
     description: >
-      CI platform builds the app bundle, layers it onto a base image, pushes
-      to registry with immutable digest, updates Kubernetes deployment via
-      kubectl set image with digest reference, waits for rollout status, and
-      auto-rolls back on failure. This is the only release mechanism Calypso
-      supports. CI service account holds narrow kubectl credentials (patch
-      deployments only). No SSH access to nodes.
+      CI builds the app bundle, layers it onto a base image, pushes to the
+      container registry with an immutable digest, then patches the workload
+      spec in the target environment via the orchestration service's control
+      API (authenticated, narrow-scoped credentials). The orchestration service
+      waits for the rollout to reach healthy status; on failure it automatically
+      restores the previous workload revision. CI may trigger automated rollouts
+      to demo (on development branch push) and stage (on release-candidate tag)
+      but must never trigger a production rollout. Production rollouts are
+      triggered exclusively by a human operator patching the production workload
+      spec directly. CI credentials are scoped to patch workload configuration
+      only; they cannot create, delete, or modify environment namespaces.
     diagram: |
-      ┌────────────────────────────────────────────────────┐
-      │  CI Platform                                       │
-      │                                                    │
-      │  Push to main                                      │
-      │       │                                            │
-      │       ▼                                            │
-      │  All test workflows pass                           │
-      │       │                                            │
-      │       ▼                                            │
-      │  Deploy workflow:                                  │
-      │    1. Build app bundle (bun build)                 │
-      │    2. Layer bundle onto base image                 │
-      │    3. Push image → receive immutable digest        │
-      │    4. kubectl set image deployment/<name>          │
-      │       <name>=<image>@<digest>                      │
-      │    5. kubectl rollout status --timeout=5m          │
-      │    6. On failure: kubectl rollout undo             │
-      │       │                                            │
-      │       ▼                                            │
-      │  Deployment complete                               │
-      └────────────────────────────────────────────────────┘
+      ┌─────────────────────────────────────────────────────────┐
+      │  CI Platform                                            │
+      │                                                         │
+      │  Branch push / RC tag                                   │
+      │       │                                                 │
+      │       ▼                                                 │
+      │  All test workflows pass                                │
+      │       │                                                 │
+      │       ▼                                                 │
+      │  Deploy workflow (demo or stage only):                  │
+      │    1. Build app bundle                                  │
+      │    2. Layer bundle onto base image                      │
+      │    3. Push image → receive immutable digest             │
+      │    4. Patch workload spec with new image digest         │
+      │       via orchestration control API                     │
+      │    5. Poll rollout health endpoint (timeout)            │
+      │    6. On failure: restore previous revision via API     │
+      │       │                                                 │
+      │       ▼                                                 │
+      │  Deployment complete (demo or stage)                    │
+      │                                                         │
+      │  Production: human operator patches workload spec       │
+      │  directly via authenticated control API call            │
+      └─────────────────────────────────────────────────────────┘
     when_appropriate: |
-      All deployments — this is the only release mechanism Calypso supports. Every container type
-      (frontend, worker, database) follows this pipeline. The CI service account holds narrow
-      kubectl credentials (patch deployments only); no SSH access to nodes is required.
+      All non-production deployments are CI-driven. Production deployments
+      follow the same technical pipeline but require a human to issue the
+      control API patch. Every container type (frontend, worker, static-web)
+      follows this pipeline. No SSH access to nodes is required after init.
     tradeoffs: |
-      Requires a Kubernetes cluster and a narrow-scoped CI service account. The rollout undo step
-      is automatic on failure — there is no human rollback procedure. Previous revisions are
-      retained by Kubernetes and are immediately available.
+      Requires an orchestration service with a narrow-scoped service account
+      for CI. The restore-previous-revision step is automatic on failure.
+      Previous image digests must be retained in the registry for the restore
+      to succeed; image purge policies must account for this.
     links:
       - {target: 9f4aeb9be1e8, rel: refines}
       - {target: 4913a0616eea, rel: refines}
@@ -552,6 +856,8 @@ rules:
       - {target: cb07dc6a3f20, rel: refines}
       - {target: e65b8926fb2d, rel: refines}
       - {target: e0bfaa2d54c3, rel: refines}
+      - {target: d4e5f6a1b2c3, rel: refines}
+      - {target: c3d4e5f6a1b2, rel: refines}
     deprecated: false
 
   # ---------------------------------------------------------------------------
@@ -763,14 +1069,18 @@ rules:
 
   - number: DEPLOY-C-019
     hash: "bd28ad6f0308"
-    name: zero-manual-ssh-steps
+    name: zero-manual-ssh-steps-post-init
     type: checklist
     description: >
-      Zero manual SSH steps required for a standard deploy.
+      Zero manual SSH steps required for any deploy or operational action after
+      initial cluster setup. SSH is permitted only during the one-time
+      orchestration initialization step (KMS seeding and registry credential
+      provisioning). All subsequent operations use the orchestration control API.
     links:
       - {target: 123eab1a292b, rel: verifies}
       - {target: 5a00e2a1d857, rel: verifies}
       - {target: f5ee26f6798a, rel: verifies}
+      - {target: e5f6a1b2c3d4, rel: verifies}
     deprecated: false
 
   - number: DEPLOY-C-020
@@ -829,6 +1139,170 @@ rules:
     links:
       - {target: b08792cb7a13, rel: verifies}
       - {target: d365a1009d3f, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-025
+    hash: "b3c4d5e6f7a2"
+    name: orchestration-kms-initialized
+    type: checklist
+    description: >
+      Orchestration service KMS initialized and root key seeded during cluster
+      bootstrapping via SSH. Subsequent secret operations use the control API only.
+    links:
+      - {target: e5f6a1b2c3d4, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-026
+    hash: "c4d5e6f7a2b3"
+    name: registry-auth-key-provisioned-at-init
+    type: checklist
+    description: >
+      GitHub organization credential for pulling private container images
+      provisioned into the orchestration service during initialization. Workload
+      definitions do not embed registry credentials.
+    links:
+      - {target: e5f6a1b2c3d4, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-027
+    hash: "d5e6f7a2b3c4"
+    name: prod-deployment-requires-human-action
+    type: checklist
+    description: >
+      Verified that no CI workflow or automated system can trigger a production
+      rollout. Production deployment requires a human to issue an authenticated
+      patch to the orchestration control API. CI credentials are scoped to
+      demo and stage namespaces only.
+    links:
+      - {target: d4e5f6a1b2c3, rel: verifies}
+      - {target: a2b3c4d5e6f7, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-028
+    hash: "e6f7a2b3c4d5"
+    name: rollback-verified-environment-isolated
+    type: checklist
+    description: >
+      Verified that rolling back stage does not alter production, and vice
+      versa. Each environment's workload state is independently managed by
+      the orchestration service.
+    links:
+      - {target: f6a1b2c3d4e5, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-029
+    hash: "b1d2e3f4a5c6"
+    name: migration-rollback-strategy-documented
+    type: checklist
+    description: >
+      Migration rollback strategy documented for each migration: confirm
+      prior application code is forward-compatible with the new schema, or
+      document that the migration is irreversible and a fix-forward migration
+      is required on failure.
+    links:
+      - {target: b2c3d4e5f6a1, rel: verifies}
+      - {target: a1b2c3d4e5f6, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-030
+    hash: "f1a2b3c4d5e6"
+    name: liveness-check-configured
+    type: checklist
+    description: >
+      Every workload has a liveness check configured in the orchestration
+      service. The check confirms the process event loop is responsive. It
+      does not check dependencies.
+    links:
+      - {target: 1a2b3c4d5e6f, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-031
+    hash: "a3b4c5d6e7f8"
+    name: readiness-check-configured
+    type: checklist
+    description: >
+      Every workload has a readiness check configured. Failure removes the
+      workload from traffic rotation without restarting it. Confirms startup
+      is complete and the process can serve requests.
+    links:
+      - {target: 1a2b3c4d5e6f, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-032
+    hash: "b4c5d6e7f8a9"
+    name: deep-health-check-implemented
+    type: checklist
+    description: >
+      A deep health endpoint exists that verifies all transitive dependencies
+      (database, queues, external APIs). Used by rollout health gates and
+      monitoring. Failure during rollout triggers eager rollback.
+    links:
+      - {target: 1a2b3c4d5e6f, rel: verifies}
+      - {target: d65e70a5425b, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-033
+    hash: "c5d6e7f8a9b0"
+    name: smoke-test-suite-exists
+    type: checklist
+    description: >
+      A smoke test suite exercises representative user flows end-to-end
+      (HTTP request → handler → database → response). Run after each rollout
+      phase. Failure triggers eager rollback.
+    links:
+      - {target: 1a2b3c4d5e6f, rel: verifies}
+      - {target: 2b3c4d5e6f1a, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-034
+    hash: "d6e7f8a9b0c1"
+    name: dr-snapshot-taken-before-migration
+    type: checklist
+    description: >
+      Verified that a labeled database snapshot is taken before every
+      migration, in every environment. Snapshot is labeled with release tag
+      and environment name. Snapshot accessibility is confirmed before the
+      migration proceeds.
+    links:
+      - {target: 3c4d5e6f1a2b, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-035
+    hash: "e7f8a9b0c1d2"
+    name: deployment-audit-record-written
+    type: checklist
+    description: >
+      Every deployment event writes a structured JSON record to
+      deployments.jsonl. When the application database exists, the record
+      is dual-written to deployment_audit table.
+    links:
+      - {target: 5e6f1a2b3c4d, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-036
+    hash: "f8a9b0c1d2e3"
+    name: image-signing-configured
+    type: checklist
+    description: >
+      Container images are cryptographically signed at build time. The
+      orchestration service enforces an admission policy rejecting unsigned
+      or tampered images. Signing key in CI secrets; verification key
+      provisioned at orchestration init.
+    links:
+      - {target: 4d5e6f1a2b3c, rel: verifies}
+    deprecated: false
+
+  - number: DEPLOY-C-037
+    hash: "a9b0c1d2e3f4"
+    name: eager-rollback-verified
+    type: checklist
+    description: >
+      Verified that a failed health check during rollout automatically
+      restores the previous workload revision before entering blocked state.
+      Tested by deliberately failing a health check in a non-production
+      environment and confirming automatic restoration.
+    links:
+      - {target: 2b3c4d5e6f1a, rel: verifies}
     deprecated: false
 
   # ---------------------------------------------------------------------------
@@ -916,4 +1390,37 @@ rules:
       - {target: c4bfd726ae7b, rel: depends_on}
       - {target: aef55d669b45, rel: contradicts}
       - {target: 2a36bd9bbcb2, rel: contradicts}
+    deprecated: false
+
+  - number: DEPLOY-X-007
+    hash: "b0c1d2e3f4a5"
+    name: delayed-rollback
+    type: antipattern
+    description: >
+      Waiting for a human to decide whether to roll back after a health
+      check failure. Every second the system remains in a degraded state,
+      users are affected. The rollback must happen automatically and
+      immediately. The human investigates after availability is restored,
+      not before.
+    links:
+      - {target: 2b3c4d5e6f1a, rel: contradicts}
+      - {target: 4913a0616eea, rel: contradicts}
+    deprecated: false
+
+  - number: DEPLOY-X-008
+    hash: "c1d2e3f4a5b6"
+    name: single-health-check
+    type: antipattern
+    description: >
+      Implementing one /health endpoint that checks everything — process
+      alive, dependencies connected, disk space, load average. When the
+      database is temporarily unreachable, the orchestrator restarts the
+      process, which does not fix the database. When the process deadlocks,
+      the load balancer continues routing traffic because the dependency
+      check still passes from a cached connection. Separate liveness,
+      readiness, and deep health checks serve different consumers and
+      trigger different responses.
+    links:
+      - {target: 1a2b3c4d5e6f, rel: contradicts}
+      - {target: 98a04633e13c, rel: contradicts}
     deprecated: false

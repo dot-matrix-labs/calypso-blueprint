@@ -232,7 +232,7 @@ rules:
       Deployment executed via kubectl apply -f k8s/deployments/server.yaml.
       Declarative, idempotent, non-interactive.
     links:
-      - {target: e889c6c25ede, rel: implements}  # DEPLOY-A-002 kubernetes-enterprise-deployment
+      - {target: e889c6c25ede, rel: implements}  # DEPLOY-A-002 multi-environment-container-orchestration
       - {target: 123eab1a292b, rel: implements}  # DEPLOY-P-005 deployment-is-a-build
       - {target: bd28ad6f0308, rel: implements}  # DEPLOY-C-019 zero-manual-ssh-steps
     deprecated: false
@@ -261,6 +261,147 @@ rules:
       handling that is not trivial to DIY correctly.
     links:
       - {target: fffb29a3e0a6, rel: implements}  # DEPLOY-D-004 trace-id-propagation
+    deprecated: false
+
+  # ── Health Checks ─────────────────────────────────────────────────────────
+
+  - number: IMPL-DEPLOY-RS-021
+    hash: a1c2e3f4b5d6
+    name: liveness-endpoint
+    type: implementation
+    description: >
+      GET /health/live returns 200 if the Tokio runtime is responsive.
+      Implementation: a minimal Axum handler that returns immediately with
+      no dependency checks. Configured as the Kubernetes livenessProbe
+      (httpGet, path: /health/live, period: 10s, failureThreshold: 3).
+      If this fails, the process is deadlocked and should be restarted.
+    links:
+      - {target: 1a2b3c4d5e6f, rel: implements}  # DEPLOY-P-015 health-check-taxonomy
+      - {target: f1a2b3c4d5e6, rel: implements}  # DEPLOY-C-030 liveness-check-configured
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-022
+    hash: b2d3f4a5c6e7
+    name: readiness-endpoint
+    type: implementation
+    description: >
+      GET /health/ready returns 200 when startup is complete: configuration
+      loaded, database connection pool initialized, server listening.
+      Returns 503 during startup or graceful shutdown. Configured as the
+      Kubernetes readinessProbe (httpGet, path: /health/ready, period: 5s,
+      failureThreshold: 3). Failure removes the pod from the Service
+      endpoints without restarting it.
+    links:
+      - {target: 1a2b3c4d5e6f, rel: implements}  # DEPLOY-P-015 health-check-taxonomy
+      - {target: a3b4c5d6e7f8, rel: implements}  # DEPLOY-C-031 readiness-check-configured
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-023
+    hash: c3e4a5b6d7f8
+    name: deep-health-endpoint
+    type: implementation
+    description: >
+      GET /health/deep returns a JSON object with the health status of every
+      transitive dependency: database (SELECT 1), queue (ping), external
+      APIs (HTTP HEAD or equivalent). Each dependency reports its own status
+      and latency. The endpoint returns 200 only if all dependencies are
+      healthy; 503 with the failing dependency details otherwise.
+      Implementation: Axum handler that runs dependency checks concurrently
+      via tokio::join! with individual timeouts (default 2s per check).
+      Used by the rollout health gate — failure triggers eager rollback.
+    links:
+      - {target: 1a2b3c4d5e6f, rel: implements}  # DEPLOY-P-015 health-check-taxonomy
+      - {target: b4c5d6e7f8a9, rel: implements}  # DEPLOY-C-032 deep-health-check-implemented
+      - {target: d65e70a5425b, rel: implements}  # DEPLOY-C-020 health-check-includes-dependencies
+      - {target: 98a04633e13c, rel: implements}  # DEPLOY-C-009 health-endpoint-returns-200
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-024
+    hash: d4f5b6c7e8a9
+    name: smoke-test-harness
+    type: implementation
+    description: >
+      Integration test binary (tests/smoke/) that exercises representative
+      user flows end-to-end against a running instance. Configured to run
+      against any environment by URL: SMOKE_TARGET_URL env var. Exercises:
+      unauthenticated page load, authenticated API call, database-backed
+      query, and worker job submission (if applicable). Returns exit 0 on
+      success, exit 1 on any failure. Used by CI after each rollout phase.
+    links:
+      - {target: 1a2b3c4d5e6f, rel: implements}  # DEPLOY-P-015 health-check-taxonomy
+      - {target: c5d6e7f8a9b0, rel: implements}  # DEPLOY-C-033 smoke-test-suite-exists
+    deprecated: false
+
+  - number: IMPL-DEPLOY-RS-025
+    hash: e5a6c7d8f9b0
+    name: kubernetes-probe-configuration
+    type: implementation
+    description: >
+      Kubernetes deployment manifests configure three probes per container:
+
+      livenessProbe:
+        httpGet: { path: /health/live, port: 8080 }
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        failureThreshold: 3
+
+      readinessProbe:
+        httpGet: { path: /health/ready, port: 8080 }
+        initialDelaySeconds: 3
+        periodSeconds: 5
+        failureThreshold: 3
+
+      startupProbe:
+        httpGet: { path: /health/ready, port: 8080 }
+        initialDelaySeconds: 1
+        periodSeconds: 2
+        failureThreshold: 30
+
+      The startupProbe protects slow-starting containers (e.g., migration
+      job loading fixtures) from being killed by the liveness probe before
+      startup completes.
+    links:
+      - {target: 1a2b3c4d5e6f, rel: implements}  # DEPLOY-P-015 health-check-taxonomy
+      - {target: f1a2b3c4d5e6, rel: implements}  # DEPLOY-C-030 liveness-check-configured
+      - {target: a3b4c5d6e7f8, rel: implements}  # DEPLOY-C-031 readiness-check-configured
+    deprecated: false
+
+  # ── Deployment Audit ─────────────────────────────────────────────────────
+
+  - number: IMPL-DEPLOY-RS-026
+    hash: f6b7d8e9a0c1
+    name: deployment-audit-jsonl
+    type: implementation
+    description: >
+      Deployment audit records written to /var/log/calypso/deployments.jsonl
+      as append-only JSON lines. Each record contains: timestamp (ISO 8601),
+      operator (CI service account or human identity), release_tag,
+      environment, phase, outcome (success | failure | rollback), duration_ms,
+      and image_digest. CI workflows write records via a small shell script
+      (scripts/record-deployment.sh) that appends to the file and optionally
+      inserts into the deployment_audit table via psql if DATABASE_URL is set.
+    links:
+      - {target: 5e6f1a2b3c4d, rel: implements}  # DEPLOY-D-006 deployment-audit-record
+      - {target: e7f8a9b0c1d2, rel: implements}  # DEPLOY-C-035 deployment-audit-record-written
+    deprecated: false
+
+  # ── Image Signing ────────────────────────────────────────────────────────
+
+  - number: IMPL-DEPLOY-RS-027
+    hash: a7c8e9f0b1d2
+    name: cosign-image-signing
+    type: implementation
+    description: >
+      Container images signed at build time using cosign (Sigstore).
+      The signing key (COSIGN_PRIVATE_KEY) is stored in GitHub Actions
+      secrets. The verification key (cosign.pub) is committed to the
+      repository and provisioned into the Kubernetes cluster as a
+      ConfigMap during initialization. An admission controller (or
+      Kyverno policy) rejects pods whose image signature does not verify
+      against cosign.pub.
+    links:
+      - {target: 4d5e6f1a2b3c, rel: implements}  # DEPLOY-P-018 image-signing-and-verification
+      - {target: f8a9b0c1d2e3, rel: implements}  # DEPLOY-C-036 image-signing-configured
     deprecated: false
 
   # ── Antipatterns ──────────────────────────────────────────────────────────

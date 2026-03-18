@@ -102,12 +102,12 @@ states:
     status: proposed
     kind: github
     description: >
-      Build Docker image and push to GHCR.
+      Build Docker image, sign it, and push to GHCR.
     ci_job:
       workflow: .github/workflows/release-ghcr-images.yml
       trigger: github-release-published
       jobs:
-        - job: build-and-push
+        - job: build-sign-push
           runs_on: ubuntu-latest
           steps:
             - uses: actions/checkout@v5
@@ -131,10 +131,15 @@ states:
                 push: true
                 tags: ${{ steps.meta.outputs.tags }}
                 labels: ${{ steps.meta.outputs.labels }}
+            - name: Sign container image
+              env:
+                COSIGN_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+              run: cosign sign --key env://COSIGN_KEY ${{ steps.meta.outputs.tags }}
     checks:
       - docker-image-built
       - docker-image-pushed-to-ghcr
       - ghcr-image-tag-matches-semver
+      - docker-image-signed
     next:
       on_pass: smoke-test
       on_fail: blocked
@@ -263,6 +268,12 @@ checks:
   ghcr-image-tag-matches-semver:
     kind: deterministic
     description: The GHCR image tag exactly matches the git semver tag.
+  docker-image-signed:
+    kind: deterministic
+    status: proposed
+    source: ci
+    workflow: .github/workflows/release-ghcr-images.yml
+    description: Container image cryptographically signed with project cosign key.
   smoke-test-passed:
     kind: deterministic
     status: proposed

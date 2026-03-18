@@ -1,6 +1,13 @@
 version: 1
 name: calypso-deployment-request
-initial_state: deployment-trigger
+initial_state: resolve-environment
+
+# Per-environment rollout workflow. Used by both CI-triggered (demo/stage)
+# and human-triggered (production) deployments. The state machine branches
+# based on target environment.
+#
+# Vendor-opinionated: this workflow references Kubernetes (kubectl, namespaces,
+# liveness/readiness probes) as the concrete orchestration implementation.
 
 rollout_order:
   - database-migrations
@@ -9,27 +16,27 @@ rollout_order:
   - static-web
 
 states:
-  deployment-trigger:
-    kind: human
-    role: operator
-    description: Operator specifies the release to deploy and confirms the deployment window.
-    prompt: |
-      Specify: release tag, target environment, deployment window confirmation (timing + on-call coverage).
-    completion:
-      all_of:
-        - deployment-target-specified
+  # ── Environment resolution ──────────────────────────────────────────────
+  resolve-environment:
+    kind: deterministic
+    description: >
+      Determine the target environment from the trigger context.
+      Branch push → demo. RC tag push → stage. workflow_dispatch → production.
+    checks:
+      - environment-resolved
     next:
-      on_success: validate-release-artifacts
+      on_pass: validate-release-artifacts
+      on_fail: blocked
 
   validate-release-artifacts:
     kind: deterministic
-    description: Confirm all release artifacts for the specified tag exist and are ready.
+    description: >
+      Confirm all release artifacts for the specified tag/branch exist.
+      For demo, the branch-tagged image must exist in GHCR.
+      For stage/production, the semver-tagged image must exist with a valid signature.
     checks:
-      - release-tag-exists
-      - github-release-published
-      - github-release-asset-published
-      - ghcr-images-published
-      - kubernetes-image-ready-signal-sent
+      - release-image-exists-in-ghcr
+      - image-signature-valid-if-required
     next:
       on_pass: cluster-preflight
       on_fail: blocked
@@ -37,83 +44,216 @@ states:
   cluster-preflight:
     kind: deterministic
     description: >
-      Verify the Kubernetes cluster is reachable and healthy before rollout.
+      Verify the Kubernetes cluster is reachable and the target namespace
+      is healthy. Uses kubectl cluster-info and kubectl get nodes to
+      confirm API server connectivity and node readiness.
     checks:
-      - kubernetes-cluster-reachable
-      - kubernetes-cluster-healthy-for-upgrade
+      - kubernetes-api-reachable
+      - target-namespace-exists
+      - namespace-workloads-stable
     next:
-      on_pass: database-migrations
+      on_pass: environment-gate
       on_fail: blocked
 
+  # ── Environment-conditional human gate ──────────────────────────────────
+  environment-gate:
+    kind: deterministic
+    description: >
+      Demo and stage proceed automatically — no human approval required.
+      Production requires explicit human approval. The gate is structural:
+      the CI service account credential cannot target the production
+      namespace, so even if this gate were bypassed, kubectl would reject
+      the request.
+    checks:
+      - environment-gate-passed
+    next:
+      on_pass: dr-snapshot
+      on_fail: wait-for-prod-approval
+
+  wait-for-prod-approval:
+    kind: human
+    role: operator
+    description: >
+      Production only. Operator reviews stage soak results, confirms
+      deployment window, and on-call coverage.
+    prompt: |
+      Confirm:
+      1. Release tag and image digest to deploy
+      2. Stage has been healthy for the soak period
+      3. Deployment window is open
+      4. On-call coverage is confirmed
+    completion:
+      all_of:
+        - prod-rollout-approved
+    next:
+      on_success: dr-snapshot
+
+  # ── DR snapshot ─────────────────────────────────────────────────────────
+  dr-snapshot:
+    kind: agent
+    role: deploy-orchestrator
+    cost: cheap
+    description: >
+      Take a labeled database snapshot before migration. For demo this is
+      lightweight; for stage/production this is a full point-in-time snapshot
+      independent of the managed service's continuous backup.
+    prompt: |
+      Take database snapshot for the target environment. Label with release
+      tag and environment name. Verify snapshot is accessible before proceeding.
+    completion:
+      all_of:
+        - dr-snapshot-taken
+        - dr-snapshot-labeled
+        - dr-snapshot-accessible
+    next:
+      on_success: database-migrations
+      on_failure: blocked
+
+  # ── Rollout phases ──────────────────────────────────────────────────────
   database-migrations:
     kind: agent
     role: deploy-orchestrator
     cost: default
-    description: Apply database migrations and verify system health before proceeding.
+    description: >
+      Apply database migrations. Verify deep health. Confirm new app code
+      compatible with both old and new schema.
     prompt: |
-      Apply all pending migrations in order. Verify system health post-migration. Confirm new app code compatible with both old and new schema versions.
+      kubectl exec into the migration job pod or run the migration container.
+      Apply all pending migrations in order. After completion:
+      1. Verify liveness probes pass on all running pods
+      2. Verify readiness probes pass (pods accepting traffic)
+      3. Verify deep health endpoint (all dependencies connected)
+      4. Confirm old code still healthy against new schema
     completion:
       all_of:
-        - database-migrations-applied
-        - running-system-healthy-after-migrations
+        - migrations-applied
+        - liveness-passing-after-migrations
+        - readiness-passing-after-migrations
+        - deep-health-passing-after-migrations
     next:
       on_success: frontend-rollout
-      on_failure: blocked
+      on_failure: eager-rollback
 
   frontend-rollout:
     kind: agent
     role: deploy-orchestrator
     cost: default
-    description: Roll out the frontend application and verify system health.
+    description: >
+      Roll out frontend deployment via kubectl set image with immutable
+      digest. Wait for rollout status. Verify all health check types.
     prompt: |
-      Roll out frontend deployment. Verify system healthy after rollout before proceeding to workers.
+      kubectl set image deployment/frontend frontend=<image>@<digest> -n <namespace>
+      kubectl rollout status deployment/frontend --timeout=5m -n <namespace>
+      After rollout:
+      1. Verify liveness probes pass
+      2. Verify readiness probes pass (pods in service mesh)
+      3. Verify deep health endpoint
+      4. Run smoke test: HTTP GET to a representative frontend route
     completion:
       all_of:
         - frontend-rollout-complete
-        - running-system-healthy-after-frontend
+        - liveness-passing-after-frontend
+        - readiness-passing-after-frontend
+        - deep-health-passing-after-frontend
     next:
       on_success: worker-rollout
-      on_failure: blocked
+      on_failure: eager-rollback
 
   worker-rollout:
     kind: agent
     role: deploy-orchestrator
     cost: default
-    description: Roll out worker deployments and verify system health.
+    description: >
+      Roll out worker deployments. Verify health before proceeding.
     prompt: |
-      Roll out all worker deployments. Verify system healthy before proceeding to static web.
+      kubectl set image deployment/worker worker=<image>@<digest> -n <namespace>
+      kubectl rollout status deployment/worker --timeout=5m -n <namespace>
+      After rollout:
+      1. Verify liveness probes pass
+      2. Verify readiness probes pass
+      3. Verify deep health endpoint
+      4. Verify worker-specific health (queue connectivity, job processing)
     completion:
       all_of:
         - worker-rollout-complete
-        - running-system-healthy-after-workers
+        - liveness-passing-after-workers
+        - readiness-passing-after-workers
+        - deep-health-passing-after-workers
     next:
       on_success: static-web-rollout
-      on_failure: blocked
+      on_failure: eager-rollback
 
   static-web-rollout:
     kind: agent
     role: deploy-orchestrator
     cost: default
-    description: Roll out the static web tier and verify end-to-end system health.
+    description: >
+      Roll out static web tier (final phase). Verify end-to-end health.
     prompt: |
-      Roll out static web tier (final phase). Verify end-to-end system health.
+      kubectl set image deployment/static-web static-web=<image>@<digest> -n <namespace>
+      kubectl rollout status deployment/static-web --timeout=5m -n <namespace>
+      After rollout:
+      1. Verify liveness probes pass
+      2. Verify readiness probes pass
+      3. Verify deep health endpoint
+      4. Run full smoke test suite end-to-end
     completion:
       all_of:
         - static-web-rollout-complete
-        - running-system-healthy-after-static-web
+        - liveness-passing-after-static-web
+        - readiness-passing-after-static-web
+        - deep-health-passing-after-static-web
+        - smoke-tests-passed
     next:
-      on_success: done
-      on_failure: blocked
+      on_success: record-deployment
+      on_failure: eager-rollback
 
+  # ── Eager rollback ──────────────────────────────────────────────────────
+  eager-rollback:
+    kind: deterministic
+    description: >
+      Immediately restore previous workload revisions using
+      kubectl rollout undo. This happens automatically before any human
+      is notified. After rollback, verify health is restored.
+    checks:
+      - rollback-executed
+      - previous-revision-restored
+      - liveness-passing-after-rollback
+      - readiness-passing-after-rollback
+      - deep-health-passing-after-rollback
+    next:
+      on_pass: record-deployment
+      on_fail: critical-blocked
+
+  # ── Audit recording ─────────────────────────────────────────────────────
+  record-deployment:
+    kind: deterministic
+    description: >
+      Write structured audit record (JSON) to deployments.jsonl with:
+      timestamp, operator, release_tag, environment, phase, outcome,
+      duration_ms, image_digest. Dual-write to deployment_audit table
+      if application database exists.
+    checks:
+      - deployment-audit-written
+    next:
+      on_pass: done
+      on_fail: done
+
+  # ── Terminal states ─────────────────────────────────────────────────────
   done:
     kind: terminal
 
   blocked:
     kind: human
     role: operator-or-orchestrator
-    description: A rollout phase encountered a blocking condition.
+    description: A deployment phase encountered a blocking condition.
     prompt: |
-      Resolve the blocking deployment issue or abort. Use resume-rollout to re-enter at database-migrations.
+      Investigate the failure. The system has been eagerly rolled back if
+      a health check failed during rollout. Options:
+      - issue-cleared: restart from artifact validation
+      - retry-preflight: re-check cluster health
+      - resume-rollout: re-enter at database-migrations
+      - abort: cancel this deployment
     next:
       on:
         issue-cleared: validate-release-artifacts
@@ -121,74 +261,199 @@ states:
         resume-rollout: database-migrations
         abort: aborted
 
+  critical-blocked:
+    kind: human
+    role: operator
+    description: >
+      CRITICAL: Eager rollback failed. Previous revision is also unhealthy.
+      The environment may be degraded. Immediate intervention required.
+    prompt: |
+      Eager rollback failed — both current and previous revisions are
+      unhealthy. Options:
+      1. Restore database from DR snapshot and redeploy a known-good version
+      2. Manual investigation and remediation
+      3. Abort and escalate
+    next:
+      on:
+        restore-from-snapshot: dr-snapshot
+        manual-fix: cluster-preflight
+        abort: aborted
+
   aborted:
     kind: terminal
 
+# ── Checks ────────────────────────────────────────────────────────────────
 checks:
-  deployment-target-specified:
+  # Environment resolution
+  environment-resolved:
+    kind: deterministic
+    description: >
+      Target environment determined from trigger context. Branch push → demo,
+      RC tag → stage, workflow_dispatch → production.
+
+  # Artifact validation
+  release-image-exists-in-ghcr:
+    kind: deterministic
+    description: Container image with the expected tag/digest exists in GHCR.
+  image-signature-valid-if-required:
+    kind: deterministic
+    description: >
+      For stage and production: image signature verified against project
+      signing key. For demo: signature check is optional (branch builds
+      may be unsigned).
+
+  # Cluster preflight (Kubernetes-specific)
+  kubernetes-api-reachable:
+    kind: deterministic
+    description: kubectl cluster-info succeeds against the target cluster.
+  target-namespace-exists:
+    kind: deterministic
+    description: The Kubernetes namespace for the target environment exists.
+  namespace-workloads-stable:
+    kind: deterministic
+    description: >
+      All pods in the target namespace are Running/Ready. No CrashLoopBackOff,
+      no pending pods, no evictions in progress.
+
+  # Environment gate
+  environment-gate-passed:
+    kind: deterministic
+    description: >
+      For demo/stage: always passes. For production: requires explicit
+      human approval (transitions to wait-for-prod-approval on fail).
+  prod-rollout-approved:
     kind: human
-    description: The operator has specified the release tag, environment, and confirmed the deployment window.
-  release-tag-exists:
+    description: Human operator has approved production rollout.
+
+  # DR snapshot
+  dr-snapshot-taken:
     kind: deterministic
-    description: The specified release tag exists in the repository.
-  github-release-published:
+    description: Database snapshot created for the target environment.
+  dr-snapshot-labeled:
     kind: deterministic
-    description: GitHub release is published against the tag.
-  github-release-asset-published:
+    description: Snapshot labeled with release tag and environment name.
+  dr-snapshot-accessible:
     kind: deterministic
-    description: Release executable is attached to the GitHub release.
-  ghcr-images-published:
+    description: Snapshot verified accessible and restorable.
+
+  # Migration health checks
+  migrations-applied:
     kind: deterministic
-    description: Release-tagged container images exist in GHCR.
-  kubernetes-image-ready-signal-sent:
+  liveness-passing-after-migrations:
     kind: deterministic
-    description: Kubernetes infrastructure has received the image-ready signal for this release.
-  kubernetes-cluster-reachable:
+    description: All pod liveness probes pass after migration.
+  readiness-passing-after-migrations:
     kind: deterministic
-    description: The Kubernetes API server is reachable and the cluster can accept workload changes.
-  kubernetes-cluster-healthy-for-upgrade:
+    description: All pod readiness probes pass after migration.
+  deep-health-passing-after-migrations:
     kind: deterministic
-    description: All nodes Ready, no critical workloads degraded, cluster suitable for rolling upgrade.
-  database-migrations-applied:
-    kind: deterministic
-  running-system-healthy-after-migrations:
-    kind: deterministic
+    description: Deep health endpoint reports all dependencies connected.
+
+  # Frontend health checks
   frontend-rollout-complete:
     kind: deterministic
-  running-system-healthy-after-frontend:
+  liveness-passing-after-frontend:
     kind: deterministic
+  readiness-passing-after-frontend:
+    kind: deterministic
+  deep-health-passing-after-frontend:
+    kind: deterministic
+
+  # Worker health checks
   worker-rollout-complete:
     kind: deterministic
-  running-system-healthy-after-workers:
+  liveness-passing-after-workers:
     kind: deterministic
+  readiness-passing-after-workers:
+    kind: deterministic
+  deep-health-passing-after-workers:
+    kind: deterministic
+
+  # Static web health checks
   static-web-rollout-complete:
     kind: deterministic
-  running-system-healthy-after-static-web:
+  liveness-passing-after-static-web:
     kind: deterministic
+  readiness-passing-after-static-web:
+    kind: deterministic
+  deep-health-passing-after-static-web:
+    kind: deterministic
+  smoke-tests-passed:
+    kind: deterministic
+    description: Full smoke test suite passes end-to-end.
+
+  # Rollback checks
+  rollback-executed:
+    kind: deterministic
+    description: kubectl rollout undo executed for the failed deployment.
+  previous-revision-restored:
+    kind: deterministic
+    description: Previous workload revision is running and serving.
+  liveness-passing-after-rollback:
+    kind: deterministic
+  readiness-passing-after-rollback:
+    kind: deterministic
+  deep-health-passing-after-rollback:
+    kind: deterministic
+
+  # Audit
+  deployment-audit-written:
+    kind: deterministic
+    description: >
+      Structured deployment record written to deployments.jsonl containing:
+      timestamp, operator, release_tag, environment, phase, outcome,
+      duration_ms, image_digest.
 
 agent_prompts:
   deploy-orchestrator: |
-    Execute rollout phases in strict order: migrations → frontend → workers → static-web. Verify health after each phase. Stop immediately on health check failure — never proceed with a degraded system.
+    Execute rollout phases in strict order: migrations → frontend → workers →
+    static-web. After each phase, verify four health check types:
+
+    1. Liveness — kubectl get pods, check all containers have passing liveness probes
+    2. Readiness — kubectl get pods, check all containers have passing readiness probes
+       and are included in the service endpoints
+    3. Deep health — curl the /health/deep endpoint, verify all dependency checks pass
+    4. Smoke — run the smoke test suite against the environment's ingress URL
+
+    If ANY health check fails, stop immediately. The orchestration service
+    will execute kubectl rollout undo automatically. Do not attempt manual
+    remediation during a rollout.
 
 github_actions:
   proposed_required:
-    - workflow: .github/workflows/rollout-database.yml
-      used_for:
-        - database-migrations-applied
-        - running-system-healthy-after-migrations
-      purpose: Apply production database migrations and verify post-migration health.
-    - workflow: .github/workflows/rollout-frontend.yml
-      used_for:
-        - frontend-rollout-complete
-        - running-system-healthy-after-frontend
-      purpose: Roll out frontend application workloads and verify running health.
-    - workflow: .github/workflows/rollout-workers.yml
-      used_for:
-        - worker-rollout-complete
-        - running-system-healthy-after-workers
-      purpose: Roll out worker workloads and verify running health.
-    - workflow: .github/workflows/rollout-static-web.yml
-      used_for:
-        - static-web-rollout-complete
-        - running-system-healthy-after-static-web
-      purpose: Roll out the static web tier last and verify end-to-end health.
+    - workflow: .github/workflows/deploy-demo.yml
+      trigger: "push: branches (excluding main)"
+      purpose: >
+        Build branch-tagged image, push to GHCR, deploy to demo namespace
+        via kubectl set image. Fully automated, no approval required.
+        Uses KUBE_CONFIG_DEMO secret scoped to demo namespace only.
+      jobs:
+        - build-branch-image
+        - deploy-to-demo
+    - workflow: .github/workflows/deploy-stage.yml
+      trigger: "release: published"
+      purpose: >
+        Deploy release-tagged image to stage namespace via kubectl set image.
+        Fully automated, no approval required. Takes DR snapshot, applies
+        migrations, verifies all health checks.
+        Uses KUBE_CONFIG_STAGE secret scoped to stage namespace only.
+      jobs:
+        - stage-dr-snapshot
+        - stage-migrations
+        - stage-rollout
+        - stage-smoke-test
+    - workflow: .github/workflows/rollout-production.yml
+      trigger: "workflow_dispatch"
+      purpose: >
+        Production rollout. Manually triggered by operator. Takes DR snapshot,
+        applies migrations, rolls out all phases with eager rollback.
+        Uses KUBE_CONFIG_PROD secret scoped to production namespace only.
+        NEVER triggered by push, release, or schedule events.
+      jobs:
+        - prod-preflight
+        - prod-dr-snapshot
+        - prod-migrations
+        - prod-frontend
+        - prod-workers
+        - prod-static-web
+        - prod-smoke-test
