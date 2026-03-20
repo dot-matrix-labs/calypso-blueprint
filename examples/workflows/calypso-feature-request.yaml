@@ -6,12 +6,24 @@ states:
   intake:
     kind: human
     role: feature-requester
-    description: Human submits a feature request with motivation, intended experience, and constraints.
+    description: Human submits a feature request with motivation, intended experience, constraints, and user context.
     prompt: |
-      Describe the feature: motivation (why needed), intended experience (what user can do), known constraints (scope/approach limits).
+      Describe the feature by answering all of the following:
+
+      1. Motivation — why is this feature needed? What problem does it solve?
+      2. Intended experience — what can the user do once it ships? Describe observable behaviour, not implementation.
+      3. Known constraints — what is explicitly out of scope or restricted in approach?
+      4. Users and roles — who uses this feature? Name each role (e.g. super user, operator, customer). If internal-only, state "users: internal only".
+      5. User stories — for each role, provide at least one user story: "As a [role], I want to [action] so that [goal]."
+      6. CRUD views — what create/read/update/delete views does this feature require per role? (e.g. super user sees bulk-action table; operator sees filtered read-only view)
+      7. Permission boundaries — what can one role do that another cannot?
+
+      The request will be rejected if items 4 and 5 are missing or vague.
     completion:
       all_of:
         - feature-request-submitted
+        - user-roles-named
+        - user-stories-provided
     next:
       on_success: architecture-evaluation
 
@@ -97,7 +109,13 @@ states:
 checks:
   feature-request-submitted:
     kind: human
-    description: The feature request has been submitted with motivation, scope, and constraints.
+    description: The feature request has been submitted with motivation, scope, constraints, user roles, and user stories.
+  user-roles-named:
+    kind: human
+    description: At least one named user role is provided, or the requester has explicitly stated "users: internal only".
+  user-stories-provided:
+    kind: human
+    description: At least one user story ("As a [role], I want to [action] so that [goal]") is provided for each named role.
   architecture-clear:
     kind: agent
     role: architect
@@ -125,7 +143,7 @@ checks:
 
 agent_prompts:
   architect: |
-    Evaluate feature requests against current architecture. Assess feasibility, identify risks, determine if specific enough to implement. State exactly what is missing when clarification needed.
+    Evaluate feature requests against current architecture. Assess feasibility, identify risks, determine if specific enough to implement. Verify that at least one named user role and one user story per role are present — reject if missing. State exactly what is missing when clarification needed.
   feature-definer: |
     Create well-structured GitHub issues from approved feature requests: motivation, scope, acceptance criteria, architectural context.
   planner: |

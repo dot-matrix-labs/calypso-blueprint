@@ -1,6 +1,6 @@
 corpus_version: 1
 generated: '2026-03-14T00:00:00Z'
-rule_count: 1090
+rule_count: 1092
 nodes:
   8a4c23247926: [ARCH-T-001, server-code-in-browser-bundle, threat, ARCH, blueprints/arch]
   13b949d1669d: [ARCH-T-002, browser-code-on-server, threat, ARCH, blueprints/arch]
@@ -362,6 +362,7 @@ nodes:
   f67b4697ac23: [PROCESS-P-007, infrastructure-enforces-sequencing, principle, PROCESS, blueprints/process]
   6fab3fb9c823: [PROCESS-P-008, deterministic-gates-first-class, principle, PROCESS, blueprints/process]
   7d2a9f1e50c3: [PROCESS-P-009, main-is-always-deployable, principle, PROCESS, blueprints/process]
+  c7e4b2d18f39: [PROCESS-P-010, user-grounded-intake, principle, PROCESS, blueprints/process]
   ce4b1e4f537f: [PROCESS-D-001, three-document-planning-loop, design_pattern, PROCESS, blueprints/process]
   7adecf113ceb: [PROCESS-D-002, self-advancing-state-machine, design_pattern, PROCESS, blueprints/process]
   d1479e8e74df: [PROCESS-D-003, calypso-yaml-workflow-definition, design_pattern, PROCESS, blueprints/process]
@@ -422,6 +423,7 @@ nodes:
   b7e3a0f18d52: [PROCESS-C-029, pr-conflicts-workflow-deployed, checklist, PROCESS, blueprints/process]
   d5c2e9a14f86: [PROCESS-C-030, pr-single-issue-workflow-deployed, checklist, PROCESS, blueprints/process]
   a8d4f1e903b6: [PROCESS-C-031, merge-queue-ruleset-applied, checklist, PROCESS, blueprints/process]
+  e1b7d5f290a4: [PROCESS-C-032, intake-user-roles-and-stories-present, checklist, PROCESS, blueprints/process]
   96efe7bb1102: [PRUNE-T-001, false-positive-pruning, threat, PRUNE, blueprints/prune]
   ebaa368d90a0: [PRUNE-T-002, silent-removal-without-notice, threat, PRUNE, blueprints/prune]
   677815eb04f0: [PRUNE-T-003, feature-flag-left-permanently-disabled, threat, PRUNE, blueprints/prune]
@@ -1751,6 +1753,7 @@ edges:
 - [7d2a9f1e50c3, mitigates, a1f3c8e24b91]
 - [7d2a9f1e50c3, refines, 6fab3fb9c823]
 - [7d2a9f1e50c3, refines, b4e71d903a28]
+- [c7e4b2d18f39, refines, 036dcf4739fc]
 - [ce4b1e4f537f, refines, 22de09615f92]
 - [ce4b1e4f537f, refines, c93476ff124b]
 - [ce4b1e4f537f, refines, 7adecf113ceb]
@@ -1879,6 +1882,8 @@ edges:
 - [d5c2e9a14f86, verifies, b4e71d903a28]
 - [a8d4f1e903b6, verifies, f3a9c2e17b05]
 - [a8d4f1e903b6, verifies, b4e71d903a28]
+- [e1b7d5f290a4, verifies, c7e4b2d18f39]
+- [e1b7d5f290a4, verifies, 036dcf4739fc]
 - [96efe7bb1102, depends_on, 1438ada3a835]
 - [96efe7bb1102, depends_on, c2a7486d692b]
 - [96efe7bb1102, depends_on, 7318713d7b43]
