@@ -2,6 +2,10 @@ version: 1
 name: calypso-pr-review-merge
 initial_state: check-pr-structure
 
+# Prerequisite: the GitHub merge queue branch ruleset must be active on the
+# repository (applied by ScaffoldMergeQueue during calypso init). Without it,
+# the assign-merge-queue and execute-merge states cannot sequence PRs atomically.
+#
 # Review gates (in order):
 #   a) pr structure      — single issue ref, no conflicts, issue tasks complete
 #   b) feature complete  — all issue checkboxes checked, acceptance criteria met
