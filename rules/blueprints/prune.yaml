@@ -1,0 +1,553 @@
+meta:
+  domain: PRUNE
+  title: Feature Pruning Blueprint
+  version: 1
+  requires:
+    - DEPLOY
+    - DATA
+  vision: |
+    Software systems accumulate features the way houses accumulate furniture: each addition seemed
+    reasonable at the time, but the aggregate becomes a maintenance burden that slows every future
+    change. Dead features carry real costs — test surface, dependency coupling, security attack
+    surface, onboarding confusion, and agent cognitive load. An AI-driven application that cannot
+    prune itself is not self-improving; it is self-accumulating.
+
+    Feature pruning is not deletion. It is a disciplined, observable pipeline that moves a feature
+    from "suspected unused" to "safely removed" through four governed stages: signal collection,
+    deprecation notice, flag-gated disablement, and code removal. Each stage is separated by time
+    and human-review gates to prevent false-positive removals. The pipeline is driven by analytics
+    evidence, not opinion.
+
+    The central risk in any pruning system is the false positive: removing a feature that is
+    infrequently used but critically important to the users who do use it, or one that is dormant
+    by design while awaiting a future dependent feature. These false positives erode user trust and
+    create emergency rollback work. The pipeline therefore requires corroborating signals, explicit
+    agent annotation for dormant-by-design features, and a public "speak now or forever hold your
+    peace" notice period before any capability disappears from view.
+
+    The cost of ignoring this blueprint is a system that grows without bound, where every added
+    feature increases the surface that every future agent must reason about. Pruning is not
+    housekeeping — it is the mechanism that keeps the system comprehensible to both humans and
+    agents across years of autonomous development.
+
+rules:
+  # ── Threats ──────────────────────────────────────────────────────────────────
+
+  - number: PRUNE-T-001
+    hash: 96efe7bb1102
+    name: false-positive-pruning
+    type: threat
+    description: >
+      A feature is identified as unused and removed, but it was actually serving
+      a small but critical user segment, or was dormant by design pending a
+      future release. Corroborating signal requirements and agent annotations
+      must protect against premature removal.
+    links:
+      - {target: 1438ada3a835, rel: depends_on}
+      - {target: c2a7486d692b, rel: depends_on}
+      - {target: 7318713d7b43, rel: depends_on}
+    deprecated: false
+
+  - number: PRUNE-T-002
+    hash: ebaa368d90a0
+    name: silent-removal-without-notice
+    type: threat
+    description: >
+      A feature is disabled or removed without users being notified in advance.
+      Users lose capability without warning, eroding trust and triggering
+      emergency support escalations.
+    links:
+      - {target: 07ee97f9b031, rel: depends_on}
+    deprecated: false
+
+  - number: PRUNE-T-003
+    hash: 677815eb04f0
+    name: feature-flag-left-permanently-disabled
+    type: threat
+    description: >
+      A feature is placed behind a flag and disabled, but the code removal stage
+      never executes. Dead code accumulates behind permanent false flags,
+      increasing maintenance surface without providing value.
+    links:
+      - {target: 0f951a811306, rel: depends_on}
+    deprecated: false
+
+  - number: PRUNE-T-004
+    hash: 75d6a3dd9d6a
+    name: analytics-blind-spots
+    type: threat
+    description: >
+      Analytics instrumentation is incomplete. An API route, UI surface, or
+      role-gated action lacks usage telemetry. The pruning pipeline cannot
+      distinguish "never used" from "untracked."
+    links:
+      - {target: 9d2eb17aef39, rel: depends_on}
+    deprecated: false
+
+  - number: PRUNE-T-005
+    hash: 48e1b33b54ab
+    name: rollback-unavailable-after-code-removal
+    type: threat
+    description: >
+      Code is removed in the final pruning stage before the feature has been
+      disabled long enough to confirm no user objections. Rollback becomes
+      expensive because the code no longer exists.
+    links:
+      - {target: 0f951a811306, rel: depends_on}
+      - {target: 4dccbb1f2ad0, rel: depends_on}
+    deprecated: false
+
+  # ── Principles ───────────────────────────────────────────────────────────────
+
+  - number: PRUNE-P-001
+    hash: 1438ada3a835
+    name: evidence-before-action
+    type: principle
+    description: >
+      No feature may enter the pruning pipeline without corroborating analytics
+      evidence across multiple independent signal dimensions: UI interaction
+      rates, API call frequency, role access patterns, and page view counts.
+      A single zero-signal dimension is insufficient; the feature must be
+      unobserved across all applicable dimensions before pruning is proposed.
+    links:
+      - {target: 96efe7bb1102, rel: mitigates}
+      - {target: 75d6a3dd9d6a, rel: mitigates}
+    deprecated: false
+
+  - number: PRUNE-P-002
+    hash: c2a7486d692b
+    name: agents-annotate-dormant-by-design
+    type: principle
+    description: >
+      When an agent implements a feature that is intentionally dormant — awaiting
+      a future dependent feature before it can be exercised — the agent must
+      annotate the code with a structured comment that is parseable by the
+      pruning pipeline. The annotation must state the dependency that must be
+      released before this feature becomes active. The pruning pipeline must
+      treat annotated dormant features as ineligible for pruning until the named
+      dependency has shipped.
+    links:
+      - {target: 96efe7bb1102, rel: mitigates}
+    deprecated: false
+
+  - number: PRUNE-P-003
+    hash: 7318713d7b43
+    name: four-stage-pipeline
+    type: principle
+    description: >
+      Feature pruning proceeds through exactly four stages in order, with no
+      stage skipped: (1) signal collection and report generation, (2) deprecation
+      notice to users with the feature placed behind a feature flag that remains
+      enabled, (3) flag flip to disabled on a database-scheduled date, (4) code
+      removal in a future release after the silence period passes. Each stage
+      transition requires explicit approval.
+    links:
+      - {target: 96efe7bb1102, rel: mitigates}
+      - {target: ebaa368d90a0, rel: mitigates}
+      - {target: 677815eb04f0, rel: mitigates}
+      - {target: 48e1b33b54ab, rel: mitigates}
+    deprecated: false
+
+  - number: PRUNE-P-004
+    hash: 07ee97f9b031
+    name: speak-now-or-forever-hold-your-peace
+    type: principle
+    description: >
+      On the release that introduces a deprecation notice, users who interact
+      with a marked feature must see an in-product notice informing them the
+      feature is scheduled for removal and providing a feedback channel or
+      deadline. The notice must appear for at least one full release cycle before
+      the feature is disabled. Disabling a feature without this notice is a
+      process violation.
+    links:
+      - {target: ebaa368d90a0, rel: mitigates}
+    deprecated: false
+
+  - number: PRUNE-P-005
+    hash: 0f951a811306
+    name: flags-are-database-rows-not-code
+    type: principle
+    description: >
+      Feature flag state is stored in the database, not in application code or
+      environment variables. Enabling or disabling a feature is a data operation
+      with an audit trail. The scheduled disable date is a database field, not a
+      calendar reminder. This makes the flag state observable, reversible, and
+      automatable without a code deployment.
+    links:
+      - {target: 677815eb04f0, rel: mitigates}
+      - {target: 48e1b33b54ab, rel: mitigates}
+      - {target: 75d6a3dd9d6a, rel: refines}
+    deprecated: false
+
+  - number: PRUNE-P-006
+    hash: 9d2eb17aef39
+    name: every-surface-is-instrumented
+    type: principle
+    description: >
+      Every user-visible feature surface must emit a usage event to the analytics
+      system. This includes: UI button clicks, page views, API endpoint calls,
+      and role-gated capability exercises. A feature surface without analytics
+      instrumentation is a compliance violation that blocks deployment. The
+      pruning pipeline treats absent instrumentation as a blocking gap, not as
+      a zero-usage signal.
+    links:
+      - {target: 75d6a3dd9d6a, rel: mitigates}
+    deprecated: false
+
+  - number: PRUNE-P-007
+    hash: 4d3b72367590
+    name: silence-period-before-code-removal
+    type: principle
+    description: >
+      Code removal may only occur after the feature has been disabled in production
+      for a minimum silence period (default: one full release cycle, minimum 30
+      days). During this period, the feature flag remains in the database set to
+      disabled, preserving the ability to re-enable without a code deployment if
+      a complaint surfaces. Only after the silence period expires with no
+      escalation may the code removal PR be opened.
+    links:
+      - {target: 48e1b33b54ab, rel: mitigates}
+      - {target: 677815eb04f0, rel: mitigates}
+    deprecated: false
+
+  # ── Design Patterns ───────────────────────────────────────────────────────────
+
+  - number: PRUNE-D-001
+    hash: 4dccbb1f2ad0
+    name: usage-signal-collection-report
+    type: design_pattern
+    description: >
+      An analytics agent queries all tracked surfaces across a configurable
+      lookback window and produces a structured pruning candidate report. The
+      report includes: feature name, surface type (UI/API/role), usage count,
+      last-seen timestamp, and a dormant-by-design annotation flag. Features with
+      zero usage across all dimensions for the full lookback window are listed as
+      candidates. Features with a dormant annotation are excluded. The report is
+      the required input to stage 1 of the pipeline.
+    problem: |
+      Without a structured collection process, pruning decisions are made on
+      intuition or incomplete evidence. An agent reviewing the codebase cannot
+      distinguish a genuinely unused feature from one that is used infrequently
+      by a small but important segment.
+    solution: |
+      An analytics agent queries telemetry for all instrumented surfaces across a
+      configurable lookback window (default: 90 days). For each feature it
+      collects: click/interaction counts per UI element, request counts per API
+      route, and access counts per role-gated capability. It cross-references these
+      signals with the codebase's dormant-by-design annotations (see PRUNE-P-002).
+      The output is a machine-readable YAML report listing pruning candidates with
+      full evidence, and a separate list of dormant-by-design exclusions with their
+      dependency requirements. A human or orchestrating agent reviews this report
+      before any pipeline stage advances.
+    tradeoffs: |
+      The lookback window is a tunable parameter that trades recall (longer windows
+      catch infrequent but real usage) against freshness (shorter windows respond
+      faster to genuine abandonment). The default of 90 days is conservative.
+      Teams with high release cadence may reduce this; teams with long user cycles
+      (e.g., annual budget tools) should extend it.
+    links:
+      - {target: 1438ada3a835, rel: refines}
+      - {target: 9d2eb17aef39, rel: refines}
+      - {target: 96efe7bb1102, rel: mitigates}
+      - {target: 75d6a3dd9d6a, rel: mitigates}
+    deprecated: false
+
+  - number: PRUNE-D-002
+    hash: 944704e35afa
+    name: deprecation-flag-rollout
+    type: design_pattern
+    description: >
+      The development agent creates a feature flag database entry for each pruning
+      candidate approved from the report. The flag is initially set to enabled.
+      The same release adds in-product deprecation notices wherever the feature
+      is rendered. No functional code changes in this stage — only the notice UI
+      and the flag row. This decouples announcement from disablement.
+    problem: |
+      If deprecation notice and feature disablement are bundled into the same
+      release, users have no opportunity to object before losing access. If notice
+      is added without a flag, disablement later requires a full code deployment
+      rather than a data operation.
+    solution: |
+      Stage 2 is a two-part release: (a) add a feature_flags table row for the
+      feature with state=enabled and a scheduled_disable_at timestamp set to at
+      least one release cycle in the future; (b) add in-product UI notices at all
+      touch points where the feature is exposed, informing users of the scheduled
+      removal date and the feedback channel. No other code changes. The feature
+      remains fully functional. The flag row establishes the database-driven
+      control point for stage 3.
+    tradeoffs: |
+      Requires the feature_flags table and a flag evaluation middleware to exist
+      before the first pruning cycle. This is a one-time infrastructure cost.
+      Teams without an existing flag system should implement PRUNE-D-003 before
+      beginning any pruning cycles.
+    links:
+      - {target: 7318713d7b43, rel: refines}
+      - {target: 07ee97f9b031, rel: refines}
+      - {target: 0f951a811306, rel: refines}
+    deprecated: false
+
+  - number: PRUNE-D-003
+    hash: c16a927bb6e2
+    name: database-driven-flag-schema
+    type: design_pattern
+    description: >
+      The feature_flags table stores each flag as a row with name, state, owner,
+      created_at, scheduled_disable_at, disabled_at, and removal_eligible_at
+      columns. A scheduled job evaluates scheduled_disable_at on each release and
+      flips state to disabled. The removal_eligible_at column is set to
+      disabled_at plus the silence period, enabling automated PR gating for code
+      removal. All flag state changes are append-only audit rows.
+    problem: |
+      Feature flags stored in code or environment variables cannot be changed
+      without a deployment, cannot be audited without git blame, and cannot be
+      scheduled without external tooling. They also cannot be re-enabled instantly
+      if a user complaint surfaces after disablement.
+    solution: |
+      Define a feature_flags table with the following columns:
+        - id: primary key
+        - name: unique feature identifier (matches code annotation)
+        - state: enum(enabled, deprecated_notice, disabled)
+        - owner: team or agent that initiated pruning
+        - created_at: timestamp
+        - scheduled_disable_at: timestamp — when the flag will auto-flip to disabled
+        - disabled_at: timestamp — when the flag was actually disabled (set on flip)
+        - removal_eligible_at: computed as disabled_at + silence_period
+        - notes: free text for audit context
+      A background job runs on each deployment, checks scheduled_disable_at against
+      now(), and flips qualifying flags to disabled. The application's flag
+      evaluation middleware reads this table at request time (with a short TTL
+      cache). Re-enabling a disabled flag is a single UPDATE with no deployment.
+    tradeoffs: |
+      Adds a database read per request for flag evaluation (mitigated by TTL cache).
+      Requires the scheduled job and middleware to be implemented before the pruning
+      pipeline can operate. This is foundational infrastructure, not per-feature work.
+    links:
+      - {target: 0f951a811306, rel: refines}
+      - {target: 944704e35afa, rel: refines}
+      - {target: 677815eb04f0, rel: mitigates}
+    deprecated: false
+
+  - number: PRUNE-D-004
+    hash: b63537e4c2fe
+    name: dormant-by-design-annotation
+    type: design_pattern
+    description: >
+      Features awaiting future dependencies are annotated with a structured
+      machine-readable comment adjacent to their entry point in source code. The
+      annotation format is parseable by the analytics agent and blocks pruning
+      eligibility until the named dependency ships.
+    problem: |
+      An agent building a feature that cannot yet be exercised — because the
+      dependent feature is not yet released — produces code that will appear unused
+      in analytics. Without an explicit annotation, the pruning pipeline will
+      incorrectly flag it as a candidate.
+    solution: |
+      Use a standardized comment block at the feature's primary entry point
+      (route handler, component root, or capability guard):
+
+        # DORMANT_BY_DESIGN
+        # depends_on: <feature-name-or-issue-id>
+        # reason: <one-line human-readable explanation>
+        # reviewed_at: <ISO date when annotation was last confirmed correct>
+
+      The analytics agent's collection step must scan for these annotations and
+      exclude matching features from the pruning candidate report. The annotation
+      must be removed by the implementing agent when the dependency ships. A
+      stale reviewed_at date (older than 6 months) triggers a warning in the
+      report but does not re-enable pruning eligibility.
+    tradeoffs: |
+      Relies on agents correctly annotating their own work. An unannotated dormant
+      feature will appear as a pruning candidate. Code review and the agent's
+      post-implementation checklist (PRUNE-C-003) are the enforcement mechanisms.
+    links:
+      - {target: c2a7486d692b, rel: refines}
+      - {target: 96efe7bb1102, rel: mitigates}
+      - {target: 4dccbb1f2ad0, rel: refines}
+    deprecated: false
+
+  # ── Anti-patterns ─────────────────────────────────────────────────────────────
+
+  - number: PRUNE-A-001
+    hash: 410de2901fcb
+    name: pruning-by-intuition
+    type: antipattern
+    description: >
+      Removing or deprecating features based on developer or agent opinion about
+      what "seems unused" rather than analytics evidence. This is the primary
+      cause of false-positive removals. All pruning candidates must originate from
+      the signal collection report (PRUNE-D-001).
+    links:
+      - {target: 1438ada3a835, rel: violates}
+      - {target: 96efe7bb1102, rel: triggers}
+    deprecated: false
+
+  - number: PRUNE-A-002
+    hash: b65d1aefe315
+    name: bundling-notice-and-removal
+    type: antipattern
+    description: >
+      Combining the deprecation notice and the feature disablement into a single
+      release. Users see "this feature is going away" and immediately lose access
+      in the same session. This eliminates the feedback window and violates
+      PRUNE-P-004.
+    links:
+      - {target: 07ee97f9b031, rel: violates}
+      - {target: ebaa368d90a0, rel: triggers}
+    deprecated: false
+
+  - number: PRUNE-A-003
+    hash: 0816bfef59b6
+    name: code-flags-instead-of-database-flags
+    type: antipattern
+    description: >
+      Implementing feature flags as constants, environment variables, or
+      compile-time conditionals rather than database rows. Code flags cannot be
+      toggled without a deployment, cannot be scheduled, and cannot be audited.
+      They defeat the entire purpose of the flag stage in the pruning pipeline.
+    links:
+      - {target: 0f951a811306, rel: violates}
+      - {target: 677815eb04f0, rel: triggers}
+    deprecated: false
+
+  - number: PRUNE-A-004
+    hash: 49694d18f98b
+    name: skipping-silence-period
+    type: antipattern
+    description: >
+      Opening a code removal PR immediately after a feature flag is flipped to
+      disabled, without waiting for the silence period. If a user complaint
+      surfaces after code removal, re-enabling the feature requires a new
+      development cycle rather than a single database UPDATE.
+    links:
+      - {target: 48e1b33b54ab, rel: violates}
+      - {target: 0f951a811306, rel: violates}
+    deprecated: false
+
+  # ── Architecture ──────────────────────────────────────────────────────────────
+
+  - number: PRUNE-AR-001
+    hash: fdf787257fb4
+    name: pruning-pipeline-stages
+    type: architecture
+    description: >
+      The pruning pipeline is a four-stage state machine. Each feature under
+      consideration occupies exactly one stage at any time. Stage transitions
+      require explicit approval and produce a durable audit record. The pipeline
+      is driven by the feature_flags table (PRUNE-D-003) and the analytics signal
+      report (PRUNE-D-001).
+
+      Stage 1 — Candidate Identification:
+        Input: analytics telemetry over the lookback window.
+        Process: analytics agent generates the signal report; dormant-by-design
+          annotations are applied as exclusions; humans review and approve candidates.
+        Output: approved candidate list with corroborating evidence.
+        Gate: human or product owner sign-off on each candidate.
+
+      Stage 2 — Deprecation Notice + Flag Creation:
+        Input: approved candidate list.
+        Process: development agent creates feature_flags rows (state=deprecated_notice,
+          scheduled_disable_at=now+notice_period); adds in-product notices at all
+          feature touch points. No functional code changes.
+        Output: deployed release with notice UI and flag rows in database.
+        Gate: release deployment and successful health check.
+
+      Stage 3 — Flag Flip to Disabled:
+        Input: scheduled_disable_at date reached.
+        Process: background job flips flag state to disabled; application middleware
+          hides or blocks the feature; disabled_at and removal_eligible_at are set.
+        Output: feature inaccessible to users; flag row updated; monitoring alert
+          watching for user-reported errors for 48 hours post-flip.
+        Gate: silence period (removal_eligible_at) must pass with no escalations.
+
+      Stage 4 — Code Removal:
+        Input: removal_eligible_at passed with no escalations.
+        Process: development agent opens a PR removing all code paths behind the flag,
+          the flag row itself, all associated tests, and the deprecation notice UI.
+          The PR description references the pruning pipeline audit trail.
+        Output: clean codebase; feature flag table row archived (not deleted) for
+          audit history.
+        Gate: PR review and CI passage.
+    links:
+      - {target: 7318713d7b43, rel: refines}
+      - {target: 4dccbb1f2ad0, rel: refines}
+      - {target: 944704e35afa, rel: refines}
+      - {target: c16a927bb6e2, rel: refines}
+      - {target: 0f951a811306, rel: refines}
+    deprecated: false
+
+  # ── Checklists ────────────────────────────────────────────────────────────────
+
+  - number: PRUNE-C-001
+    hash: 4d57f8e54c9f
+    name: analytics-coverage-complete
+    type: checklist
+    description: >
+      All user-visible feature surfaces (UI buttons, page views, API routes,
+      role-gated actions) emit usage events to the analytics system.
+    links:
+      - {target: 9d2eb17aef39, rel: verifies}
+    deprecated: false
+
+  - number: PRUNE-C-002
+    hash: 01398d6cad24
+    name: feature-flags-table-exists
+    type: checklist
+    description: >
+      The feature_flags table is present in the database schema with all required
+      columns (PRUNE-D-003), and the flag evaluation middleware is active on all
+      feature-gated routes.
+    links:
+      - {target: c16a927bb6e2, rel: verifies}
+      - {target: 0f951a811306, rel: verifies}
+    deprecated: false
+
+  - number: PRUNE-C-003
+    hash: 57e7cbd5c6f6
+    name: dormant-features-annotated
+    type: checklist
+    description: >
+      Any feature implemented but not yet exercisable due to an unshipped
+      dependency carries a DORMANT_BY_DESIGN annotation with a valid depends_on
+      reference and a reviewed_at date within the last 6 months.
+    links:
+      - {target: c2a7486d692b, rel: verifies}
+      - {target: b63537e4c2fe, rel: verifies}
+    deprecated: false
+
+  - number: PRUNE-C-004
+    hash: da1407058697
+    name: notice-period-elapsed-before-disable
+    type: checklist
+    description: >
+      The scheduled_disable_at date for each flagged feature is at least one full
+      release cycle (minimum 30 days) after the deprecation notice release date.
+    links:
+      - {target: 07ee97f9b031, rel: verifies}
+      - {target: 944704e35afa, rel: verifies}
+    deprecated: false
+
+  - number: PRUNE-C-005
+    hash: 2c18d779967e
+    name: silence-period-elapsed-before-removal
+    type: checklist
+    description: >
+      The removal_eligible_at timestamp has passed and no escalations have been
+      recorded in the audit trail before the code removal PR is opened.
+    links:
+      - {target: 48e1b33b54ab, rel: verifies}
+      - {target: 4dccbb1f2ad0, rel: verifies}
+    deprecated: false
+
+  - number: PRUNE-C-006
+    hash: 8aae5f3fea65
+    name: removal-pr-removes-all-artifacts
+    type: checklist
+    description: >
+      The code removal PR deletes: all feature code paths behind the flag, the
+      flag evaluation branch in middleware, the deprecation notice UI, and all
+      associated tests. The feature_flags row is archived (state=archived), not
+      deleted, to preserve the audit trail.
+    links:
+      - {target: fdf787257fb4, rel: verifies}
+      - {target: 49694d18f98b, rel: mitigates}
+    deprecated: false
