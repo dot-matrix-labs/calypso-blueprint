@@ -329,6 +329,20 @@ rules:
       - {target: b4e71d903a28, rel: refines}
     deprecated: false
 
+  - number: PROCESS-P-010
+    hash: "c7e4b2d18f39"
+    name: user-grounded-intake
+    type: principle
+    description: >
+      Every feature request must identify at least one named user role and
+      provide at least one user story per role before it advances to
+      architecture evaluation. Features specified without user context produce
+      implementations that serve the implementer's assumptions rather than
+      actual user needs.
+    links:
+      - {target: 036dcf4739fc, rel: refines}   # PROCESS-D-008 structured-requirements-interview
+    deprecated: false
+
   # ── Design Patterns ─────────────────────────────────────────────────────────
 
   - number: PROCESS-D-001
@@ -1495,6 +1509,20 @@ rules:
     links:
       - {target: f3a9c2e17b05, rel: verifies}   # PROCESS-D-016
       - {target: b4e71d903a28, rel: verifies}   # PROCESS-D-011
+    deprecated: false
+
+  - number: PROCESS-C-032
+    hash: "e1b7d5f290a4"
+    name: intake-user-roles-and-stories-present
+    type: checklist
+    description: >
+      Every feature request submitted through the intake state names at least
+      one user role and provides at least one user story per role before
+      advancing to architecture evaluation. Internal-only features satisfy this
+      by explicitly stating "users: internal only".
+    links:
+      - {target: c7e4b2d18f39, rel: verifies}   # PROCESS-P-010
+      - {target: 036dcf4739fc, rel: verifies}   # PROCESS-D-008
     deprecated: false
 
 repo_standards:
