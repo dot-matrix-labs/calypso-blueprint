@@ -805,6 +805,42 @@ rules:
       - {target: f67b4697ac23, rel: refines}
     deprecated: false
 
+  - number: PROCESS-D-016
+    hash: "f3a9c2e17b05"
+    name: merge-queue-ruleset-scaffold
+    type: design_pattern
+    description: >
+      Apply the GitHub merge queue branch ruleset during the init scaffold step
+      so the merge agent can sequence concurrent PRs atomically. The ruleset
+      uses HEADGREEN grouping: each PR merges independently as soon as its own
+      checks pass, rather than waiting for every queued PR to be green.
+    problem: |
+      Without a GitHub merge queue ruleset the merge agent has no atomic
+      mechanism for sequencing multiple ready PRs. Ad-hoc ordering creates race
+      conditions: two agents can merge conflicting PRs concurrently, or a slow
+      CI job on one PR blocks all other ready PRs from landing.
+    solution: |
+      Add a scaffold-merge-queue step to the init state machine, after
+      scaffold-github-actions. The step applies
+      examples/github-workflows/ruleset.json via:
+
+        gh api --method POST repos/{owner}/{repo}/rulesets \
+          --input examples/github-workflows/ruleset.json
+
+      The ruleset includes a merge_queue rule with grouping_strategy: HEADGREEN
+      and min_entries_to_merge: 1 so single PRs are not held waiting for a
+      batch. If a ruleset already exists the step is skipped. If the gh CLI
+      lacks permissions the step transitions to blocked with a clear error.
+      After scaffolding, the merge agent submits PRs via `gh pr merge --merge`,
+      which enqueues them when the ruleset is active.
+    tradeoffs: |
+      HEADGREEN merges each PR on its own schedule, maximising throughput.
+      PRs that touch shared files and must land in order must declare explicit
+      Depends-on references to enforce sequencing.
+    links:
+      - {target: b4e71d903a28, rel: refines}   # PROCESS-D-011
+    deprecated: false
+
   # ── Architectures ────────────────────────────────────────────────────────────
 
   - number: PROCESS-A-001
@@ -1447,6 +1483,20 @@ rules:
       - {target: b4e71d903a28, rel: verifies}   # PROCESS-D-011
     deprecated: false
 
+  - number: PROCESS-C-031
+    hash: "a8d4f1e903b6"
+    name: merge-queue-ruleset-applied
+    type: checklist
+    description: >
+      The merge queue ruleset (examples/github-workflows/ruleset.json) has been
+      applied to the repository via the GitHub Rulesets API with
+      grouping_strategy: HEADGREEN, and the merge agent submits PRs via
+      `gh pr merge --merge` to enqueue them.
+    links:
+      - {target: f3a9c2e17b05, rel: verifies}   # PROCESS-D-016
+      - {target: b4e71d903a28, rel: verifies}   # PROCESS-D-011
+    deprecated: false
+
 repo_standards:
   description: >
     Concrete repository configuration standards for all Calypso projects.
@@ -1505,6 +1555,8 @@ repo_standards:
     - "First PR through the gate demonstrates all 9 checks required and passing before merge"
     - "Admin account verified unable to bypass the gate (test with a PR that has a failing check)"
     - "Coverage threshold verified: a PR that drops below 99% line coverage is blocked"
+    - "Merge queue ruleset applied via ScaffoldMergeQueue init step with grouping_strategy: HEADGREEN"
+    - "Merge agent submits PRs via `gh pr merge --merge` to enqueue them through the active ruleset"
 
 development_state_machine:
   description: >
@@ -1608,6 +1660,13 @@ development_state_machine:
             purpose: Blocks merge if a Depends-on predecessor PR is unmerged
           - file: .github/workflows/ci.yml
             purpose: Generic CI placeholder; teams replace the run step with their test command
+      - slug: scaffold-merge-queue
+        name: ScaffoldMergeQueue
+        description: >
+          Apply the GitHub merge queue branch ruleset from
+          examples/github-workflows/ruleset.json using the GitHub Rulesets API.
+          Skipped if the ruleset already exists. Transitions to blocked with a
+          clear error if the gh CLI lacks sufficient permissions.
       - slug: configure-local
         name: ConfigureLocal
         description: >
@@ -1632,6 +1691,8 @@ development_state_machine:
       - from: CreateUpstream
         to: ScaffoldGithubActions
       - from: ScaffoldGithubActions
+        to: ScaffoldMergeQueue
+      - from: ScaffoldMergeQueue
         to: ConfigureLocal
       - from: ConfigureLocal
         to: VerifySetup
