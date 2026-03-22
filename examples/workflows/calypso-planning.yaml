@@ -1,233 +1,157 @@
-version: 1
 name: calypso-planning
-initial_state: fetch-open-issues
-
-# Entry point: the orchestrator dispatches here at startup, before each development
-# cycle, and whenever the issue backlog or the mother plan is significantly changed.
-#
-# The mother plan lives at docs/plan.md and is the authoritative source of feature
-# phases, dependency ordering, and prioritization. GitHub issues are the authoritative
-# source of open work. These two must stay in sync.
-
-plan:
-  document: docs/plan.md
-  issue_tracker: github
-  priority_labels: [p0, p1, p2, p3]
-
-states:
+'on':
+  workflow_call: null
+  workflow_dispatch: null
+jobs:
   fetch-open-issues:
-    kind: agent
-    role: planner
-    cost: cheap
-    description: >
-      Retrieve all open GitHub issues and classify each one by type and phase.
-    prompt: |
-      Run `gh issue list --state open --json number,title,labels,body,assignees,milestone`. Classify each issue by type (feature|bug|chore|spike|question), phase (from label/milestone), and dependencies (depends-on/blocked-by refs in body). Output a structured list.
-    completion:
-      all_of:
-        - open-issues-retrieved
-        - issues-classified
-    next:
-      on_success: reconcile-plan
-      on_failure: blocked
-
+    needs: blocked
+    if: needs.blocked.outputs.event == 'issue-cleared'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: planner
+        cost: cheap
+        prompt: |
+          Run `gh issue list --state open --json number,title,labels,body,assignees,milestone`. Classify each issue by type (feature|bug|chore|spike|question), phase (from label/milestone), and dependencies (depends-on/blocked-by refs in body). Output a structured list.
   reconcile-plan:
-    kind: agent
-    role: planner
-    cost: default
-    description: >
-      Cross-reference open issues against docs/plan.md. Add missing issues to the plan.
-      Resolve plan items that have no corresponding open issue.
-    prompt: |
-      Cross-reference open issues against docs/plan.md.
-      - Open issue NOT in plan → add to appropriate phase (backlog if unclear), record issue number.
-      - Plan item with NO open issue → if closed/merged mark complete, if broken reference flag as orphan.
-      Write all changes to docs/plan.md. Record every decision.
-    completion:
-      all_of:
-        - plan-covers-all-open-issues
-        - plan-orphans-resolved-or-flagged
-        - plan-document-updated
-    next:
-      on_success: check-orphans
-      on_failure: blocked
-
+    needs:
+    - blocked
+    - fetch-open-issues
+    if: needs.blocked.outputs.event == 'retry-reconcile' || needs.fetch-open-issues.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: planner
+        cost: default
+        prompt: |
+          Cross-reference open issues against docs/plan.md.
+          - Open issue NOT in plan → add to appropriate phase (backlog if unclear), record issue number.
+          - Plan item with NO open issue → if closed/merged mark complete, if broken reference flag as orphan.
+          Write all changes to docs/plan.md. Record every decision.
   check-orphans:
-    kind: deterministic
-    description: >
-      Gate: if any plan items were flagged as unresolvable orphans, route to human
-      review. If the plan is clean, proceed directly to reprioritization.
-    checks:
-      - no-unresolved-orphans
-    next:
-      on_pass: reprioritize
-      on_fail: resolve-orphans
-
+    needs: reconcile-plan
+    if: needs.reconcile-plan.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      run: |-
+        echo 'Running checks: no-unresolved-orphans'
+        echo "event=on_pass" >> "$GITHUB_OUTPUT"
+      shell: bash
   resolve-orphans:
-    kind: human
-    role: operator-or-orchestrator
-    description: >
-      One or more plan items have no corresponding open GitHub issue and could not be
-      automatically resolved. Human decides what to do with each one.
-    prompt: |
-      Plan items found with no corresponding open issue. For each: reopen/create the issue if needed, remove if irrelevant, or leave a note. Mark complete when all orphans resolved.
-    completion:
-      all_of:
-        - no-unresolved-orphans
-    next:
-      on_success: reprioritize
-
+    needs: check-orphans
+    if: needs.check-orphans.outputs.event == 'on_fail'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-human-gate
+      with:
+        prompt: |
+          Plan items found with no corresponding open issue. For each: reopen/create the issue if needed, remove if irrelevant, or leave a note. Mark complete when all orphans resolved.
   reprioritize:
-    kind: agent
-    role: planner
-    cost: guru
-    description: >
-      Reorder all items in each plan phase by dependency then by risk, placing the
-      highest-risk and most-unknown tasks first within their dependency constraints.
-    prompt: |
-      Reorder docs/plan.md per phase:
-      1. Topological sort by dependency graph (depends-on/blocked-by).
-      2. Within same depth, sort descending risk: unfamiliar tech, unclear criteria, high fan-out, external deps, no prior art.
-      One-line rationale per item. Update GitHub labels: p0 (land first) → p3 (low/future). Write to docs/plan.md.
-    completion:
-      all_of:
-        - dependency-graph-built
-        - phases-topologically-sorted
-        - risk-ordering-applied
-        - plan-document-updated
-        - issue-priority-labels-updated
-    next:
-      on_success: validate-plan
-      on_failure: blocked
-
+    needs:
+    - blocked
+    - check-orphans
+    - resolve-orphans
+    if: needs.blocked.outputs.event == 'retry-reprioritize' || needs.check-orphans.outputs.event == 'on_pass' || needs.resolve-orphans.outputs.event
+      == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: planner
+        cost: guru
+        prompt: |
+          Reorder docs/plan.md per phase:
+          1. Topological sort by dependency graph (depends-on/blocked-by).
+          2. Within same depth, sort descending risk: unfamiliar tech, unclear criteria, high fan-out, external deps, no prior art.
+          One-line rationale per item. Update GitHub labels: p0 (land first) → p3 (low/future). Write to docs/plan.md.
   validate-plan:
-    kind: agent
-    role: planner
-    cost: guru
-    description: >
-      Self-review the updated plan for correctness — every issue present, no
-      dependency cycles, and risk ordering is internally consistent.
-    prompt: |
-      Verify docs/plan.md: (1) every open issue appears exactly once, (2) no items without issue refs, (3) no dependency cycles, (4) prerequisites before dependents per phase, (5) higher-risk before lower-risk at same depth with rationale. Report violations or approve.
-    completion:
-      all_of:
-        - plan-complete-and-consistent
-        - no-dependency-cycles
-        - risk-ordering-defensible
-    next:
-      on_success: commit-plan
-      on_failure: blocked
-
+    needs:
+    - blocked
+    - reprioritize
+    if: needs.blocked.outputs.event == 'retry-validate' || needs.reprioritize.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: planner
+        cost: guru
+        prompt: |
+          Verify docs/plan.md: (1) every open issue appears exactly once, (2) no items without issue refs, (3) no dependency cycles, (4) prerequisites before dependents per phase, (5) higher-risk before lower-risk at same depth with rationale. Report violations or approve.
   commit-plan:
-    kind: agent
-    role: planner
-    cost: cheap
-    description: Commit and push the updated plan document to the repository.
-    prompt: |
-      `git add docs/plan.md && git commit -m "plan: reconcile issues and reprioritize phases ($(date +%Y-%m-%d))" && git push`. No other files.
-    completion:
-      all_of:
-        - plan-committed
-        - plan-pushed
-    next:
-      on_success: done
-      on_failure: blocked
-
+    needs:
+    - blocked
+    - validate-plan
+    if: needs.blocked.outputs.event == 'retry-commit' || needs.validate-plan.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: planner
+        cost: cheap
+        prompt: |
+          `git add docs/plan.md && git commit -m "plan: reconcile issues and reprioritize phases ($(date +%Y-%m-%d))" && git push`. No other files.
   done:
-    kind: terminal
-    description: >
-      Plan is reconciled with all open issues, prioritized by dependency and risk,
-      validated, and committed. The orchestrator can now dispatch development tasks
-      in the correct order.
-
+    needs: commit-plan
+    if: needs.commit-plan.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: done'''
+      shell: bash
   blocked:
-    kind: human
-    role: operator-or-orchestrator
-    description: A planning step encountered a blocking condition.
-    prompt: |
-      Resolve the blocking condition and resume the planning pass.
-    next:
-      on:
-        issue-cleared: fetch-open-issues
-        retry-reconcile: reconcile-plan
-        retry-reprioritize: reprioritize
-        retry-validate: validate-plan
-        retry-commit: commit-plan
-        abort: aborted
-
+    needs:
+    - commit-plan
+    - fetch-open-issues
+    - reconcile-plan
+    - reprioritize
+    - validate-plan
+    if: needs.commit-plan.outputs.event == 'on_failure' || needs.fetch-open-issues.outputs.event == 'on_failure' || needs.reconcile-plan.outputs.event
+      == 'on_failure' || needs.reprioritize.outputs.event == 'on_failure' || needs.validate-plan.outputs.event == 'on_failure'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-human-gate
+      with:
+        prompt: |
+          Resolve the blocking condition and resume the planning pass.
   aborted:
-    kind: terminal
-
-checks:
-  open-issues-retrieved:
-    kind: agent
-    role: planner
-    description: All open GitHub issues retrieved via gh issue list.
-  issues-classified:
-    kind: agent
-    role: planner
-    description: Each open issue is classified by type, phase, and dependency references.
-  plan-covers-all-open-issues:
-    kind: agent
-    role: planner
-    description: Every open GitHub issue appears in docs/plan.md.
-  plan-orphans-resolved-or-flagged:
-    kind: agent
-    role: planner
-    description: >
-      Every plan item with no corresponding open issue is either moved to completed,
-      or explicitly flagged as an orphan for human review.
-  plan-document-updated:
-    kind: deterministic
-    description: docs/plan.md reflects the latest reconciled and/or prioritized content.
-  no-unresolved-orphans:
-    kind: deterministic
-    description: No plan items remain flagged as orphans requiring human review.
-  dependency-graph-built:
-    kind: agent
-    role: planner
-    description: >
-      A directed dependency graph has been constructed from all "depends on" and
-      "blocked by" references across issues and plan entries.
-  phases-topologically-sorted:
-    kind: agent
-    role: planner
-    description: >
-      Items within each phase are ordered so that every prerequisite appears before
-      the items that depend on it.
-  risk-ordering-applied:
-    kind: agent
-    role: planner
-    description: >
-      Within each dependency tier, items are ordered by descending risk/unknowns,
-      with a written rationale for each item's position.
-  issue-priority-labels-updated:
-    kind: deterministic
-    description: >
-      GitHub issue priority labels (p0–p3) have been updated to match the new
-      ordering in docs/plan.md.
-  plan-complete-and-consistent:
-    kind: agent
-    role: planner
-    description: Every open issue appears exactly once in the plan with no orphan items.
-  no-dependency-cycles:
-    kind: agent
-    role: planner
-    description: The dependency graph contains no cycles.
-  risk-ordering-defensible:
-    kind: agent
-    role: planner
-    description: >
-      Risk rationale is present for each item and the ordering is internally
-      consistent — no high-risk item is ranked below a lower-risk item at the
-      same dependency depth without explanation.
-  plan-committed:
-    kind: deterministic
-    description: docs/plan.md is committed to the repository.
-  plan-pushed:
-    kind: deterministic
-    description: The planning commit is pushed to the remote.
-
-agent_prompts:
-  planner: |
-    Maintain docs/plan.md as the authoritative feature plan. Every open GitHub issue appears exactly once. Prioritize by dependency first (prerequisites before dependents), then by risk within each tier (unfamiliar > unclear > high-blocking > routine). Record rationale for every ordering decision.
+    needs: blocked
+    if: needs.blocked.outputs.event == 'abort'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: aborted'''
+      shell: bash

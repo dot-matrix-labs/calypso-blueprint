@@ -1,132 +1,109 @@
-version: 1
 name: calypso-feature-request
-initial_state: intake
-
-states:
+'on':
+  workflow_call: null
+  workflow_dispatch: null
+jobs:
   intake:
-    kind: human
-    role: feature-requester
-    description: Human submits a feature request with motivation, intended experience, and constraints.
-    prompt: |
-      Describe the feature: motivation (why needed), intended experience (what user can do), known constraints (scope/approach limits).
-    completion:
-      all_of:
-        - feature-request-submitted
-    next:
-      on_success: architecture-evaluation
-
+    needs:
+    - architecture-evaluation
+    - blocked
+    if: needs.architecture-evaluation.outputs.event == 'clarification-needed' || needs.blocked.outputs.event == 'resubmit'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-human-gate
+      with:
+        prompt: |
+          Describe the feature: motivation (why needed), intended experience (what user can do), known constraints (scope/approach limits).
   architecture-evaluation:
-    kind: agent
-    role: architect
-    cost: guru
-    description: Evaluate whether the request is architecturally clear and safe to implement.
-    prompt: |
-      Evaluate against current architecture. Feasibility (invariants preserved?), clarity (specific enough to implement?), risk (conflicts, data model impact, cross-cutting concerns?). Clear+feasible → approve. Unclear → return to intake with specifics. Conflict → block with rationale.
-    completion:
-      any_of:
-        - architecture-clear
-        - clarification-needed
-        - architecture-conflict
-    next:
-      on:
-        architecture-clear: create-github-issue
-        clarification-needed: intake
-        architecture-conflict: blocked
-
+    needs:
+    - blocked
+    - intake
+    if: needs.blocked.outputs.event == 'issue-cleared' || needs.intake.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: architect
+        cost: guru
+        prompt: |
+          Evaluate against current architecture. Feasibility (invariants preserved?), clarity (specific enough to implement?), risk (conflicts, data model impact, cross-cutting concerns?). Clear+feasible → approve. Unclear → return to intake with specifics. Conflict → block with rationale.
   create-github-issue:
-    kind: agent
-    role: feature-definer
-    cost: default
-    description: Create a well-structured GitHub issue capturing the approved feature.
-    prompt: |
-      Create GitHub issue: clear title, motivation, scope + acceptance criteria, architectural notes from evaluation, relevant doc links. Apply appropriate labels.
-    completion:
-      all_of:
-        - github-issue-created
-        - github-issue-has-description
-        - github-issue-labeled
-    next:
-      on_success: update-plan
-      on_failure: blocked
-
+    needs: architecture-evaluation
+    if: needs.architecture-evaluation.outputs.event == 'architecture-clear'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: feature-definer
+        cost: default
+        prompt: |
+          Create GitHub issue: clear title, motivation, scope + acceptance criteria, architectural notes from evaluation, relevant doc links. Apply appropriate labels.
   update-plan:
-    kind: agent
-    role: planner
-    cost: default
-    description: Record the new feature in the project plan with its issue reference and priority.
-    prompt: |
-      Add feature to docs/plan.md: GitHub issue reference, relative priority, known dependencies, phasing constraints.
-    completion:
-      all_of:
-        - plan-updated
-        - feature-in-plan
-    next:
-      on_success: planning
-      on_failure: blocked
-
+    needs: create-github-issue
+    if: needs.create-github-issue.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: planner
+        cost: default
+        prompt: |
+          Add feature to docs/plan.md: GitHub issue reference, relative priority, known dependencies, phasing constraints.
   planning:
-    kind: workflow
-    workflow: calypso-planning
-    description: >
-      Run a full planning pass now that the new issue exists. Reconciles the
-      new issue into the plan, re-prioritizes by dependency and risk, and
-      commits the updated plan before the orchestrator dispatches any work.
-    next:
-      on:
-        done: done
-        aborted: aborted
-
+    needs: update-plan
+    if: needs.update-plan.outputs.event == 'on_success'
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    uses: ./.github/workflows/calypso-planning.yml
   done:
-    kind: terminal
-
+    needs: planning
+    if: needs.planning.outputs.event == 'done'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: done'''
+      shell: bash
   blocked:
-    kind: human
-    role: operator-or-orchestrator
-    description: A step encountered a blocking condition that requires human resolution.
-    prompt: |
-      Resolve the blocking issue before the feature request can continue.
-    next:
-      on:
-        issue-cleared: architecture-evaluation
-        resubmit: intake
-        abort: aborted
-
+    needs:
+    - architecture-evaluation
+    - create-github-issue
+    - update-plan
+    if: needs.architecture-evaluation.outputs.event == 'architecture-conflict' || needs.create-github-issue.outputs.event
+      == 'on_failure' || needs.update-plan.outputs.event == 'on_failure'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-human-gate
+      with:
+        prompt: |
+          Resolve the blocking issue before the feature request can continue.
   aborted:
-    kind: terminal
-
-checks:
-  feature-request-submitted:
-    kind: human
-    description: The feature request has been submitted with motivation, scope, and constraints.
-  architecture-clear:
-    kind: agent
-    role: architect
-    description: The request is architecturally feasible and clear enough to implement.
-  clarification-needed:
-    kind: agent
-    role: architect
-    description: The architect identified missing information that must be provided before evaluation can complete.
-  architecture-conflict:
-    kind: agent
-    role: architect
-    description: The request conflicts with the current architecture and cannot proceed without a redesign.
-  github-issue-created:
-    kind: deterministic
-  github-issue-has-description:
-    kind: deterministic
-  github-issue-labeled:
-    kind: deterministic
-  plan-updated:
-    kind: agent
-    role: planner
-  feature-in-plan:
-    kind: agent
-    role: planner
-
-agent_prompts:
-  architect: |
-    Evaluate feature requests against current architecture. Assess feasibility, identify risks, determine if specific enough to implement. State exactly what is missing when clarification needed.
-  feature-definer: |
-    Create well-structured GitHub issues from approved feature requests: motivation, scope, acceptance criteria, architectural context.
-  planner: |
-    Record new features in the plan with issue reference, priority, and dependencies so the orchestrator dispatches work correctly.
+    needs:
+    - blocked
+    - planning
+    if: needs.blocked.outputs.event == 'abort' || needs.planning.outputs.event == 'aborted'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: aborted'''
+      shell: bash

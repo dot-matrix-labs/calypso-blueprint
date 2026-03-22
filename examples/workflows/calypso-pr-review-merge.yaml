@@ -1,292 +1,156 @@
-version: 1
 name: calypso-pr-review-merge
-initial_state: check-pr-structure
-
-# Review gates (in order):
-#   a) pr structure      — single issue ref, no conflicts, issue tasks complete
-#   b) feature complete  — all issue checkboxes checked, acceptance criteria met
-#   c) tests pass        — CI green on the PR branch
-#   d) dependencies ready — dependent PRs merged or ready
-#   e) mark mergeable    — merge agent submits approving review (mandatory)
-#   f) merge queue       — assign position among ready PRs
-#   g) execute merge     — merge at queue head with all gates still satisfied
-
-states:
+'on':
+  workflow_call: null
+  workflow_dispatch: null
+jobs:
   check-pr-structure:
-    kind: github
-    description: >
-      Verify PR structural invariants before any agent work begins: exactly
-      one closing issue reference, no merge conflicts, and the linked issue
-      has no unchecked tasks.
-    checks:
-      - pr-single-issue-enforced
-      - pr-no-conflicts
-      - pr-issue-tasks-complete
-    next:
-      on_pass: check-feature-completeness
-      on_fail: blocked
-
+    needs: blocked
+    if: needs.blocked.outputs.event == 'issue-cleared'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-github-poller
+      with:
+        checks: '["pr-single-issue-enforced", "pr-no-conflicts", "pr-issue-tasks-complete"]'
   check-feature-completeness:
-    kind: agent
-    role: merge-queue
-    cost: guru
-    description: >
-      Verify all phase checkboxes are checked, acceptance criteria met,
-      and PR description is current.
-    prompt: |
-      Verify: all phase checkboxes checked (documentation, stubs, tdd, implementation, saved), all acceptance criteria met, PR features + test plan checklists complete, PR description current. Report any missing items.
-    completion:
-      all_of:
-        - issue-all-phases-checked
-        - issue-acceptance-criteria-met
-        - pr-description-current
-        - pr-features-checklist-complete
-        - pr-test-plan-checklist-complete
-    next:
-      on_success: check-ci
-      on_failure: blocked
-
+    needs:
+    - blocked
+    - check-pr-structure
+    if: needs.blocked.outputs.event == 'skip-to-completeness' || needs.check-pr-structure.outputs.event == 'on_pass'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: merge-queue
+        cost: guru
+        prompt: |
+          Verify: all phase checkboxes checked (documentation, stubs, tdd, implementation, saved), all acceptance criteria met, PR features + test plan checklists complete, PR description current. Report any missing items.
   check-ci:
-    kind: github
-    description: All required CI checks are passing on the current PR branch commit.
-    checks:
-      - ci-quality-gate-green
-      - ci-unit-tests-green
-      - ci-integration-tests-green
-      - ci-e2e-tests-green
-      - ci-coverage-green
-    next:
-      on_pass: check-dependencies
-      on_fail: blocked
-
+    needs:
+    - blocked
+    - check-feature-completeness
+    if: needs.blocked.outputs.event == 'skip-to-ci' || needs.check-feature-completeness.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-github-poller
+      with:
+        checks: '["ci-quality-gate-green", "ci-unit-tests-green", "ci-integration-tests-green", "ci-e2e-tests-green", "ci-coverage-green"]'
   check-dependencies:
-    kind: agent
-    role: merge-queue
-    cost: cheap
-    description: >
-      Verify all dependency PRs are merged or ready to merge.
-    prompt: |
-      Check PR/issue for "depends on" refs. Each dependency must be: (a) merged into main, or (b) ready to merge (CI green, complete, unblocked). All satisfied or none → pass. Any blocked → report which and why.
-    completion:
-      any_of:
-        - no-dependencies
-        - all-dependencies-satisfied
-        - dependencies-not-ready
-    next:
-      on:
-        no-dependencies: mark-mergeable
-        all-dependencies-satisfied: mark-mergeable
-        dependencies-not-ready: blocked
-
+    needs:
+    - blocked
+    - check-ci
+    if: needs.blocked.outputs.event == 'skip-to-dependencies' || needs.check-ci.outputs.event == 'on_pass'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: merge-queue
+        cost: cheap
+        prompt: |
+          Check PR/issue for "depends on" refs. Each dependency must be: (a) merged into main, or (b) ready to merge (CI green, complete, unblocked). All satisfied or none → pass. Any blocked → report which and why.
   mark-mergeable:
-    kind: github
-    role: merge-queue
-    description: >
-      Submit the required approving review — PRs cannot merge without it.
-    prompt: |
-      1. Un-draft: `gh pr ready <number>`
-      2. Approve: `gh pr review <number> --approve --body "Approved by merge agent: all gates satisfied."`
-      3. Verify review appears and required checks still passing.
-    completion:
-      all_of:
-        - merge-agent-approval-submitted
-        - pr-not-draft
-        - required-checks-still-passing
-    next:
-      on_success: assign-merge-queue
-      on_failure: blocked
-
+    needs: check-dependencies
+    if: needs.check-dependencies.outputs.event == 'all-dependencies-satisfied' || needs.check-dependencies.outputs.event ==
+      'no-dependencies'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-github-poller
+      with:
+        checks: '[]'
   assign-merge-queue:
-    kind: github
-    role: merge-queue
-    description: >
-      Assign merge queue position among all ready PRs.
-    prompt: |
-      List all approved+CI-green PRs. Order by: dependency constraints, then PR age. Record queue position + rationale in PR comment. At queue head → execute-merge. Behind others → waiting-for-queue-head.
-    completion:
-      all_of:
-        - merge-queue-position-recorded
-        - merge-order-rationale-written
-      any_of:
-        - at-queue-head
-        - waiting-in-queue
-    next:
-      on:
-        at-queue-head: execute-merge
-        waiting-in-queue: waiting-for-queue-head
-
+    needs:
+    - mark-mergeable
+    - waiting-for-queue-head
+    if: needs.mark-mergeable.outputs.event == 'on_success' || needs.waiting-for-queue-head.outputs.event == 'queue-position-advanced'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-github-poller
+      with:
+        checks: '[]'
   waiting-for-queue-head:
-    kind: human
-    role: operator-or-orchestrator
-    description: >
-      This PR is queued but not yet at the head. Wait for earlier PRs to merge.
-    prompt: |
-      PR is queued behind others. When PRs ahead have landed, re-evaluate position.
-    next:
-      on:
-        queue-position-advanced: assign-merge-queue
-        abort: aborted
-
+    needs: assign-merge-queue
+    if: needs.assign-merge-queue.outputs.event == 'waiting-in-queue'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-human-gate
+      with:
+        prompt: |
+          PR is queued behind others. When PRs ahead have landed, re-evaluate position.
   execute-merge:
-    kind: github
-    role: merge-queue
-    description: Merge the PR now that it is at queue head and all gates still pass.
-    prompt: |
-      Re-verify all gates (CI green, approval, no conflicts). `gh pr merge <number> --merge --delete-branch`. Confirm PR closed, branch deleted, issue set to done.
-    completion:
-      all_of:
-        - pull-request-merged
-        - feature-branch-deleted
-        - issue-status-done
-    next:
-      on_success: done
-      on_failure: blocked
-
+    needs: assign-merge-queue
+    if: needs.assign-merge-queue.outputs.event == 'at-queue-head'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-github-poller
+      with:
+        checks: '[]'
   done:
-    kind: terminal
-    description: PR merged, branch deleted, issue closed.
-
+    needs: execute-merge
+    if: needs.execute-merge.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: done'''
+      shell: bash
   blocked:
-    kind: human
-    role: operator-or-orchestrator
-    description: A review or merge gate failed and requires human resolution.
-    prompt: |
-      Resolve the blocking condition before the PR can proceed.
-    next:
-      on:
-        issue-cleared: check-pr-structure
-        skip-to-completeness: check-feature-completeness
-        skip-to-ci: check-ci
-        skip-to-dependencies: check-dependencies
-        abort: aborted
-
+    needs:
+    - check-ci
+    - check-dependencies
+    - check-feature-completeness
+    - check-pr-structure
+    - execute-merge
+    - mark-mergeable
+    if: needs.check-ci.outputs.event == 'on_fail' || needs.check-dependencies.outputs.event == 'dependencies-not-ready' ||
+      needs.check-feature-completeness.outputs.event == 'on_failure' || needs.check-pr-structure.outputs.event == 'on_fail'
+      || needs.execute-merge.outputs.event == 'on_failure' || needs.mark-mergeable.outputs.event == 'on_failure'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-human-gate
+      with:
+        prompt: |
+          Resolve the blocking condition before the PR can proceed.
   aborted:
-    kind: terminal
-
-checks:
-  pr-single-issue-enforced:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/pr-single-issue.yml
-    description: >
-      PR body contains exactly one closing issue reference (Closes/Fixes/Resolves #N)
-      and no bare #N references. Enforces the 1:1:1 invariant.
-  pr-no-conflicts:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/pr-conflicts.yml
-    description: >
-      PR branch has no merge conflicts with the base branch.
-  pr-issue-tasks-complete:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/pr-issue-checklist.yml
-    description: >
-      All task items (- [ ]) in the linked issue body are checked. Confirms
-      acceptance criteria and test plan are complete before review begins.
-  issue-all-phases-checked:
-    kind: deterministic
-    description: All phase checkboxes (documentation, stubs, tdd, implementation, saved) are checked on the issue.
-  issue-acceptance-criteria-met:
-    kind: agent
-    role: merge-queue
-    description: All acceptance criteria listed in the GitHub issue are satisfied.
-  pr-description-current:
-    kind: agent
-    role: merge-queue
-    description: The PR description reflects the current implementation scope.
-  pr-features-checklist-complete:
-    kind: deterministic
-    description: All items in the PR features checklist are checked.
-  pr-test-plan-checklist-complete:
-    kind: deterministic
-    description: All items in the PR test plan checklist are checked.
-  ci-quality-gate-green:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/rust-quality.yml
-  ci-unit-tests-green:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/rust-unit.yml
-  ci-integration-tests-green:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/rust-integration.yml
-  ci-e2e-tests-green:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/rust-e2e.yml
-  ci-coverage-green:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/rust-coverage.yml
-  no-dependencies:
-    kind: agent
-    role: merge-queue
-    description: The PR declares no dependencies on other PRs.
-  all-dependencies-satisfied:
-    kind: agent
-    role: merge-queue
-    description: All declared dependency PRs are either merged into main or ready to merge (CI green, feature complete, unblocked).
-  dependencies-not-ready:
-    kind: agent
-    role: merge-queue
-    description: One or more declared dependency PRs are still in progress or blocked and cannot yet be merged.
-  merge-agent-approval-submitted:
-    kind: github
-    description: >
-      The merge agent has submitted an approving review via gh pr review --approve.
-  pr-not-draft:
-    kind: deterministic
-    description: The PR is not in draft state.
-  required-checks-still-passing:
-    kind: deterministic
-    description: All required status checks are still passing after the review was submitted.
-  merge-queue-position-recorded:
-    kind: agent
-    role: merge-queue
-    description: This PR's queue position is recorded in a PR comment.
-  merge-order-rationale-written:
-    kind: agent
-    role: merge-queue
-    description: The rationale for the queue ordering is written in the PR comment.
-  at-queue-head:
-    kind: agent
-    role: merge-queue
-    description: This PR is at the head of the merge queue and eligible to merge.
-  waiting-in-queue:
-    kind: agent
-    role: merge-queue
-    description: This PR is queued behind one or more other PRs.
-  pull-request-merged:
-    kind: deterministic
-  feature-branch-deleted:
-    kind: deterministic
-    description: The feature branch has been deleted from origin after merge.
-  issue-status-done:
-    kind: deterministic
-    description: The linked GitHub issue is closed and marked done.
-
-agent_prompts:
-  merge-queue: |
-    Verify feature completeness, CI status, dependency ordering. Approve, assign queue position, execute merges at queue head. Use gh CLI for all GitHub ops. Record queue decisions + rationale in PR comments.
-
-github_actions:
-  current_required:
-    - workflow: .github/workflows/pr-single-issue.yml
-      used_for: [pr-single-issue-enforced]
-    - workflow: .github/workflows/pr-conflicts.yml
-      used_for: [pr-no-conflicts]
-    - workflow: .github/workflows/pr-issue-checklist.yml
-      used_for: [pr-issue-tasks-complete]
-    - workflow: .github/workflows/rust-quality.yml
-      used_for: [ci-quality-gate-green]
-    - workflow: .github/workflows/rust-unit.yml
-      used_for: [ci-unit-tests-green]
-    - workflow: .github/workflows/rust-integration.yml
-      used_for: [ci-integration-tests-green]
-    - workflow: .github/workflows/rust-e2e.yml
-      used_for: [ci-e2e-tests-green]
-    - workflow: .github/workflows/rust-coverage.yml
-      used_for: [ci-coverage-green]
+    needs:
+    - blocked
+    - waiting-for-queue-head
+    if: needs.blocked.outputs.event == 'abort' || needs.waiting-for-queue-head.outputs.event == 'abort'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: aborted'''
+      shell: bash

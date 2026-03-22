@@ -1,272 +1,187 @@
-version: 1
 name: calypso-implementation-loop
-initial_state: write-increment
-
-# The implementation loop is the innermost development cycle:
-# write code → run tests → evaluate → iterate or advance.
-#
-# Escalation chain (3 levels before human):
-#   1. consult-issue-spec           — re-read the GitHub issue
-#   2. consult-implementation-rules — re-read rules/implementations/
-#   3. consult-blueprint            — re-read rules/blueprints/
-
-states:
+'on':
+  workflow_call: null
+  workflow_dispatch: null
+jobs:
   write-increment:
-    kind: agent
-    role: engineer
-    cost: default
-    description: >
-      Write the minimal code increment needed to advance the failing tests.
-      Do not over-implement — only add what the current red tests require.
-    prompt: |
-      Write minimal code to advance failing tests. Only what current red tests require — no more. Do not commit, push, refactor, or clean up.
-    completion:
-      all_of:
-        - code-increment-written
-    next:
-      on_success: run-tests
-      on_failure: blocked
-
+    needs:
+    - blocked
+    - consult-blueprint
+    - consult-implementation-rules
+    - consult-issue-spec
+    - diagnose-stuck
+    - evaluate-results
+    - request-clarification
+    if: needs.blocked.outputs.event == 'issue-cleared' || needs.consult-blueprint.outputs.event == 'implementation-unblocked'
+      || needs.consult-implementation-rules.outputs.event == 'implementation-unblocked' || needs.consult-issue-spec.outputs.event
+      == 'implementation-unblocked' || needs.diagnose-stuck.outputs.event == 'inconsistency-identified-and-corrected' || needs.evaluate-results.outputs.event
+      == 'tests-failing-with-progress' || needs.request-clarification.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: default
+        prompt: |
+          Write minimal code to advance failing tests. Only what current red tests require — no more. Do not commit, push, refactor, or clean up.
   run-tests:
-    kind: deterministic
-    description: >
-      Execute the full test suite. This is a deterministic step — the agent
-      runs the test command and captures the output verbatim.
-    command: bun test
-    next:
-      on:
-        tests-all-pass: evaluate-results
-        tests-still-failing: evaluate-results
-        test-infrastructure-error: fix-test-infra
-
+    needs:
+    - fix-test-infra
+    - write-increment
+    if: needs.fix-test-infra.outputs.event == 'infrastructure-fixed' || needs.write-increment.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      run: bun test
+      shell: bash
   evaluate-results:
-    kind: agent
-    role: engineer
-    cost: cheap
-    description: >
-      Interpret the test output and decide what to do next.
-    prompt: |
-      Evaluate test output:
-      - All pass → exit-success
-      - Failures changed (progress) → write-increment
-      - Same failures ≥2 increments (stuck) → diagnose-stuck
-      - Runner crashed (import/build/env error) → fix-test-infra
-      - Uncertain what code should do → consult-issue-spec
-    completion:
-      any_of:
-        - all-tests-passing
-        - tests-failing-with-progress
-        - tests-failing-no-progress
-        - test-infrastructure-error
-        - implementation-uncertain
-    next:
-      on:
-        all-tests-passing: exit-success
-        tests-failing-with-progress: write-increment
-        tests-failing-no-progress: diagnose-stuck
-        test-infrastructure-error: fix-test-infra
-        implementation-uncertain: consult-issue-spec
-
+    needs: run-tests
+    if: needs.run-tests.outputs.event == 'tests-all-pass' || needs.run-tests.outputs.event == 'tests-still-failing'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: cheap
+        prompt: |
+          Evaluate test output:
+          - All pass → exit-success
+          - Failures changed (progress) → write-increment
+          - Same failures ≥2 increments (stuck) → diagnose-stuck
+          - Runner crashed (import/build/env error) → fix-test-infra
+          - Uncertain what code should do → consult-issue-spec
   diagnose-stuck:
-    kind: agent
-    role: engineer
-    cost: default
-    description: >
-      Analyze why no progress is being made. Determine whether the stubs,
-      tests, or implementation approach are at fault.
-    prompt: |
-      No progress ≥2 increments. Diagnose: (1) test correctly written against stub interface? (2) stub matches test expectations? (3) implementation approach fundamentally misaligned? Fixable inconsistency → correct + write-increment. Infra problem → fix-test-infra. Still blocked → consult-issue-spec.
-    completion:
-      any_of:
-        - inconsistency-identified-and-corrected
-        - test-infrastructure-error
-        - still-cannot-identify-path
-    next:
-      on:
-        inconsistency-identified-and-corrected: write-increment
-        test-infrastructure-error: fix-test-infra
-        still-cannot-identify-path: consult-issue-spec
-
+    needs: evaluate-results
+    if: needs.evaluate-results.outputs.event == 'tests-failing-no-progress'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: default
+        prompt: |
+          No progress ≥2 increments. Diagnose: (1) test correctly written against stub interface? (2) stub matches test expectations? (3) implementation approach fundamentally misaligned? Fixable inconsistency → correct + write-increment. Infra problem → fix-test-infra. Still blocked → consult-issue-spec.
   consult-issue-spec:
-    kind: agent
-    role: engineer
-    cost: default
-    description: >
-      Escalation level 1. Re-read the full GitHub issue to check whether the
-      implementation approach aligns with what was actually asked for.
-    prompt: |
-      Escalation L1: re-read full GitHub issue. For each acceptance criterion, state in one sentence what code change satisfies it. Compare implementation against spec — identify any mismatch. Misalignment found → write-increment. Still unclear → consult-implementation-rules.
-    completion:
-      any_of:
-        - implementation-unblocked
-        - still-unclear-after-spec
-    next:
-      on:
-        implementation-unblocked: write-increment
-        still-unclear-after-spec: consult-implementation-rules
-
+    needs:
+    - diagnose-stuck
+    - evaluate-results
+    - fix-test-infra
+    if: needs.diagnose-stuck.outputs.event == 'still-cannot-identify-path' || needs.evaluate-results.outputs.event == 'implementation-uncertain'
+      || needs.fix-test-infra.outputs.event == 'still-cannot-identify-path'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: default
+        prompt: |
+          Escalation L1: re-read full GitHub issue. For each acceptance criterion, state in one sentence what code change satisfies it. Compare implementation against spec — identify any mismatch. Misalignment found → write-increment. Still unclear → consult-implementation-rules.
   consult-implementation-rules:
-    kind: agent
-    role: engineer
-    cost: guru
-    description: >
-      Escalation level 2. Re-read the implementation rules (rules/implementations/)
-      for required patterns, forbidden approaches, and module boundaries.
-    prompt: |
-      Escalation L2: read rules/implementations/ for this language/domain. Check each failing test against rules — wrong module boundary? forbidden dependency? disallowed pattern? missing abstraction? Rule violation found → note rule + write-increment. Still unclear → consult-blueprint.
-    completion:
-      any_of:
-        - implementation-unblocked
-        - still-unclear-after-rules
-    next:
-      on:
-        implementation-unblocked: write-increment
-        still-unclear-after-rules: consult-blueprint
-
+    needs: consult-issue-spec
+    if: needs.consult-issue-spec.outputs.event == 'still-unclear-after-spec'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: guru
+        prompt: |
+          Escalation L2: read rules/implementations/ for this language/domain. Check each failing test against rules — wrong module boundary? forbidden dependency? disallowed pattern? missing abstraction? Rule violation found → note rule + write-increment. Still unclear → consult-blueprint.
   consult-blueprint:
-    kind: agent
-    role: engineer
-    cost: guru
-    description: >
-      Escalation level 3. Re-read the full blueprint rules (rules/blueprints/).
-      If the feature cannot be implemented after this, it requires human input.
-    prompt: |
-      Escalation L3: read rules/blueprints/ for this domain. Does the feature conflict with blueprint invariants? Do tests require a different architectural approach? Blueprint resolves it → note principle + write-increment. Still unclear after all 3 levels → request-clarification (state precisely what is ambiguous and why none of the 3 reference levels resolved it).
-    completion:
-      any_of:
-        - implementation-unblocked
-        - still-unclear-after-blueprint
-    next:
-      on:
-        implementation-unblocked: write-increment
-        still-unclear-after-blueprint: request-clarification
-
+    needs: consult-implementation-rules
+    if: needs.consult-implementation-rules.outputs.event == 'still-unclear-after-rules'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: guru
+        prompt: |
+          Escalation L3: read rules/blueprints/ for this domain. Does the feature conflict with blueprint invariants? Do tests require a different architectural approach? Blueprint resolves it → note principle + write-increment. Still unclear after all 3 levels → request-clarification (state precisely what is ambiguous and why none of the 3 reference levels resolved it).
   fix-test-infra:
-    kind: agent
-    role: engineer
-    cost: default
-    description: >
-      Fix a test infrastructure problem preventing test execution — not logic failures.
-    prompt: |
-      Test runner failed before reaching test logic. Fix root cause: missing import, build error, env var, test setup, tooling config. Do not suppress or skip tests. Fixed → run-tests. Needs external dependency → consult-issue-spec.
-    completion:
-      any_of:
-        - infrastructure-fixed
-        - still-cannot-identify-path
-    next:
-      on:
-        infrastructure-fixed: run-tests
-        still-cannot-identify-path: consult-issue-spec
-
+    needs:
+    - diagnose-stuck
+    - evaluate-results
+    - run-tests
+    if: needs.diagnose-stuck.outputs.event == 'test-infrastructure-error' || needs.evaluate-results.outputs.event == 'test-infrastructure-error'
+      || needs.run-tests.outputs.event == 'test-infrastructure-error'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: default
+        prompt: |
+          Test runner failed before reaching test logic. Fix root cause: missing import, build error, env var, test setup, tooling config. Do not suppress or skip tests. Fixed → run-tests. Needs external dependency → consult-issue-spec.
   request-clarification:
-    kind: human
-    role: operator
-    description: >
-      The agent cannot continue without operator input. A specific question
-      must be posed — the agent must not block without stating what it needs.
-    prompt: |
-      Answer the clarification question to unblock the implementation loop.
-    completion:
-      all_of:
-        - clarification-answered
-    next:
-      on_success: write-increment
-
+    needs: consult-blueprint
+    if: needs.consult-blueprint.outputs.event == 'still-unclear-after-blueprint'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-human-gate
+      with:
+        prompt: |
+          Answer the clarification question to unblock the implementation loop.
   exit-success:
-    kind: terminal
-    description: All tests pass. The implementation loop is complete. Return to save-state.
-
+    needs: evaluate-results
+    if: needs.evaluate-results.outputs.event == 'all-tests-passing'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: exit-success'''
+      shell: bash
   blocked:
-    kind: human
-    role: operator-or-orchestrator
-    description: A step hit an unexpected blocking condition requiring human resolution.
-    next:
-      on:
-        issue-cleared: write-increment
-        abort: aborted
-
+    needs: write-increment
+    if: needs.write-increment.outputs.event == 'on_failure'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-human-gate
+      with:
+        prompt: A step hit an unexpected blocking condition requiring human resolution.
   aborted:
-    kind: terminal
-
-checks:
-  code-increment-written:
-    kind: agent
-    role: engineer
-    description: At least one file was modified in service of making failing tests pass.
-
-  all-tests-passing:
-    kind: deterministic
-    description: The test runner exited 0 and reported zero failures.
-  tests-failing-with-progress:
-    kind: agent
-    role: engineer
-    description: >
-      Test failures changed relative to the previous run in a way that
-      indicates the implementation is advancing toward correctness.
-  tests-failing-no-progress:
-    kind: agent
-    role: engineer
-    description: >
-      The same test failures have occurred across two or more consecutive
-      increments with no meaningful change in failure output.
-  test-infrastructure-error:
-    kind: deterministic
-    description: >
-      The test runner itself failed before executing any test logic —
-      import error, build failure, environment misconfiguration, etc.
-  implementation-uncertain:
-    kind: agent
-    role: engineer
-    description: >
-      The agent is genuinely uncertain how to implement the feature correctly —
-      not a test runner problem or a clear stub mismatch, but an uncertainty
-      about what the code should do.
-
-  inconsistency-identified-and-corrected:
-    kind: agent
-    role: engineer
-    description: >
-      The agent identified a stub/test/requirement inconsistency and corrected
-      it without operator input, enabling the implementation to advance.
-  still-cannot-identify-path:
-    kind: agent
-    role: engineer
-    description: >
-      After reviewing the failing tests, stubs, and previous failures, the
-      agent cannot identify a path forward and must escalate.
-
-  infrastructure-fixed:
-    kind: agent
-    role: engineer
-    description: >
-      The test infrastructure issue was resolved and the test runner
-      can now execute the test suite.
-
-  implementation-unblocked:
-    kind: agent
-    role: engineer
-    description: >
-      After consulting a reference source, the agent now understands what to
-      implement and can return to write-increment.
-  still-unclear-after-spec:
-    kind: agent
-    role: engineer
-    description: >
-      After re-reading the full GitHub issue, the agent still cannot determine
-      the correct implementation approach.
-  still-unclear-after-rules:
-    kind: agent
-    role: engineer
-    description: >
-      After re-reading the implementation rules, the agent still cannot determine
-      the correct implementation approach.
-  still-unclear-after-blueprint:
-    kind: agent
-    role: engineer
-    description: >
-      After re-reading the blueprint rules, the agent still cannot determine
-      the correct implementation approach. Human clarification is required.
-
-  clarification-answered:
-    kind: human
-    description: The operator has responded to the agent's clarification request.
+    needs: blocked
+    if: needs.blocked.outputs.event == 'abort'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: aborted'''
+      shell: bash

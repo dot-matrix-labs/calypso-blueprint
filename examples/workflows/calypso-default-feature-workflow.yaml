@@ -1,304 +1,168 @@
-version: 1
 name: calypso-default-feature-workflow
-initial_state: create-worktree
-
-# Entry point: the orchestrator dispatches here with a GitHub issue number.
-# The agent must be in a dedicated worktree for this feature before any issue
-# reading or development work begins. create-worktree is idempotent — if the
-# worktree already exists it verifies it and moves on.
-#
-# Development phases (tracked as checkboxes on the GitHub issue):
-#   [ ] documentation
-#   [ ] stubs
-#   [ ] tdd — failing tests
-#   [ ] implementation
-#   [ ] saved — commit + push + CI green
-
-states:
+'on':
+  workflow_call: null
+  workflow_dispatch: null
+jobs:
   create-worktree:
-    kind: agent
-    role: engineer
-    cost: cheap
-    description: >
-      Create or verify the dedicated worktree for this feature issue. An agent cannot
-      read issue state or begin development without first being inside the correct
-      worktree on its own branch isolated from main and other features.
-    prompt: |
-      Ensure correct worktree for the dispatched issue:
-      - Branch: `feature/<issue-number>-<slug>` from current main.
-      - Missing → create branch + worktree, push to origin, open draft PR (populate from issue: motivation, features checklist, test plan).
-      - Exists → verify clean, correct branch, up-to-date with origin.
-      - cd into worktree. All subsequent work happens here.
-    completion:
-      all_of:
-        - worktree-exists-for-issue
-        - worktree-on-correct-branch
-        - branch-pushed-to-origin
-        - pull-request-open
-    next:
-      on_success: review-issue
-      on_failure: blocked
-
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: cheap
+        prompt: |
+          Ensure correct worktree for the dispatched issue:
+          - Branch: `feature/<issue-number>-<slug>` from current main.
+          - Missing → create branch + worktree, push to origin, open draft PR (populate from issue: motivation, features checklist, test plan).
+          - Exists → verify clean, correct branch, up-to-date with origin.
+          - cd into worktree. All subsequent work happens here.
   review-issue:
-    kind: agent
-    role: engineer
-    cost: cheap
-    description: >
-      Read the assigned GitHub issue, determine which development phase is current based
-      on the phase checkboxes, and dispatch to the correct state to start or resume work.
-    prompt: |
-      Read the full GitHub issue. Understand scope and acceptance criteria. Check phase checkboxes to find resume point. Set status to in-progress. Dispatch to earliest unchecked phase.
-    completion:
-      all_of:
-        - issue-read
-        - issue-status-in-progress
-    next:
-      on:
-        phase-documentation: create-documentation
-        phase-stubs: create-stubs
-        phase-tdd: write-failing-tests
-        phase-implementation: implementation-loop
-        phase-save: save-state
-        all-phases-complete: done
-
+    needs:
+    - blocked
+    - create-worktree
+    if: needs.blocked.outputs.event == 'issue-cleared' || needs.create-worktree.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: cheap
+        prompt: |
+          Read the full GitHub issue. Understand scope and acceptance criteria. Check phase checkboxes to find resume point. Set status to in-progress. Dispatch to earliest unchecked phase.
   create-documentation:
-    kind: agent
-    role: engineer
-    cost: default
-    description: Write or update feature documentation before any code is written.
-    prompt: |
-      Write/update feature docs (purpose, API contract, usage) before any code. Commit docs. Check "documentation" checkbox on issue.
-    completion:
-      all_of:
-        - documentation-written
-        - issue-documentation-checked
-    next:
-      on_success: create-stubs
-      on_failure: blocked
-
+    needs: review-issue
+    if: needs.review-issue.outputs.event == 'phase-documentation'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: default
+        prompt: |
+          Write/update feature docs (purpose, API contract, usage) before any code. Commit docs. Check "documentation" checkbox on issue.
   create-stubs:
-    kind: agent
-    role: engineer
-    cost: default
-    description: Define the public API shape — types, interfaces, and empty function bodies.
-    prompt: |
-      Define public types, interfaces, module boundaries. Function bodies empty or typed zero values — no logic. Check "stubs" checkbox on issue.
-    completion:
-      all_of:
-        - stubs-created
-        - issue-stubs-checked
-    next:
-      on_success: write-failing-tests
-      on_failure: blocked
-
+    needs:
+    - create-documentation
+    - review-issue
+    if: needs.create-documentation.outputs.event == 'on_success' || needs.review-issue.outputs.event == 'phase-stubs'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: default
+        prompt: |
+          Define public types, interfaces, module boundaries. Function bodies empty or typed zero values — no logic. Check "stubs" checkbox on issue.
   write-failing-tests:
-    kind: agent
-    role: engineer
-    cost: default
-    description: Write the full test suite against the stubs — TDD red phase.
-    prompt: |
-      TDD red phase: write tests covering all acceptance criteria. Tests must fail because implementation is missing, not due to errors. Include unit, integration, and e2e tests per criteria. No implementation logic. Check "tdd" checkbox on issue.
-    completion:
-      all_of:
-        - failing-tests-written
-        - tests-fail-for-right-reason
-        - issue-tdd-checked
-    next:
-      on_success: implementation-loop
-      on_failure: blocked
-
+    needs:
+    - create-stubs
+    - review-issue
+    if: needs.create-stubs.outputs.event == 'on_success' || needs.review-issue.outputs.event == 'phase-tdd'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: default
+        prompt: |
+          TDD red phase: write tests covering all acceptance criteria. Tests must fail because implementation is missing, not due to errors. Include unit, integration, and e2e tests per criteria. No implementation logic. Check "tdd" checkbox on issue.
   implementation-loop:
-    kind: workflow
-    workflow: calypso-implementation-loop
-    description: >
-      Run the implementation loop sub-machine: write code, run tests, evaluate,
-      iterate. The loop handles its own clarification and infrastructure escalations
-      internally. It exits only when all tests pass or when aborted.
-    next:
-      on:
-        exit-success: save-state
-        aborted: aborted
-
+    needs:
+    - resolve-merge-conflict
+    - review-issue
+    - save-state
+    - write-failing-tests
+    if: needs.resolve-merge-conflict.outputs.event == 'rebase-clean-tests-fail' || needs.review-issue.outputs.event == 'phase-implementation'
+      || needs.save-state.outputs.event == 'exit-incomplete' || needs.write-failing-tests.outputs.event == 'on_success'
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    uses: ./.github/workflows/calypso-implementation-loop.yml
   save-state:
-    kind: workflow
-    workflow: calypso-save-state
-    description: >
-      Run the save-state sub-machine: stage → commit (pre-commit auto-fix,
-      commit-msg gate) → push (pre-push gate) → update issue → verify CI
-      started → evaluate completeness.
-    next:
-      on:
-        exit-complete: done
-        exit-incomplete: implementation-loop
-        conflict-with-main: resolve-merge-conflict
-        aborted: aborted
-
+    needs:
+    - implementation-loop
+    - resolve-merge-conflict
+    - review-issue
+    if: needs.implementation-loop.outputs.event == 'exit-success' || needs.resolve-merge-conflict.outputs.event == 'rebase-clean-tests-pass'
+      || needs.review-issue.outputs.event == 'phase-save'
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    uses: ./.github/workflows/calypso-save-state.yml
   resolve-merge-conflict:
-    kind: agent
-    role: engineer
-    cost: default
-    description: >
-      Rebase the feature branch onto the current main to resolve the merge
-      conflict that prevented CI from starting.
-    prompt: |
-      `git fetch origin main && git rebase origin/main`. Resolve conflicts: preserve both sides unless logically incompatible (prefer feature intent, note in commit msg). Run full test suite after rebase. Tests pass → save-state. Tests fail → implementation-loop.
-    completion:
-      any_of:
-        - rebase-clean-tests-pass
-        - rebase-clean-tests-fail
-        - rebase-conflict-unresolvable
-    next:
-      on:
-        rebase-clean-tests-pass: save-state
-        rebase-clean-tests-fail: implementation-loop
-        rebase-conflict-unresolvable: blocked
-
+    needs: save-state
+    if: needs.save-state.outputs.event == 'conflict-with-main'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: default
+        prompt: |
+          `git fetch origin main && git rebase origin/main`. Resolve conflicts: preserve both sides unless logically incompatible (prefer feature intent, note in commit msg). Run full test suite after rebase. Tests pass → save-state. Tests fail → implementation-loop.
   done:
-    kind: terminal
-    description: Feature implementation is complete, saved, and CI is green. Ready for PR review.
-
+    needs:
+    - review-issue
+    - save-state
+    if: needs.review-issue.outputs.event == 'all-phases-complete' || needs.save-state.outputs.event == 'exit-complete'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: done'''
+      shell: bash
   blocked:
-    kind: human
-    role: operator-or-orchestrator
-    description: A development step hit a blocking condition requiring human resolution.
-    prompt: |
-      Resolve the blocking issue before development can continue.
-    next:
-      on:
-        issue-cleared: review-issue
-        abort: aborted
-
+    needs:
+    - create-documentation
+    - create-stubs
+    - create-worktree
+    - resolve-merge-conflict
+    - write-failing-tests
+    if: needs.create-documentation.outputs.event == 'on_failure' || needs.create-stubs.outputs.event == 'on_failure' || needs.create-worktree.outputs.event
+      == 'on_failure' || needs.resolve-merge-conflict.outputs.event == 'rebase-conflict-unresolvable' || needs.write-failing-tests.outputs.event
+      == 'on_failure'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-human-gate
+      with:
+        prompt: |
+          Resolve the blocking issue before development can continue.
   aborted:
-    kind: terminal
-
-checks:
-  # Worktree setup
-  worktree-exists-for-issue:
-    kind: deterministic
-    description: A git worktree for this feature issue exists on the local machine.
-  worktree-on-correct-branch:
-    kind: deterministic
-    description: The worktree is checked out on the correct feature branch, not main.
-  branch-pushed-to-origin:
-    kind: deterministic
-  pull-request-open:
-    kind: deterministic
-    description: A draft pull request exists for the feature branch.
-
-  # Issue dispatch
-  issue-read:
-    kind: agent
-    role: engineer
-    description: The GitHub issue has been read and its current phase status is understood.
-  issue-status-in-progress:
-    kind: deterministic
-    description: The GitHub issue status field is set to "in-progress".
-  phase-documentation:
-    kind: agent
-    role: engineer
-    description: Issue phase checkboxes indicate documentation is the next uncompleted phase.
-  phase-stubs:
-    kind: agent
-    role: engineer
-    description: Issue phase checkboxes indicate stubs is the next uncompleted phase.
-  phase-tdd:
-    kind: agent
-    role: engineer
-    description: Issue phase checkboxes indicate TDD is the next uncompleted phase.
-  phase-implementation:
-    kind: agent
-    role: engineer
-    description: Issue phase checkboxes indicate implementation is the next uncompleted phase.
-  phase-save:
-    kind: agent
-    role: engineer
-    description: Issue phase checkboxes indicate save is the next uncompleted phase.
-  all-phases-complete:
-    kind: agent
-    role: engineer
-    description: All phase checkboxes on the issue are checked — work was already complete.
-
-  # Documentation phase
-  documentation-written:
-    kind: agent
-    role: engineer
-  issue-documentation-checked:
-    kind: deterministic
-    description: The "documentation" phase checkbox is checked on the GitHub issue.
-
-  # Stubs phase
-  stubs-created:
-    kind: agent
-    role: engineer
-  issue-stubs-checked:
-    kind: deterministic
-    description: The "stubs" phase checkbox is checked on the GitHub issue.
-
-  # TDD phase
-  failing-tests-written:
-    kind: agent
-    role: engineer
-  tests-fail-for-right-reason:
-    kind: agent
-    role: engineer
-    description: Tests fail because implementation is missing, not due to compilation or syntax errors.
-  issue-tdd-checked:
-    kind: deterministic
-    description: The "tdd" phase checkbox is checked on the GitHub issue.
-
-  # Merge conflict resolution
-  rebase-clean-tests-pass:
-    kind: agent
-    role: engineer
-    description: >
-      Rebase onto origin/main completed without conflicts and the full test
-      suite passes on the rebased branch.
-  rebase-clean-tests-fail:
-    kind: agent
-    role: engineer
-    description: >
-      Rebase onto origin/main completed without conflicts but one or more
-      tests now fail — implementation must be corrected before saving.
-  rebase-conflict-unresolvable:
-    kind: agent
-    role: engineer
-    description: >
-      The rebase produced conflicts that the agent cannot resolve without
-      operator input — logically incompatible upstream changes.
-
-agent_prompts:
-  engineer: |
-    Execute the assigned development phase. Read the GitHub issue for scope and resume position. Work in small increments, keep tests green, update issue status after every save cycle.
-
-gate_categories:
-  agent:
-    description: >
-      Subjective quality gates evaluated by the agent. The agent asserts whether
-      a condition is satisfied based on its understanding of the code, tests, and
-      acceptance criteria. These gates cannot be verified by a script.
-    examples:
-      - all-tests-passing (agent confirms test output is meaningful, not infra noise)
-      - feature-complete (agent confirms all acceptance criteria are met)
-
-  git-hook:
-    description: >
-      Local machine gates that fire as part of git operations (commit, push).
-      They run in the developer's or agent's local environment, not in CI.
-      Git hooks are the first line of enforcement before code reaches the remote.
-      Two sub-behaviors:
-        auto-fix  — the hook modifies files (lint, format) and the agent must
-                    re-stage before retrying the operation.
-        gate      — the hook blocks the git operation on violation; the agent
-                    must fix the underlying issue before the operation will succeed.
-    hooks:
-      pre-commit: auto-fix (lint + format staged files)
-      commit-msg: gate (validates Git-Brain metadata schema)
-      pre-push: gate (lint-clean, format-clean, all tests passing)
-
-  ci:
-    description: >
-      Remote gates that run in GitHub Actions after a push. These are out of
-      the agent's direct control — the agent can only push clean code and wait.
-      CI gates are the final enforcement layer before a PR can be merged.
-    examples:
-      - ci-all-green
+    needs:
+    - blocked
+    - implementation-loop
+    - save-state
+    if: needs.blocked.outputs.event == 'abort' || needs.implementation-loop.outputs.event == 'aborted' || needs.save-state.outputs.event
+      == 'aborted'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: aborted'''
+      shell: bash

@@ -1,394 +1,175 @@
-version: 1
 name: calypso-save-state
-initial_state: stage-changes
-
-# Save-state pipeline: stage → commit → push → update issue → verify CI → evaluate completeness.
-#
-# Hook chain:
-#   git commit: prepare-commit-msg (inject checklist), pre-commit (blocking gates + auto-fix),
-#               commit-msg (checklist + Git-Brain validation)
-#   git push:   pre-push (blueprint audit, lint/format/types blocking; PR size + tests advisory)
-#
-# Exit: exit-complete | exit-incomplete | conflict-with-main
-
-states:
+'on':
+  workflow_call: null
+  workflow_dispatch: null
+jobs:
   stage-changes:
-    kind: agent
-    role: engineer
-    cost: cheap
-    description: >
-      Prepare and stage all changes for the commit. The pre-commit hook requires
-      docs/plans/implementation-plan.md and docs/plans/next-prompt.md to be staged.
-    prompt: |
-      1. Update docs/plans/implementation-plan.md — check off completed tasks, add newly discovered tasks.
-      2. Overwrite docs/plans/next-prompt.md — self-contained prompt for a fresh agent with no prior context.
-      3. Stage code changes + both planning docs (pre-commit blocks if either missing).
-      4. No unrelated files, artifacts, or .env. Verify with `git status`.
-    completion:
-      all_of:
-        - implementation-plan-updated
-        - next-prompt-written
-        - changes-staged
-        - planning-docs-staged
-    next:
-      on_success: commit
-      on_failure: blocked
-
+    needs:
+    - blocked
+    - commit
+    - push
+    if: needs.blocked.outputs.event == 'issue-cleared' || needs.commit.outputs.event == 'on_rejection' || needs.push.outputs.event
+      == 'on_rejection'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: cheap
+        prompt: |
+          1. Update docs/plans/implementation-plan.md — check off completed tasks, add newly discovered tasks.
+          2. Overwrite docs/plans/next-prompt.md — self-contained prompt for a fresh agent with no prior context.
+          3. Stage code changes + both planning docs (pre-commit blocks if either missing).
+          4. No unrelated files, artifacts, or .env. Verify with `git status`.
   commit:
-    kind: agent
-    role: engineer
-    cost: cheap
-    description: >
-      Run git commit. Three hooks fire: prepare-commit-msg (inject checklist),
-      pre-commit (blocking gates + auto-fix), commit-msg (checklist + Git-Brain).
-    prompt: |
-      `git commit` with conventional commit message.
-      - prepare-commit-msg injects CALYPSO_CHECKLIST — check every item.
-      - Append GIT_BRAIN_METADATA: retroactive_prompt, outcome, context, agent, session, hints.
-      - pre-commit BLOCKS on: conflict markers in .md, .js files, npm/yarn, mock libs, skipped tests, forbidden packages, unstaged planning docs. Auto-fixes lint/format (re-stage if modified).
-      - commit-msg BLOCKS on: unchecked checklist, missing/invalid GIT_BRAIN_METADATA.
-      If blocked → fix, return to stage-changes.
-    gates:
-      - kind: git-hook
-        hook: prepare-commit-msg
-        blocking: false
-        behavior: inject
-        injects: CALYPSO_CHECKLIST template
-      - kind: git-hook
-        hook: pre-commit
-        checks:
-          - kind: blocking
-            name: doc-merge-markers
-            condition: staged .md/.rst/.txt files contain conflict markers
-          - kind: blocking
-            name: no-js-files
-            condition: .js/.mjs logic files are staged
-          - kind: blocking
-            name: no-npm-yarn
-            condition: npm/npx/yarn usage introduced in staged diff
-          - kind: blocking
-            name: no-mocks
-            condition: mock library usage introduced (jest.mock, sinon, vi.mock, msw)
-          - kind: blocking
-            name: no-skipped-tests
-            condition: .skip/.todo/xit/xdescribe introduced in staged diff
-          - kind: blocking
-            name: no-forbidden-packages
-            condition: redux/zustand/mobx/prisma/typeorm/drizzle-orm/@auth0/@clerk/mongoose added
-          - kind: blocking
-            name: planning-docs-staged
-            condition: implementation-plan.md or next-prompt.md not staged
-          - kind: advisory
-            name: commit-size
-            condition: "more than 10 non-planning files staged; appends to next-prompt.md"
-          - kind: auto-fix
-            name: lint-format
-            runs: eslint --fix + prettier --write; re-stage if files modified
-      - kind: git-hook
-        hook: commit-msg
-        checks:
-          - kind: blocking
-            name: calypso-checklist-complete
-            condition: any CALYPSO_CHECKLIST item is unchecked
-          - kind: blocking
-            name: git-brain-metadata-present
-            condition: GIT_BRAIN_METADATA block is missing from commit message
-          - kind: blocking
-            name: git-brain-metadata-valid
-            condition: GIT_BRAIN_METADATA JSON fails schema validation
-    completion:
-      all_of:
-        - commit-created
-        - no-doc-merge-markers
-        - no-hard-violations
-        - planning-docs-staged
-        - lint-format-autofix-passed
-        - calypso-checklist-complete
-        - git-brain-metadata-present
-        - git-brain-metadata-valid
-    next:
-      on_success: push
-      on_rejection: stage-changes
-      on_failure: blocked
-
+    needs: stage-changes
+    if: needs.stage-changes.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: cheap
+        prompt: |
+          `git commit` with conventional commit message.
+          - prepare-commit-msg injects CALYPSO_CHECKLIST — check every item.
+          - Append GIT_BRAIN_METADATA: retroactive_prompt, outcome, context, agent, session, hints.
+          - pre-commit BLOCKS on: conflict markers in .md, .js files, npm/yarn, mock libs, skipped tests, forbidden packages, unstaged planning docs. Auto-fixes lint/format (re-stage if modified).
+          - commit-msg BLOCKS on: unchecked checklist, missing/invalid GIT_BRAIN_METADATA.
+          If blocked → fix, return to stage-changes.
   push:
-    kind: agent
-    role: engineer
-    cost: cheap
-    description: >
-      Run git push. pre-push blocks on blueprint audit + lint/format/types.
-      Test failures are advisory (logged to next-prompt.md, not blocking).
-    prompt: |
-      `git push origin <branch>`.
-      pre-push BLOCKS on: .js in apps/packages, forbidden packages, eslint errors, prettier errors, tsc errors.
-      Non-blocking: PR size >20 files (advisory), test failures (logged to next-prompt.md).
-      If rejected → fix violations, return to stage-changes.
-    gates:
-      - kind: git-hook
-        hook: pre-push
-        checks:
-          - kind: blocking
-            name: blueprint-no-js-files
-            condition: .js/.mjs files found in apps/ or packages/
-          - kind: blocking
-            name: blueprint-no-forbidden-packages
-            condition: forbidden packages detected in any package.json
-          - kind: blocking
-            name: lint-clean
-            runs: eslint --max-warnings=0
-          - kind: blocking
-            name: format-clean
-            runs: prettier --check
-          - kind: blocking
-            name: types-clean
-            runs: tsc --noEmit
-          - kind: advisory
-            name: pr-size
-            condition: "more than 20 files changed vs main; appends to next-prompt.md"
-          - kind: advisory
-            name: test-suite
-            runs: bun vitest (full); failures appended to next-prompt.md; push NOT blocked
-    completion:
-      all_of:
-        - branch-pushed-to-origin
-        - blueprint-audit-clean
-        - lint-clean
-        - format-clean
-        - types-clean
-    next:
-      on_success: update-issue
-      on_rejection: stage-changes
-      on_failure: blocked
-
+    needs: commit
+    if: needs.commit.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: cheap
+        prompt: |
+          `git push origin <branch>`.
+          pre-push BLOCKS on: .js in apps/packages, forbidden packages, eslint errors, prettier errors, tsc errors.
+          Non-blocking: PR size >20 files (advisory), test failures (logged to next-prompt.md).
+          If rejected → fix violations, return to stage-changes.
   update-issue:
-    kind: agent
-    role: engineer
-    cost: cheap
-    description: >
-      Update the GitHub issue to reflect the current implementation state.
-    prompt: |
-      Update GitHub issue: check "implementation" checkbox if all tests pass. Post status comment (what was implemented, what passes, what remains). Do not check "saved" yet — that waits for CI green.
-    completion:
-      all_of:
-        - issue-status-updated
-    next:
-      on_success: verify-ci-started
-      on_failure: blocked
-
+    needs: push
+    if: needs.push.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: cheap
+        prompt: |
+          Update GitHub issue: check "implementation" checkbox if all tests pass. Post status comment (what was implemented, what passes, what remains). Do not check "saved" yet — that waits for CI green.
   verify-ci-started:
-    kind: deterministic
-    description: >
-      Confirm that CI jobs are running on the pushed commit. Wait up to 60s
-      for at least one workflow run at the current commit SHA.
-    prompt: |
-      Query GitHub for workflow runs on feature branch at current SHA. Wait up to 60s. Runs found → evaluate-completeness. No runs → diagnose-ci-start-failure.
-    next:
-      on:
-        ci-started: evaluate-completeness
-        ci-not-started: diagnose-ci-start-failure
-
+    needs: update-issue
+    if: needs.update-issue.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      run: |-
+        echo 'verify-ci-started'
+        echo "event=on_pass" >> "$GITHUB_OUTPUT"
+      shell: bash
   diagnose-ci-start-failure:
-    kind: agent
-    role: engineer
-    cost: default
-    description: >
-      Determine why CI failed to start — most likely a merge conflict with main.
-    prompt: |
-      `git fetch origin main` then `git merge-tree` to detect conflicts. Conflict → conflict-with-main. No conflict → check Actions status and branch protection. Unresolvable → blocked.
-    completion:
-      any_of:
-        - conflict-with-main-detected
-        - ci-start-failure-unresolvable
-    next:
-      on:
-        conflict-with-main-detected: conflict-with-main
-        ci-start-failure-unresolvable: blocked
-
+    needs: verify-ci-started
+    if: needs.verify-ci-started.outputs.event == 'ci-not-started'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: default
+        prompt: |
+          `git fetch origin main` then `git merge-tree` to detect conflicts. Conflict → conflict-with-main. No conflict → check Actions status and branch protection. Unresolvable → blocked.
   evaluate-completeness:
-    kind: agent
-    role: engineer
-    cost: guru
-    description: >
-      Determine whether the feature is fully complete — all acceptance criteria
-      satisfied and all phase checkboxes checked.
-    prompt: |
-      Re-read issue acceptance criteria. All met + all checkboxes checked → check "saved" checkbox, exit-complete. Any remaining → exit-incomplete.
-    completion:
-      any_of:
-        - feature-complete
-        - feature-incomplete
-    next:
-      on:
-        feature-complete: exit-complete
-        feature-incomplete: exit-incomplete
-
+    needs: verify-ci-started
+    if: needs.verify-ci-started.outputs.event == 'ci-started'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: engineer
+        cost: guru
+        prompt: |
+          Re-read issue acceptance criteria. All met + all checkboxes checked → check "saved" checkbox, exit-complete. Any remaining → exit-incomplete.
   exit-complete:
-    kind: terminal
-    description: >
-      Feature is complete and saved. CI is running on the feature branch.
-
+    needs: evaluate-completeness
+    if: needs.evaluate-completeness.outputs.event == 'feature-complete'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: exit-complete'''
+      shell: bash
   exit-incomplete:
-    kind: terminal
-    description: >
-      Implementation progress saved and CI is running, but work remains.
-
+    needs: evaluate-completeness
+    if: needs.evaluate-completeness.outputs.event == 'feature-incomplete'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: exit-incomplete'''
+      shell: bash
   conflict-with-main:
-    kind: terminal
-    description: >
-      CI failed to start because the feature branch has a merge conflict with main.
-
+    needs: diagnose-ci-start-failure
+    if: needs.diagnose-ci-start-failure.outputs.event == 'conflict-with-main-detected'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: conflict-with-main'''
+      shell: bash
   blocked:
-    kind: human
-    role: operator-or-orchestrator
-    description: A save-state step hit a condition requiring human resolution.
-    prompt: |
-      Resolve the blocking issue so the save cycle can continue.
-    next:
-      on:
-        issue-cleared: stage-changes
-        abort: aborted
-
+    needs:
+    - commit
+    - diagnose-ci-start-failure
+    - push
+    - stage-changes
+    - update-issue
+    if: needs.commit.outputs.event == 'on_failure' || needs.diagnose-ci-start-failure.outputs.event == 'ci-start-failure-unresolvable'
+      || needs.push.outputs.event == 'on_failure' || needs.stage-changes.outputs.event == 'on_failure' || needs.update-issue.outputs.event
+      == 'on_failure'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-human-gate
+      with:
+        prompt: |
+          Resolve the blocking issue so the save cycle can continue.
   aborted:
-    kind: terminal
-
-checks:
-  # ── stage-changes ──────────────────────────────────────────────────────────
-  implementation-plan-updated:
-    kind: agent
-    role: engineer
-    description: >
-      docs/plans/implementation-plan.md has been updated: completed tasks are
-      checked off and any newly discovered tasks are added.
-  next-prompt-written:
-    kind: agent
-    role: engineer
-    description: >
-      docs/plans/next-prompt.md has been overwritten with a complete,
-      self-contained prompt for the next commit.
-  changes-staged:
-    kind: deterministic
-    description: git status shows code changes in the staging area ready to commit.
-  planning-docs-staged:
-    kind: git-hook
-    hook: pre-commit
-    blocking: true
-    description: >
-      Both docs/plans/implementation-plan.md and docs/plans/next-prompt.md
-      are staged. The pre-commit hook blocks the commit if either is absent.
-
-  # ── commit: pre-commit hook ────────────────────────────────────────────────
-  no-doc-merge-markers:
-    kind: git-hook
-    hook: pre-commit
-    blocking: true
-    description: >
-      No staged .md/.rst/.txt file contains git conflict markers.
-  no-hard-violations:
-    kind: git-hook
-    hook: pre-commit
-    blocking: true
-    description: >
-      None of the following are present in staged changes:
-      .js/.mjs files, npm/yarn usage, mock libraries, skipped tests, forbidden packages.
-  lint-format-autofix-passed:
-    kind: git-hook
-    hook: pre-commit
-    blocking: false
-    behavior: auto-fix
-    description: >
-      eslint --fix and prettier --write ran on staged files. Auto-fixed
-      files re-staged. Unfixable issues annotated to next-prompt.md.
-
-  # ── commit: commit-msg hook ────────────────────────────────────────────────
-  calypso-checklist-complete:
-    kind: git-hook
-    hook: commit-msg
-    blocking: true
-    description: >
-      All CALYPSO_CHECKLIST items are checked. Blocks if any - [ ] remains.
-  git-brain-metadata-present:
-    kind: git-hook
-    hook: commit-msg
-    blocking: true
-    description: >
-      The commit message contains a GIT_BRAIN_METADATA HTML comment block.
-  git-brain-metadata-valid:
-    kind: git-hook
-    hook: commit-msg
-    blocking: true
-    description: >
-      The GIT_BRAIN_METADATA JSON passes schema validation. Required:
-      retroactive_prompt, outcome, context, agent, session, hints.
-  commit-created:
-    kind: deterministic
-    description: git log confirms a new commit was created on the feature branch.
-
-  # ── push: pre-push hook ────────────────────────────────────────────────────
-  blueprint-audit-clean:
-    kind: git-hook
-    hook: pre-push
-    blocking: true
-    description: >
-      No .js/.mjs files in apps/packages, no forbidden packages in package.json.
-  lint-clean:
-    kind: git-hook
-    hook: pre-push
-    blocking: true
-    description: eslint --max-warnings=0 reports no warnings or errors.
-  format-clean:
-    kind: git-hook
-    hook: pre-push
-    blocking: true
-    description: prettier --check reports all files are correctly formatted.
-  types-clean:
-    kind: git-hook
-    hook: pre-push
-    blocking: true
-    description: tsc --noEmit reports no TypeScript type errors.
-  branch-pushed-to-origin:
-    kind: deterministic
-    description: git push succeeded; the remote branch is at the current commit SHA.
-
-  issue-status-updated:
-    kind: deterministic
-    description: >
-      The GitHub issue reflects the current state: phase checkboxes checked
-      for completed phases, status comment updated with progress.
-
-  ci-started:
-    kind: ci
-    description: >
-      GitHub reports at least one workflow run started on the feature branch
-      at the current commit SHA within 60 seconds of the push.
-
-  ci-not-started:
-    kind: ci
-    description: >
-      No workflow runs appeared on the feature branch at the current commit
-      SHA within the wait window.
-
-  conflict-with-main-detected:
-    kind: deterministic
-    description: >
-      git merge-tree detected a merge conflict between the feature branch
-      and origin/main.
-
-  ci-start-failure-unresolvable:
-    kind: agent
-    role: engineer
-    description: >
-      CI did not start and the cause is not a merge conflict — requires
-      operator investigation.
-
-  feature-complete:
-    kind: agent
-    role: engineer
-    description: >
-      All acceptance criteria on the GitHub issue are satisfied and all
-      phase checkboxes are checked.
-
-  feature-incomplete:
-    kind: agent
-    role: engineer
-    description: >
-      One or more acceptance criteria or phase checkboxes remain unsatisfied.
+    needs: blocked
+    if: needs.blocked.outputs.event == 'abort'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: aborted'''
+      shell: bash

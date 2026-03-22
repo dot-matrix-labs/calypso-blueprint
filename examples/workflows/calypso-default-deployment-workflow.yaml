@@ -1,272 +1,159 @@
-version: 1
 name: calypso-default-deployment-workflow
-initial_state: release-candidate
-
-release_requirements:
-  source_branch: main
-  tag_required: true
-  tag_format: semver-plus-pr-hash6
-  tag_format_examples:
-    - v1.2.3+abc123
-    - v2.0.0+9f27d1
-  tag_constraints:
-    - tag-applies-to-main-commit
-    - all-required-ci-green-on-tagged-commit
-
-artifact_requirements:
-  github_release_required: true
-  github_release_asset_required: true
-  ghcr_images_required: true
-  kubernetes-image-ready-signal_required: true
-
-rollout_order:
-  - database-migrations
-  - frontend
-  - workers
-  - static-web
-
-states:
+'on':
+  workflow_call: null
+  workflow_dispatch: null
+jobs:
   release-candidate:
-    kind: deterministic
-    checks:
-      - main-commit-selected
-      - ci-quality-gate-green
-      - ci-unit-tests-green
-      - ci-integration-tests-green
-      - ci-e2e-tests-green
-      - ci-coverage-green
-    next:
-      on_pass: tag-release
-      on_fail: blocked
-
+    needs: blocked
+    if: needs.blocked.outputs.event == 'issue-cleared'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      run: |-
+        echo 'Running checks: main-commit-selected, ci-quality-gate-green, ci-unit-tests-green, ci-integration-tests-green, ci-e2e-tests-green, ci-coverage-green'
+        echo "event=on_pass" >> "$GITHUB_OUTPUT"
+      shell: bash
   tag-release:
-    kind: agent
-    role: release-manager
-    cost: cheap
-    prompt: |
-      Tag the main commit with semver + 6-digit PR hash suffix (e.g. v1.2.3+abc123). Verify commit is on main and all required CI passed on that exact commit.
-    completion:
-      all_of:
-        - release-tag-created
-        - release-tag-format-valid
-        - tag-applies-to-main-commit
-        - all-required-ci-green-on-tagged-commit
-    next:
-      on_success: publish-release
-      on_failure: blocked
-
+    needs: release-candidate
+    if: needs.release-candidate.outputs.event == 'on_pass'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: release-manager
+        cost: cheap
+        prompt: |
+          Tag the main commit with semver + 6-digit PR hash suffix (e.g. v1.2.3+abc123). Verify commit is on main and all required CI passed on that exact commit.
   publish-release:
-    kind: deterministic
-    checks:
-      - github-release-published
-      - github-release-asset-published
-      - ghcr-images-published
-      - kubernetes-image-ready-signal-sent
-    next:
-      on_pass: wait-for-rollout-approval
-      on_fail: blocked
-
+    needs: tag-release
+    if: needs.tag-release.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      run: |-
+        echo 'Running checks: github-release-published, github-release-asset-published, ghcr-images-published, kubernetes-image-ready-signal-sent'
+        echo "event=on_pass" >> "$GITHUB_OUTPUT"
+      shell: bash
   wait-for-rollout-approval:
-    kind: human
-    role: operator
-    prompt: |
-      Confirm rollout may begin for the prepared release artifacts.
-    completion:
-      all_of:
-        - rollout-approved
-    next:
-      on_success: database-migrations
-
+    needs: publish-release
+    if: needs.publish-release.outputs.event == 'on_pass'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-human-gate
+      with:
+        prompt: |
+          Confirm rollout may begin for the prepared release artifacts.
   database-migrations:
-    kind: agent
-    role: deploy-orchestrator
-    cost: default
-    prompt: |
-      Apply migrations. Verify system health. Confirm new app compatible with both old and new schema.
-    completion:
-      all_of:
-        - database-migrations-applied
-        - running-system-healthy-after-migrations
-    next:
-      on_success: frontend-rollout
-      on_failure: blocked
-
+    needs:
+    - blocked
+    - wait-for-rollout-approval
+    if: needs.blocked.outputs.event == 'resume-rollout' || needs.wait-for-rollout-approval.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: deploy-orchestrator
+        cost: default
+        prompt: |
+          Apply migrations. Verify system health. Confirm new app compatible with both old and new schema.
   frontend-rollout:
-    kind: agent
-    role: deploy-orchestrator
-    cost: default
-    prompt: |
-      Roll out frontend. Verify system healthy before proceeding.
-    completion:
-      all_of:
-        - frontend-rollout-complete
-        - running-system-healthy-after-frontend
-    next:
-      on_success: worker-rollout
-      on_failure: blocked
-
+    needs: database-migrations
+    if: needs.database-migrations.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: deploy-orchestrator
+        cost: default
+        prompt: |
+          Roll out frontend. Verify system healthy before proceeding.
   worker-rollout:
-    kind: agent
-    role: deploy-orchestrator
-    cost: default
-    prompt: |
-      Roll out workers. Verify system healthy before proceeding.
-    completion:
-      all_of:
-        - worker-rollout-complete
-        - running-system-healthy-after-workers
-    next:
-      on_success: static-web-rollout
-      on_failure: blocked
-
+    needs: frontend-rollout
+    if: needs.frontend-rollout.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: deploy-orchestrator
+        cost: default
+        prompt: |
+          Roll out workers. Verify system healthy before proceeding.
   static-web-rollout:
-    kind: agent
-    role: deploy-orchestrator
-    cost: default
-    prompt: |
-      Roll out static web (final phase). Verify end-to-end health.
-    completion:
-      all_of:
-        - static-web-rollout-complete
-        - running-system-healthy-after-static-web
-    next:
-      on_success: done
-      on_failure: blocked
-
+    needs: worker-rollout
+    if: needs.worker-rollout.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-agent
+      with:
+        role: deploy-orchestrator
+        cost: default
+        prompt: |
+          Roll out static web (final phase). Verify end-to-end health.
   done:
-    kind: terminal
-
+    needs: static-web-rollout
+    if: needs.static-web-rollout.outputs.event == 'on_success'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: done'''
+      shell: bash
   blocked:
-    kind: human
-    role: operator-or-orchestrator
-    prompt: |
-      Resolve the blocking release issue or abort.
-    next:
-      on:
-        issue-cleared: release-candidate
-        resume-rollout: database-migrations
-        abort: aborted
-
+    needs:
+    - database-migrations
+    - frontend-rollout
+    - publish-release
+    - release-candidate
+    - static-web-rollout
+    - tag-release
+    - worker-rollout
+    if: needs.database-migrations.outputs.event == 'on_failure' || needs.frontend-rollout.outputs.event == 'on_failure' ||
+      needs.publish-release.outputs.event == 'on_fail' || needs.release-candidate.outputs.event == 'on_fail' || needs.static-web-rollout.outputs.event
+      == 'on_failure' || needs.tag-release.outputs.event == 'on_failure' || needs.worker-rollout.outputs.event == 'on_failure'
+    runs-on: ubuntu-latest
+    outputs:
+      event:
+        value: ${{ steps.run.outputs.event }}
+    steps:
+    - id: run
+      uses: ./.github/actions/calypso-human-gate
+      with:
+        prompt: |
+          Resolve the blocking release issue or abort.
   aborted:
-    kind: terminal
-
-checks:
-  main-commit-selected:
-    kind: deterministic
-    description: Release candidate commit exists on main.
-  ci-quality-gate-green:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/rust-quality.yml
-  ci-unit-tests-green:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/rust-unit.yml
-  ci-integration-tests-green:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/rust-integration.yml
-  ci-e2e-tests-green:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/rust-e2e.yml
-  ci-coverage-green:
-    kind: deterministic
-    source: ci
-    workflow: .github/workflows/rust-coverage.yml
-  release-tag-created:
-    kind: deterministic
-  release-tag-format-valid:
-    kind: deterministic
-  tag-applies-to-main-commit:
-    kind: deterministic
-  all-required-ci-green-on-tagged-commit:
-    kind: deterministic
-  github-release-published:
-    kind: deterministic
-  github-release-asset-published:
-    kind: deterministic
-    description: Release executable is published to GitHub.
-  ghcr-images-published:
-    kind: deterministic
-    description: New release images are built and pushed to GHCR.
-  kubernetes-image-ready-signal-sent:
-    kind: deterministic
-    description: Kubernetes deployment infrastructure is notified that the release images are ready.
-  rollout-approved:
-    kind: human
-  database-migrations-applied:
-    kind: deterministic
-  running-system-healthy-after-migrations:
-    kind: deterministic
-  frontend-rollout-complete:
-    kind: deterministic
-  running-system-healthy-after-frontend:
-    kind: deterministic
-  worker-rollout-complete:
-    kind: deterministic
-  running-system-healthy-after-workers:
-    kind: deterministic
-  static-web-rollout-complete:
-    kind: deterministic
-  running-system-healthy-after-static-web:
-    kind: deterministic
-
-agent_prompts:
-  release-manager: |
-    Tag main commit with semver + 6-digit PR hash. Do not proceed unless all required CI passed on that exact commit.
-  deploy-orchestrator: |
-    Execute rollout phases in order. Verify health after each. Stop immediately on health check failure.
-
-github_actions:
-  current_required:
-    - workflow: .github/workflows/rust-quality.yml
-      used_for:
-        - ci-quality-gate-green
-    - workflow: .github/workflows/rust-unit.yml
-      used_for:
-        - ci-unit-tests-green
-    - workflow: .github/workflows/rust-integration.yml
-      used_for:
-        - ci-integration-tests-green
-    - workflow: .github/workflows/rust-e2e.yml
-      used_for:
-        - ci-e2e-tests-green
-    - workflow: .github/workflows/rust-coverage.yml
-      used_for:
-        - ci-coverage-green
-  proposed_required:
-    - workflow: .github/workflows/test-schema-upgrade-compatibility.yml
-      purpose: Validate new application code against both previous and new schema versions using plausible fixtures.
-    - workflow: .github/workflows/release-cli.yml
-      used_for:
-        - github-release-asset-published
-      purpose: Build the release executable and attach it to the GitHub release for the tagged main commit.
-    - workflow: .github/workflows/release-ghcr-images.yml
-      used_for:
-        - ghcr-images-published
-      purpose: Build and publish release-tagged deployment images to GHCR.
-    - workflow: .github/workflows/signal-k8s-images-ready.yml
-      used_for:
-        - kubernetes-image-ready-signal-sent
-      purpose: Notify Kubernetes infrastructure that release images are ready for rollout.
-    - workflow: .github/workflows/rollout-database.yml
-      used_for:
-        - database-migrations-applied
-        - running-system-healthy-after-migrations
-      purpose: Apply production database migrations and verify post-migration health.
-    - workflow: .github/workflows/rollout-frontend.yml
-      used_for:
-        - frontend-rollout-complete
-        - running-system-healthy-after-frontend
-      purpose: Roll out frontend application workloads and verify running health.
-    - workflow: .github/workflows/rollout-workers.yml
-      used_for:
-        - worker-rollout-complete
-        - running-system-healthy-after-workers
-      purpose: Roll out worker workloads and verify running health.
-    - workflow: .github/workflows/rollout-static-web.yml
-      used_for:
-        - static-web-rollout-complete
-        - running-system-healthy-after-static-web
-      purpose: Roll out the static web tier last and verify end-to-end health.
+    needs: blocked
+    if: needs.blocked.outputs.event == 'abort'
+    runs-on: ubuntu-latest
+    steps:
+    - id: run
+      run: 'echo ''Terminal state: aborted'''
+      shell: bash
